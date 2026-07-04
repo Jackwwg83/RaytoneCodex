@@ -333,21 +333,21 @@ struct SlashCommand: Identifiable, Equatable, Hashable {
     }
 
     static let all: [SlashCommand] = [
-        SlashCommand(name: "/init", summary: "Generate an AGENTS.md for this project", symbol: "doc.badge.plus"),
-        SlashCommand(name: "/diff", summary: "Show pending working-tree changes", symbol: "plus.forwardslash.minus"),
-        SlashCommand(name: "/review", summary: "Review the current changes", symbol: "checklist"),
-        SlashCommand(name: "/test", summary: "Run the project test suite", symbol: "testtube.2"),
-        SlashCommand(name: "/explain", summary: "Explain a file or symbol", symbol: "text.magnifyingglass"),
-        SlashCommand(name: "/clear", summary: "Start a fresh thread", symbol: "trash")
+        SlashCommand(name: "/init", summary: "为当前项目生成 AGENTS.md", symbol: "doc.badge.plus"),
+        SlashCommand(name: "/diff", summary: "查看当前工作区变更", symbol: "plus.forwardslash.minus"),
+        SlashCommand(name: "/review", summary: "审查当前变更", symbol: "checklist"),
+        SlashCommand(name: "/test", summary: "运行项目测试", symbol: "testtube.2"),
+        SlashCommand(name: "/explain", summary: "解释文件或符号", symbol: "text.magnifyingglass"),
+        SlashCommand(name: "/clear", summary: "开始新对话", symbol: "trash")
     ]
 }
 
 /// Right-hand inspector tabs (side panels).
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case runtime = "Runtime"
-    case changes = "Changes"
-    case terminal = "Terminal"
-    case files = "Files"
+    case runtime = "运行时"
+    case changes = "变更"
+    case terminal = "终端"
+    case files = "文件"
 
     var id: String { rawValue }
 
