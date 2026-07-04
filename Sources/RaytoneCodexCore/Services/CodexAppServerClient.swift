@@ -570,6 +570,7 @@ public struct CodexRuntimeHook: Equatable, Sendable, Identifiable {
     public var source: String
     public var sourcePath: String
     public var trustStatus: String
+    public var currentHash: String
     public var timeoutSec: Int
     public var enabled: Bool
     public var isManaged: Bool
@@ -583,6 +584,7 @@ public struct CodexRuntimeHook: Equatable, Sendable, Identifiable {
         source: String,
         sourcePath: String,
         trustStatus: String,
+        currentHash: String,
         timeoutSec: Int,
         enabled: Bool,
         isManaged: Bool
@@ -595,6 +597,7 @@ public struct CodexRuntimeHook: Equatable, Sendable, Identifiable {
         self.source = source
         self.sourcePath = sourcePath
         self.trustStatus = trustStatus
+        self.currentHash = currentHash
         self.timeoutSec = timeoutSec
         self.enabled = enabled
         self.isManaged = isManaged
@@ -2672,6 +2675,7 @@ public actor CodexAppServerClient {
                     source: hook["source"]?.stringValue ?? "unknown",
                     sourcePath: hook["sourcePath"]?.pathString ?? cwd,
                     trustStatus: hook["trustStatus"]?.stringValue ?? "unknown",
+                    currentHash: hook["currentHash"]?.stringValue ?? "",
                     timeoutSec: hook["timeoutSec"]?.intValue ?? 0,
                     enabled: hook["enabled"]?.boolValue ?? false,
                     isManaged: hook["isManaged"]?.boolValue ?? false

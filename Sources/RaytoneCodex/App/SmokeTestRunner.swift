@@ -3504,6 +3504,7 @@ enum SmokeTestRunner {
                 .appendingPathComponent("RaytoneCodexAutomationHookSmoke-\(UUID().uuidString)", isDirectory: true)
             let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
             let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            var mockServer: MockResponsesServer?
 
             do {
                 try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
@@ -3514,9 +3515,15 @@ enum SmokeTestRunner {
                     encoding: .utf8
                 )
 
+                mockServer = try startMockResponsesServer(message: "Raytone automation hook smoke OK")
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
                 let store = SessionStore()
                 store.workspacePath = workspaceURL.path
                 store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
                 store.appServerEnvironmentOverridesForTesting = [
                     "CODEX_HOME": codexHomeURL.path
                 ]
@@ -3530,8 +3537,16 @@ enum SmokeTestRunner {
                     prompt: "Raytone automation hook smoke prompt"
                 )
 
+                store.prompt = "触发 Raytone 自动化 hook，并回复 Raytone automation hook smoke OK"
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+                await store.stopAppServerForTesting()
+
                 let configURL = codexHomeURL.appendingPathComponent("config.toml")
+                let eventURL = codexHomeURL.appendingPathComponent("raytone-automation-events.jsonl")
                 let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let eventText = (try? String(contentsOf: eventURL, encoding: .utf8)) ?? ""
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
                 let hooks = store.runtimeHooks
                 let raytoneHooks = hooks.filter { hook in
                     let normalizedEvent = hook.eventName
@@ -3542,14 +3557,29 @@ enum SmokeTestRunner {
                     return normalizedEvent == "userpromptsubmit" &&
                         hook.command?.contains("raytone-automation-events.jsonl") == true
                 }
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let raytoneHook = raytoneHooks.first
+                let hookTrustStatus = raytoneHook?.trustStatus ?? ""
+                let hookTrusted = hookTrustStatus.localizedCaseInsensitiveCompare("trusted") == .orderedSame ||
+                    hookTrustStatus.localizedCaseInsensitiveCompare("managed") == .orderedSame
                 let ok = store.runtimeSnapshot.executable != nil &&
+                    !store.isRunning &&
                     configText.contains("[features]") &&
                     configText.contains("hooks = true") &&
                     configText.contains("UserPromptSubmit") &&
                     configText.contains("raytone-automation-events.jsonl") &&
                     raytoneHooks.count == 1 &&
-                    store.runtimeCatalogStatusText.contains("已安装 项目监控")
+                    hookTrusted &&
+                    eventText.contains("\"source\":\"RaytoneCodex\"") &&
+                    eventText.contains("\"template\":\"项目监控\"") &&
+                    eventText.contains("\"event\":\"UserPromptSubmit\"") &&
+                    requestLog.contains("/v1/responses") &&
+                    agentMessages.contains("Raytone automation hook smoke OK")
 
+                mockServer?.stop()
                 emitJSON([
                     "ok": ok,
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
@@ -3557,10 +3587,14 @@ enum SmokeTestRunner {
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
+                    "mockResponsesBaseURL": mockServer?.baseURL ?? "",
                     "configPath": configURL.path,
                     "configText": configText,
+                    "eventPath": eventURL.path,
+                    "eventText": eventText,
                     "hookCount": hooks.count,
                     "raytoneHookCount": raytoneHooks.count,
+                    "raytoneHookTrusted": hookTrusted,
                     "hooks": hooks.map { hook in
                         [
                             "key": hook.key,
@@ -3570,14 +3604,18 @@ enum SmokeTestRunner {
                             "source": hook.source,
                             "sourcePath": hook.sourcePath,
                             "enabled": hook.enabled,
-                            "trustStatus": hook.trustStatus
+                            "trustStatus": hook.trustStatus,
+                            "currentHash": hook.currentHash
                         ] as [String: Any]
                     },
+                    "agentMessages": agentMessages,
+                    "mockRequestLogPreview": String(requestLog.prefix(1200)),
                     "status": store.runtimeCatalogStatusText,
                     "errors": store.runtimeCatalogErrors
                 ])
                 exit(ok ? 0 : 1)
             } catch {
+                mockServer?.stop()
                 emitJSON([
                     "ok": false,
                     "runtimeSource": "unknown",

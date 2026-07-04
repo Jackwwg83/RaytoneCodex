@@ -2972,8 +2972,8 @@ final class SessionStore: ObservableObject {
             let existing = try await client.listHooks(cwds: [workspacePath])
             let conflictingUserHooks = existing.hooks.filter { hook in
                 Self.isUserPromptSubmitHook(hook) &&
-                    hook.source == "user" &&
-                    !(hook.command?.contains("raytone-automation-events.jsonl") == true)
+                    hook.source.localizedCaseInsensitiveCompare("user") == .orderedSame &&
+                    !Self.isRaytoneAutomationHook(hook)
             }
             guard conflictingUserHooks.isEmpty else {
                 runtimeCatalogStatusText = "未安装：已有用户级 UserPromptSubmit hook"
@@ -2994,7 +2994,26 @@ final class SessionStore: ObservableObject {
             )
             try updatedConfig.write(to: configURL, atomically: true, encoding: .utf8)
             await refreshRuntimeHooks()
-            runtimeCatalogStatusText = "已安装 \(title)：hooks/list 返回 \(runtimeHooks.count) 个钩子"
+
+            if let hook = runtimeHooks.first(where: Self.isRaytoneAutomationHook),
+               !hook.currentHash.isEmpty,
+               !Self.isTrustedHook(hook) {
+                try await client.batchWriteConfig(edits: [
+                    CodexConfigWriteEdit(
+                        keyPath: "hooks.state",
+                        value: .object([
+                            hook.key: .object([
+                                "trusted_hash": .string(hook.currentHash)
+                            ])
+                        ])
+                    )
+                ])
+                await refreshRuntimeHooks()
+            }
+
+            let raytoneHook = runtimeHooks.first(where: Self.isRaytoneAutomationHook)
+            let trustSuffix = raytoneHook.map(Self.isTrustedHook) == true ? " · 已信任" : ""
+            runtimeCatalogStatusText = "已安装 \(title)：hooks/list 返回 \(runtimeHooks.count) 个钩子\(trustSuffix)"
             if !templatePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 prompt = templatePrompt
             }
@@ -4740,6 +4759,16 @@ final class SessionStore: ObservableObject {
 
     private static func isUserPromptSubmitHook(_ hook: CodexRuntimeHook) -> Bool {
         normalizedHookEventName(hook.eventName) == "userpromptsubmit"
+    }
+
+    private static func isRaytoneAutomationHook(_ hook: CodexRuntimeHook) -> Bool {
+        isUserPromptSubmitHook(hook) &&
+            hook.command?.contains("raytone-automation-events.jsonl") == true
+    }
+
+    private static func isTrustedHook(_ hook: CodexRuntimeHook) -> Bool {
+        hook.trustStatus.localizedCaseInsensitiveCompare("trusted") == .orderedSame ||
+            hook.trustStatus.localizedCaseInsensitiveCompare("managed") == .orderedSame
     }
 
     private static func normalizedHookEventName(_ value: String) -> String {
