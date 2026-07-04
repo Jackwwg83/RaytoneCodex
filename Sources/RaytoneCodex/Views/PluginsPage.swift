@@ -78,6 +78,7 @@ struct PluginsPage: View {
                     if selectedTab == .plugins {
                         featuredBanner
                         runtimeStatusCard
+                        pluginDetailCard
                         pluginGrid
                     } else {
                         runtimeStatusCard
@@ -305,14 +306,105 @@ struct PluginsPage: View {
             } else {
                 LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(filteredPlugins) { plugin in
-                        RuntimePluginRow(plugin: plugin) {
+                        RuntimePluginRow(plugin: plugin, detail: {
+                            Task { await store.readRuntimePluginDetail(plugin) }
+                        }, toggle: {
                             Task { await store.togglePluginInstallation(plugin) }
-                        }
+                        })
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var pluginDetailCard: some View {
+        if let detail = store.runtimePluginDetail {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 26, height: 26)
+                        .background(Theme.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(detail.plugin.displayName)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(detail.description ?? detail.plugin.summary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(3)
+                    }
+                    Spacer(minLength: 0)
+                    Text(store.runtimePluginDetailStatusText)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+
+                HStack(spacing: 8) {
+                    pluginDetailMetric("技能", detail.skills.count)
+                    pluginDetailMetric("MCP", detail.mcpServers.count)
+                    pluginDetailMetric("钩子", detail.hooks.count)
+                    pluginDetailMetric("App", detail.apps.count)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    if !detail.skills.isEmpty {
+                        pluginDetailList("技能", rows: detail.skills.map { "\($0.displayName) · \($0.enabled ? "启用" : "停用")" })
+                    }
+                    if !detail.mcpServers.isEmpty {
+                        pluginDetailList("MCP 服务器", rows: detail.mcpServers)
+                    }
+                    if !detail.hooks.isEmpty {
+                        pluginDetailList("钩子", rows: detail.hooks.map { "\($0.eventName) · \($0.key)" })
+                    }
+                    if !detail.apps.isEmpty {
+                        pluginDetailList("App", rows: detail.apps.map { "\($0.name) · \($0.needsAuth ? "需要授权" : "已可用")" })
+                    }
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.fillSubtle)
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .stroke(Theme.borderSoft, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        }
+    }
+
+    private func pluginDetailMetric(_ label: String, _ value: Int) -> some View {
+        VStack(spacing: 2) {
+            Text("\(value)")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Theme.transcript)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+    }
+
+    private func pluginDetailList(_ title: String, rows: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            ForEach(rows.prefix(4), id: \.self) { row in
+                Text(row)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
     }
 
     private var skillsList: some View {
@@ -371,6 +463,7 @@ private enum PluginTab {
 
 private struct RuntimePluginRow: View {
     let plugin: CodexRuntimePlugin
+    var detail: () -> Void
     var toggle: () -> Void
 
     var body: some View {
@@ -398,6 +491,16 @@ private struct RuntimePluginRow: View {
             }
 
             Spacer(minLength: 8)
+
+            Button(action: detail) {
+                Image(systemName: "info")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .background(Theme.fill)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
 
             Button(action: toggle) {
                 Image(systemName: plugin.installed ? "minus" : "plus")

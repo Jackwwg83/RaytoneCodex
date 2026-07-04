@@ -48,6 +48,8 @@ final class SessionStore: ObservableObject {
     @Published var sideChatDraft = ""
     @Published var sideChatStatusText = "未发送"
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
+    @Published var runtimePluginDetail: CodexRuntimePluginDetail?
+    @Published var runtimePluginDetailStatusText = "未读取"
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
     @Published var runtimeHooks: [CodexRuntimeHook] = []
     @Published var runtimeMCPServers: [CodexRuntimeMCPServer] = []
@@ -2891,10 +2893,34 @@ final class SessionStore: ObservableObject {
                 try await client.installPlugin(plugin)
             }
             await refreshRuntimeCatalog(forceReloadSkills: true)
+            if runtimePluginDetail?.plugin.id == plugin.id,
+               let refreshed = runtimePlugins.first(where: { $0.id == plugin.id }) {
+                await readRuntimePluginDetail(refreshed)
+            }
         } catch {
             runtimeCatalogStatusText = "插件操作失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    func readRuntimePluginDetail(_ plugin: CodexRuntimePlugin) async {
+        runtimeCatalogIsRefreshing = true
+        runtimePluginDetailStatusText = "正在读取 \(plugin.displayName)…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let detail = try await client.readPlugin(plugin)
+            runtimePluginDetail = detail
+            runtimePluginDetailStatusText = "plugin/read：\(detail.skills.count) 个技能 · \(detail.mcpServers.count) 个 MCP · \(detail.hooks.count) 个钩子 · \(detail.apps.count) 个 app"
+            runtimeCatalogStatusText = runtimePluginDetailStatusText
+        } catch {
+            runtimePluginDetailStatusText = "插件详情读取失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimePluginDetailStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
     }
 
     func toggleSkill(_ skill: CodexRuntimeSkill) async {

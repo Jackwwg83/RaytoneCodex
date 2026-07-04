@@ -24,6 +24,8 @@ enum SmokeTestRunner {
             runMCPResourceSmoke()
         } else if CommandLine.arguments.contains("--mcp-tool-smoke-test") {
             runMCPToolSmoke()
+        } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
+            runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
             runAccountAuthSmoke()
         } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
@@ -1069,6 +1071,118 @@ enum SmokeTestRunner {
                 exit(ok ? 0 : 1)
             } catch {
                 mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runPluginReadSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexPluginReadSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let pluginName = "demo-plugin"
+            let marketplaceName = "codex-curated"
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try writePluginReadSmokeFixture(workspaceURL: workspaceURL, codexHomeURL: codexHomeURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("plugin-read-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("plugin-read-smoke: refreshRuntimeCatalog\n", stderr)
+                await store.refreshRuntimeCatalog(forceReloadSkills: true)
+
+                guard let plugin = store.runtimePlugins.first(where: { $0.name == pluginName && $0.marketplaceName == marketplaceName }) else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHome": codexHomeURL.path,
+                        "status": store.runtimeCatalogStatusText,
+                        "errors": store.runtimeCatalogErrors,
+                        "plugins": store.runtimePlugins.map { plugin in
+                            [
+                                "id": plugin.id,
+                                "name": plugin.name,
+                                "marketplace": plugin.marketplaceName,
+                                "installed": plugin.installed,
+                                "enabled": plugin.enabled
+                            ] as [String: Any]
+                        }
+                    ])
+                    exit(1)
+                }
+
+                fputs("plugin-read-smoke: readRuntimePluginDetail\n", stderr)
+                await store.readRuntimePluginDetail(plugin)
+                let detail = store.runtimePluginDetail
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    plugin.installed &&
+                    plugin.enabled &&
+                    detail?.plugin.id == "\(pluginName)@\(marketplaceName)" &&
+                    detail?.description == "Raytone plugin/read smoke long description" &&
+                    detail?.skills.contains(where: { $0.name == "\(pluginName):thread-summarizer" && !$0.enabled }) == true &&
+                    detail?.mcpServers.contains("demo") == true &&
+                    detail?.hooks.contains(where: { $0.eventName == "preToolUse" }) == true &&
+                    store.runtimePluginDetailStatusText.hasPrefix("plugin/read")
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "plugin": [
+                        "id": detail?.plugin.id ?? "",
+                        "name": detail?.plugin.name ?? "",
+                        "displayName": detail?.plugin.displayName ?? "",
+                        "installed": detail?.plugin.installed ?? false,
+                        "enabled": detail?.plugin.enabled ?? false
+                    ] as [String: Any],
+                    "detailStatus": store.runtimePluginDetailStatusText,
+                    "description": detail?.description ?? "",
+                    "skills": detail?.skills.map { skill in
+                        [
+                            "name": skill.name,
+                            "displayName": skill.displayName,
+                            "enabled": skill.enabled
+                        ] as [String: Any]
+                    } ?? [],
+                    "mcpServers": detail?.mcpServers ?? [],
+                    "hooks": detail?.hooks.map { hook in
+                        [
+                            "key": hook.key,
+                            "eventName": hook.eventName
+                        ] as [String: Any]
+                    } ?? []
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
                 emitJSON([
                     "ok": false,
                     "runtimeSource": "unknown",
@@ -3969,6 +4083,115 @@ enum SmokeTestRunner {
         stream_max_retries = 0
         """
         try config.write(to: codexHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+    }
+
+    private static func writePluginReadSmokeFixture(workspaceURL: URL, codexHomeURL: URL) throws {
+        let fileManager = FileManager.default
+        let pluginRoot = workspaceURL.appendingPathComponent("plugins/demo-plugin", isDirectory: true)
+        try fileManager.createDirectory(at: workspaceURL.appendingPathComponent(".git", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: workspaceURL.appendingPathComponent(".agents/plugins", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: pluginRoot.appendingPathComponent(".codex-plugin", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: pluginRoot.appendingPathComponent("skills/thread-summarizer/agents", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: pluginRoot.appendingPathComponent("hooks", isDirectory: true), withIntermediateDirectories: true)
+
+        try """
+        {
+          "name": "codex-curated",
+          "plugins": [
+            {
+              "name": "demo-plugin",
+              "source": {
+                "source": "local",
+                "path": "./plugins/demo-plugin"
+              },
+              "policy": {
+                "installation": "AVAILABLE",
+                "authentication": "ON_INSTALL"
+              },
+              "category": "Productivity"
+            }
+          ]
+        }
+        """.write(to: workspaceURL.appendingPathComponent(".agents/plugins/marketplace.json"), atomically: true, encoding: .utf8)
+
+        try """
+        {
+          "name": "demo-plugin",
+          "description": "Raytone plugin/read smoke long description",
+          "keywords": ["raytone", "plugin-read"],
+          "interface": {
+            "displayName": "Raytone Plugin Read Smoke",
+            "shortDescription": "plugin/read smoke subtitle",
+            "longDescription": "plugin/read smoke long details",
+            "developerName": "Raytone",
+            "category": "Productivity",
+            "capabilities": ["Interactive"]
+          }
+        }
+        """.write(to: pluginRoot.appendingPathComponent(".codex-plugin/plugin.json"), atomically: true, encoding: .utf8)
+
+        try """
+        ---
+        name: thread-summarizer
+        description: Summarize Raytone plugin smoke threads
+        ---
+
+        # Thread Summarizer
+        """.write(to: pluginRoot.appendingPathComponent("skills/thread-summarizer/SKILL.md"), atomically: true, encoding: .utf8)
+
+        try """
+        policy:
+          products:
+            - CODEX
+        """.write(to: pluginRoot.appendingPathComponent("skills/thread-summarizer/agents/openai.yaml"), atomically: true, encoding: .utf8)
+
+        try """
+        {
+          "mcpServers": {
+            "demo": {
+              "command": "demo-server"
+            }
+          }
+        }
+        """.write(to: pluginRoot.appendingPathComponent(".mcp.json"), atomically: true, encoding: .utf8)
+
+        try """
+        {
+          "hooks": {
+            "PreToolUse": [
+              {
+                "hooks": [
+                  {
+                    "type": "command",
+                    "command": "echo plugin-read-smoke"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.write(to: pluginRoot.appendingPathComponent("hooks/hooks.json"), atomically: true, encoding: .utf8)
+
+        try """
+        [features]
+        plugins = true
+
+        [[skills.config]]
+        name = "demo-plugin:thread-summarizer"
+        enabled = false
+
+        [plugins."demo-plugin@codex-curated"]
+        enabled = true
+        """.write(to: codexHomeURL.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+
+        let installedPluginRoot = codexHomeURL
+            .appendingPathComponent("plugins/cache/codex-curated/demo-plugin/local/.codex-plugin", isDirectory: true)
+        try fileManager.createDirectory(at: installedPluginRoot, withIntermediateDirectories: true)
+        try #"{"name":"demo-plugin"}"#.write(
+            to: installedPluginRoot.appendingPathComponent("plugin.json"),
+            atomically: true,
+            encoding: .utf8
+        )
     }
 
     private static func argument(after flag: String) -> String? {

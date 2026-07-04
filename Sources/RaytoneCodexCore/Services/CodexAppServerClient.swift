@@ -438,6 +438,75 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexRuntimePluginDetail: Equatable, Sendable {
+    public var plugin: CodexRuntimePlugin
+    public var description: String?
+    public var skills: [CodexRuntimePluginSkill]
+    public var hooks: [CodexRuntimePluginHook]
+    public var mcpServers: [String]
+    public var apps: [CodexRuntimePluginApp]
+
+    public init(
+        plugin: CodexRuntimePlugin,
+        description: String?,
+        skills: [CodexRuntimePluginSkill],
+        hooks: [CodexRuntimePluginHook],
+        mcpServers: [String],
+        apps: [CodexRuntimePluginApp]
+    ) {
+        self.plugin = plugin
+        self.description = description
+        self.skills = skills
+        self.hooks = hooks
+        self.mcpServers = mcpServers
+        self.apps = apps
+    }
+}
+
+public struct CodexRuntimePluginSkill: Equatable, Sendable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var displayName: String
+    public var description: String
+    public var enabled: Bool
+    public var path: String?
+
+    public init(name: String, displayName: String, description: String, enabled: Bool, path: String?) {
+        self.name = name
+        self.displayName = displayName
+        self.description = description
+        self.enabled = enabled
+        self.path = path
+    }
+}
+
+public struct CodexRuntimePluginHook: Equatable, Sendable, Identifiable {
+    public var id: String { key }
+    public var key: String
+    public var eventName: String
+
+    public init(key: String, eventName: String) {
+        self.key = key
+        self.eventName = eventName
+    }
+}
+
+public struct CodexRuntimePluginApp: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var name: String
+    public var description: String?
+    public var needsAuth: Bool
+    public var installURL: String?
+
+    public init(id: String, name: String, description: String?, needsAuth: Bool, installURL: String?) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.needsAuth = needsAuth
+        self.installURL = installURL
+    }
+}
+
 public struct CodexAppServerMention: Equatable, Sendable {
     public var name: String
     public var path: String
@@ -1558,6 +1627,23 @@ public actor CodexAppServerClient {
         return Self.pluginCatalog(from: result)
     }
 
+    public func readPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginDetail {
+        var params: [String: JSONValue] = [
+            "pluginName": .string(plugin.name)
+        ]
+        if let marketplacePath = plugin.marketplacePath {
+            params["marketplacePath"] = .string(marketplacePath)
+        } else {
+            params["remoteMarketplaceName"] = .string(plugin.marketplaceName)
+        }
+
+        let result = try await request(method: "plugin/read", params: .object(params))
+        guard let detail = result["plugin"] else {
+            throw CodexAppServerError.invalidResponse("Missing plugin detail payload.")
+        }
+        return Self.pluginDetail(from: detail, fallback: plugin)
+    }
+
     public func installPlugin(_ plugin: CodexRuntimePlugin) async throws {
         var params: [String: JSONValue] = [
             "pluginName": .string(plugin.name)
@@ -2386,30 +2472,11 @@ public actor CodexAppServerClient {
 
             return marketplace["plugins"]?.arrayValue?.compactMap { pluginValue in
                 guard let plugin = pluginValue.objectValue else { return nil }
-                let name = plugin["name"]?.stringValue ?? plugin["id"]?.stringValue
-                guard let name else { return nil }
-                let interface = plugin["interface"]
-                let displayName = interface?["displayName"]?.stringValue ?? name
-                let summary = interface?["shortDescription"]?.stringValue
-                    ?? interface?["longDescription"]?.stringValue
-                    ?? plugin["keywords"]?.stringList.joined(separator: " · ")
-                    ?? "Codex 插件"
-                return CodexRuntimePlugin(
-                    id: plugin["id"]?.stringValue ?? "\(name)@\(marketplaceName)",
-                    name: name,
-                    displayName: displayName,
-                    summary: summary,
+                return Self.runtimePlugin(
+                    from: plugin,
                     marketplaceName: marketplaceName,
                     marketplaceDisplayName: marketplaceDisplayName,
-                    marketplacePath: marketplacePath,
-                    category: interface?["category"]?.stringValue,
-                    developerName: interface?["developerName"]?.stringValue,
-                    sourceType: plugin["source"]?["type"]?.stringValue ?? "unknown",
-                    installPolicy: plugin["installPolicy"]?.stringValue ?? "UNKNOWN",
-                    authPolicy: plugin["authPolicy"]?.stringValue ?? "UNKNOWN",
-                    availability: plugin["availability"]?.stringValue ?? "AVAILABLE",
-                    installed: plugin["installed"]?.boolValue ?? false,
-                    enabled: plugin["enabled"]?.boolValue ?? false
+                    marketplacePath: marketplacePath
                 )
             } ?? []
         } ?? []
@@ -2426,6 +2493,108 @@ public actor CodexAppServerClient {
             },
             featuredPluginIds: featuredPluginIds,
             marketplaceLoadErrors: loadErrors
+        )
+    }
+
+    private static func pluginDetail(from value: JSONValue, fallback: CodexRuntimePlugin) -> CodexRuntimePluginDetail {
+        let object = value.objectValue ?? [:]
+        let marketplaceName = object["marketplaceName"]?.stringValue ?? fallback.marketplaceName
+        let marketplacePath = object["marketplacePath"]?.pathString ?? fallback.marketplacePath
+        let summary = object["summary"]?.objectValue
+        let plugin = summary.flatMap {
+            runtimePlugin(
+                from: $0,
+                marketplaceName: marketplaceName,
+                marketplaceDisplayName: fallback.marketplaceDisplayName,
+                marketplacePath: marketplacePath
+            )
+        } ?? fallback
+
+        return CodexRuntimePluginDetail(
+            plugin: plugin,
+            description: object["description"]?.stringValue,
+            skills: object["skills"]?.arrayValue?.compactMap(pluginSkill(from:)) ?? [],
+            hooks: object["hooks"]?.arrayValue?.compactMap(pluginHook(from:)) ?? [],
+            mcpServers: object["mcpServers"]?.stringList ?? [],
+            apps: object["apps"]?.arrayValue?.compactMap(pluginApp(from:)) ?? []
+        )
+    }
+
+    private static func runtimePlugin(
+        from plugin: [String: JSONValue],
+        marketplaceName: String,
+        marketplaceDisplayName: String,
+        marketplacePath: String?
+    ) -> CodexRuntimePlugin? {
+        let name = plugin["name"]?.stringValue ?? plugin["id"]?.stringValue
+        guard let name else { return nil }
+        let interface = plugin["interface"]
+        let displayName = interface?["displayName"]?.stringValue ?? name
+        let summary = interface?["shortDescription"]?.stringValue
+            ?? interface?["longDescription"]?.stringValue
+            ?? plugin["keywords"]?.stringList.joined(separator: " · ")
+            ?? "Codex 插件"
+        return CodexRuntimePlugin(
+            id: plugin["id"]?.stringValue ?? "\(name)@\(marketplaceName)",
+            name: name,
+            displayName: displayName,
+            summary: summary,
+            marketplaceName: marketplaceName,
+            marketplaceDisplayName: marketplaceDisplayName,
+            marketplacePath: marketplacePath,
+            category: interface?["category"]?.stringValue,
+            developerName: interface?["developerName"]?.stringValue,
+            sourceType: plugin["source"]?["type"]?.stringValue ?? "unknown",
+            installPolicy: plugin["installPolicy"]?.stringValue ?? "UNKNOWN",
+            authPolicy: plugin["authPolicy"]?.stringValue ?? "UNKNOWN",
+            availability: plugin["availability"]?.stringValue ?? "AVAILABLE",
+            installed: plugin["installed"]?.boolValue ?? false,
+            enabled: plugin["enabled"]?.boolValue ?? false
+        )
+    }
+
+    private static func pluginSkill(from value: JSONValue) -> CodexRuntimePluginSkill? {
+        guard let object = value.objectValue,
+              let name = object["name"]?.stringValue else {
+            return nil
+        }
+        let interface = object["interface"]
+        let displayName = interface?["displayName"]?.stringValue ?? name
+        let description = object["shortDescription"]?.stringValue
+            ?? interface?["shortDescription"]?.stringValue
+            ?? object["description"]?.stringValue
+            ?? "Codex skill"
+        return CodexRuntimePluginSkill(
+            name: name,
+            displayName: displayName,
+            description: description,
+            enabled: object["enabled"]?.boolValue ?? false,
+            path: object["path"]?.pathString
+        )
+    }
+
+    private static func pluginHook(from value: JSONValue) -> CodexRuntimePluginHook? {
+        guard let object = value.objectValue,
+              let key = object["key"]?.stringValue else {
+            return nil
+        }
+        return CodexRuntimePluginHook(
+            key: key,
+            eventName: object["eventName"]?.stringValue ?? "unknown"
+        )
+    }
+
+    private static func pluginApp(from value: JSONValue) -> CodexRuntimePluginApp? {
+        guard let object = value.objectValue,
+              let id = object["id"]?.stringValue else {
+            return nil
+        }
+        return CodexRuntimePluginApp(
+            id: id,
+            name: object["name"]?.stringValue ?? id,
+            description: object["description"]?.stringValue,
+            needsAuth: object["needsAuth"]?.boolValue ?? false,
+            installURL: object["installUrl"]?.stringValue
         )
     }
 
