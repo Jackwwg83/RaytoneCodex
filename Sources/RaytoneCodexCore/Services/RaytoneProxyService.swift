@@ -16,6 +16,22 @@ public struct RaytoneProxySession: Equatable, Sendable {
     }
 }
 
+public struct RaytoneProxyUpstreamHealth: Equatable, Sendable {
+    public var provider: String
+    public var model: String
+    public var modelsEndpoint: String
+    public var modelCount: Int
+    public var models: [String]
+
+    public init(provider: String, model: String, modelsEndpoint: String, modelCount: Int, models: [String]) {
+        self.provider = provider
+        self.model = model
+        self.modelsEndpoint = modelsEndpoint
+        self.modelCount = modelCount
+        self.models = models
+    }
+}
+
 public enum RaytoneProxyServiceError: LocalizedError, Sendable {
     case executableMissing(URL)
     case missingAPIKey(String)
@@ -127,6 +143,28 @@ public actor RaytoneProxyService {
             try? FileManager.default.removeItem(at: sessionDirectory)
         }
         sessionDirectory = nil
+    }
+
+    public func verifyUpstreamConnection(session: RaytoneProxySession) async throws -> RaytoneProxyUpstreamHealth {
+        let url = Self.rootURL(for: session.baseURL, path: "/health/upstream")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw RaytoneProxyServiceError.healthCheckFailed(String(data: data, encoding: .utf8) ?? "No response body.")
+        }
+
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let provider = object?["provider"] as? String ?? ""
+        let model = object?["model"] as? String ?? ""
+        let endpoint = object?["modelsEndpoint"] as? String ?? ""
+        let modelCount = object?["modelCount"] as? Int ?? 0
+        let models = object?["models"] as? [String] ?? []
+        return RaytoneProxyUpstreamHealth(
+            provider: provider,
+            model: model,
+            modelsEndpoint: endpoint,
+            modelCount: modelCount,
+            models: models
+        )
     }
 
     private func healthCheck(port: Int) async throws {
@@ -243,6 +281,15 @@ public actor RaytoneProxyService {
             throw RaytoneProxyServiceError.invalidListeningLine(line)
         }
         return port
+    }
+
+    private nonisolated static func rootURL(for baseURL: URL, path: String = "") -> URL {
+        var components = URLComponents()
+        components.scheme = baseURL.scheme
+        components.host = baseURL.host
+        components.port = baseURL.port
+        components.path = path
+        return components.url ?? baseURL.deletingLastPathComponent()
     }
 
     private nonisolated static func tomlEscape(_ value: String) -> String {

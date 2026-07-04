@@ -77,6 +77,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/health/upstream", get(upstream_health))
         .route("/v1/models", get(models))
         .route("/models", get(models))
         .route("/v1/responses", post(responses))
@@ -115,6 +116,54 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "model": state.runtime.model,
         "hasApiKey": state.runtime.api_key.is_some(),
         "baseUrl": state.runtime.base_url,
+    }))
+}
+
+async fn upstream_health(State(state): State<AppState>) -> Response {
+    match check_upstream_models(&state).await {
+        Ok(body) => Json(body).into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+async fn check_upstream_models(state: &AppState) -> Result<Value, ProxyError> {
+    let Some(api_key) = state.runtime.api_key.as_deref() else {
+        return Err(ProxyError::AuthError(format!(
+            "provider '{}' has no API key",
+            state.runtime.provider.id
+        )));
+    };
+
+    let models_url = build_upstream_models_url(&state.runtime.base_url);
+    let upstream = state
+        .client
+        .get(&models_url)
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|error| ProxyError::ForwardFailed(error.to_string()))?;
+
+    let status = upstream.status();
+    let text = upstream
+        .text()
+        .await
+        .unwrap_or_else(|error| error.to_string());
+    if !status.is_success() {
+        return Err(ProxyError::UpstreamError {
+            status: status.as_u16(),
+            body: Some(text),
+        });
+    }
+
+    let parsed = serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}));
+    let model_ids = extract_model_ids(&parsed);
+    Ok(json!({
+        "ok": true,
+        "provider": state.runtime.provider.id,
+        "model": state.runtime.model,
+        "modelsEndpoint": models_url,
+        "modelCount": model_ids.len(),
+        "models": model_ids,
     }))
 }
 
@@ -252,4 +301,44 @@ fn build_upstream_url(base_url: &str, endpoint: &str) -> String {
         url = url.replace("/v1/v1", "/v1");
     }
     url
+}
+
+fn build_upstream_models_url(base_url: &str) -> String {
+    let base_trimmed = base_url.trim_end_matches('/');
+    let mut url = if let Some(prefix) = base_trimmed.strip_suffix("/chat/completions") {
+        format!("{}/models", prefix.trim_end_matches('/'))
+    } else if base_trimmed.ends_with("/v1") {
+        format!("{base_trimmed}/models")
+    } else if is_origin_only_url(base_trimmed) {
+        format!("{base_trimmed}/v1/models")
+    } else {
+        format!("{base_trimmed}/models")
+    };
+
+    while url.contains("/v1/v1") {
+        url = url.replace("/v1/v1", "/v1");
+    }
+    url
+}
+
+fn extract_model_ids(value: &Value) -> Vec<String> {
+    value
+        .get("data")
+        .or_else(|| value.get("models"))
+        .and_then(|models| models.as_array())
+        .map(|models| {
+            models
+                .iter()
+                .filter_map(|model| {
+                    if let Some(id) = model.get("id").and_then(Value::as_str) {
+                        Some(id.to_string())
+                    } else if let Some(model) = model.get("model").and_then(Value::as_str) {
+                        Some(model.to_string())
+                    } else {
+                        model.as_str().map(ToString::to_string)
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }

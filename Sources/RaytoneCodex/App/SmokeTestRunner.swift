@@ -1414,16 +1414,28 @@ enum SmokeTestRunner {
     private static func runProviderSidecarSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
         let providerID = "smoke-\(UUID().uuidString.prefix(8))"
-        let editedBaseURL = "http://127.0.0.1:65534/v1"
         let editedModel = "smoke-edited-model"
 
         Task { @MainActor in
             let store = SessionStore()
             store.workspacePath = workspacePath
+            let server: MockResponsesServer
+            do {
+                server = try startMockModelsServer(models: [editedModel, "smoke-secondary-model"])
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspacePath,
+                    "providerID": providerID,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+            let editedBaseURL = "\(server.baseURL)/v1"
             store.providers.append(RaytoneProviderConfiguration(
                 id: providerID,
                 displayName: "Smoke Provider",
-                baseURL: "http://127.0.0.1:65535/v1",
+                baseURL: editedBaseURL,
                 model: "smoke-model",
                 models: ["smoke-model"],
                 kind: .chatCompletionsSidecar
@@ -1449,8 +1461,10 @@ enum SmokeTestRunner {
                 )) ?? ""
                 let ok = store.runtimeSnapshot.executable != nil &&
                     store.selectedProviderID == providerID &&
-                    store.providerConnectionStatusText.contains("sidecar 已就绪") &&
+                    store.providerConnectionStatusText.contains("上游已验证") &&
                     store.providerConnectionBaseURL.contains("127.0.0.1") &&
+                    store.providerConnectionDetailText.contains("/v1/models") &&
+                    store.providerConnectionDetailText.contains("2 个模型") &&
                     store.selectedProvider.baseURL == editedBaseURL &&
                     store.selectedProvider.model == editedModel &&
                     codexConfigText.contains("model_provider = \"raytone-\(providerID)\"") &&
@@ -1461,12 +1475,20 @@ enum SmokeTestRunner {
                     proxyConfigText.contains("base_url = \"\(editedBaseURL)\"") &&
                     proxyConfigText.contains("model = \"\(editedModel)\"") &&
                     proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"")
+                let upstreamRequestLog = (try? String(contentsOf: server.requestLogURL, encoding: .utf8)) ?? ""
+                let upstreamVerified = (
+                    upstreamRequestLog.contains("\"path\":\"/v1/models\"") ||
+                        upstreamRequestLog.contains("\"path\":\"\\/v1\\/models\"")
+                ) &&
+                    upstreamRequestLog.contains("\"authorization\":\"Bearer raytone-smoke-key\"")
+                let finalOK = ok && upstreamVerified
 
                 await store.stopAppServerForTesting()
                 try? RaytoneKeychainService.deletePassword(account: providerID)
+                server.stop()
 
                 emitJSON([
-                    "ok": ok,
+                    "ok": finalOK,
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
@@ -1480,13 +1502,16 @@ enum SmokeTestRunner {
                     "baseURL": store.providerConnectionBaseURL,
                     "codexConfigPath": store.providerConnectionCodexConfigPath,
                     "proxyConfigPath": store.providerConnectionProxyConfigPath,
+                    "upstreamVerified": upstreamVerified,
+                    "upstreamRequestLog": upstreamRequestLog,
                     "codexConfigText": codexConfigText,
                     "proxyConfigText": proxyConfigText
                 ])
-                exit(ok ? 0 : 1)
+                exit(finalOK ? 0 : 1)
             } catch {
                 await store.stopAppServerForTesting()
                 try? RaytoneKeychainService.deletePassword(account: providerID)
+                server.stop()
                 emitJSON([
                     "ok": false,
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
@@ -4297,6 +4322,50 @@ enum SmokeTestRunner {
         )
     }
 
+    private static func startMockModelsServer(models: [String]) throws -> MockResponsesServer {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexMockModels-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let modelsURL = directory.appendingPathComponent("models.json")
+        let scriptURL = directory.appendingPathComponent("server.py")
+        let portURL = directory.appendingPathComponent("port.txt")
+        let logURL = directory.appendingPathComponent("requests.jsonl")
+        let modelData = try JSONSerialization.data(withJSONObject: models, options: [])
+        try modelData.write(to: modelsURL)
+        try mockModelsServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", scriptURL.path, modelsURL.path, portURL.path, logURL.path]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+
+        let deadline = Date().addingTimeInterval(5)
+        while !fileManager.fileExists(atPath: portURL.path), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        guard fileManager.fileExists(atPath: portURL.path) else {
+            process.terminate()
+            throw NSError(
+                domain: "RaytoneCodexProviderSmoke",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "mock models server did not publish a port"]
+            )
+        }
+
+        let port = try String(contentsOf: portURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return MockResponsesServer(
+            process: process,
+            baseURL: "http://127.0.0.1:\(port)",
+            requestLogURL: logURL
+        )
+    }
+
     private static var mockResponsesServerScript: String {
         #"""
         import json
@@ -4350,6 +4419,51 @@ enum SmokeTestRunner {
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.send_header("cache-control", "no-cache")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, format, *args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        port_file.write_text(str(server.server_port), encoding="utf-8")
+        server.serve_forever()
+        """#
+    }
+
+    private static var mockModelsServerScript: String {
+        #"""
+        import json
+        import sys
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from pathlib import Path
+
+        models = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+        port_file = Path(sys.argv[2])
+        log_file = Path(sys.argv[3])
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                with log_file.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "method": "GET",
+                        "path": self.path,
+                        "authorization": self.headers.get("authorization", ""),
+                    }, separators=(",", ":")) + "\n")
+                if self.path not in ("/v1/models", "/models"):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                payload = json.dumps({
+                    "object": "list",
+                    "data": [
+                        {"id": model, "object": "model", "created": 0, "owned_by": "raytone-smoke"}
+                        for model in models
+                    ],
+                }, separators=(",", ":")).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
                 self.send_header("content-length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)

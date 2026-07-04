@@ -3395,14 +3395,15 @@ final class SessionStore: ObservableObject {
             guard let session = activeProxySession else {
                 throw RaytoneProxyServiceError.healthCheckFailed("sidecar 已启动但没有返回 session")
             }
+            let upstream = try await proxyService.verifyUpstreamConnection(session: session)
 
             providerConnectionBaseURL = session.baseURL.absoluteString
             providerConnectionProxyConfigPath = session.configURL.path
             providerConnectionCodexConfigPath = session.codexHomeURL
                 .appendingPathComponent("config.toml")
                 .path
-            providerConnectionStatusText = "sidecar 已就绪：127.0.0.1:\(session.port)"
-            providerConnectionDetailText = "raytone-proxy /health：\(provider.displayName) · \(provider.model)"
+            providerConnectionStatusText = "上游已验证：\(provider.displayName)"
+            providerConnectionDetailText = "\(upstream.modelsEndpoint) · \(upstream.modelCount) 个模型 · 当前 \(upstream.model)"
             runtimeCatalogStatusText = "Provider 测试通过：\(provider.displayName) via \(providerConnectionBaseURL)"
         } catch {
             providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
@@ -3707,8 +3708,8 @@ final class SessionStore: ObservableObject {
         }
 
         let candidates = [
-            "\(workspacePath)/.build/raytone-codex-cli/raytone-proxy",
-            "\(workspacePath)/sidecar/raytone-proxy/target/release/raytone-proxy"
+            "\(workspacePath)/sidecar/raytone-proxy/target/release/raytone-proxy",
+            "\(workspacePath)/.build/raytone-codex-cli/raytone-proxy"
         ]
         return candidates
             .first { FileManager.default.isExecutableFile(atPath: $0) }
