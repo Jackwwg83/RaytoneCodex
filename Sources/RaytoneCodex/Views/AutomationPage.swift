@@ -51,7 +51,10 @@ struct AutomationPage: View {
                     Text("按计划或按需运行聊天。")
                         .font(.system(size: 12.5))
                         .foregroundStyle(Theme.textSecondary)
-                    Button("了解更多") {}
+                    Button("了解更多") {
+                        store.route = .settings
+                        store.settingsPane = .hooks
+                    }
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Theme.info)
                         .buttonStyle(.plain)

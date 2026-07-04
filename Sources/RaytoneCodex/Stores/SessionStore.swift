@@ -379,6 +379,62 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func saveRuntimeApprovalPolicy(_ policy: CodexApprovalPolicy) async {
+        approval = policy
+        accessMode = Self.accessMode(for: approval, sandbox: sandbox)
+        updateSelectedThread { thread in
+            thread.approval = policy
+        }
+
+        runtimeCatalogStatusText = "正在写入 approval_policy…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "approval_policy",
+                value: .string(policy.appServerValue)
+            )
+            runtimeCatalogStatusText = "approval_policy 已写入 config.toml"
+            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+        } catch {
+            runtimeCatalogStatusText = "approval_policy 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func saveRuntimeSandboxMode(_ mode: CodexSandboxMode) async {
+        sandbox = mode
+        accessMode = Self.accessMode(for: approval, sandbox: sandbox)
+        updateSelectedThread { thread in
+            thread.sandbox = mode
+        }
+
+        runtimeCatalogStatusText = "正在写入 sandbox_mode…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "sandbox_mode",
+                value: .string(mode.rawValue)
+            )
+            runtimeCatalogStatusText = "sandbox_mode 已写入 config.toml"
+            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+        } catch {
+            runtimeCatalogStatusText = "sandbox_mode 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func startVoiceInput() {
+        let didStart = NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+        guard !didStart else { return }
+
+        updateSelectedThread { thread in
+            thread.items.append(TranscriptItem(kind: .notice(Notice(
+                level: .info,
+                text: "系统没有接受听写命令。请确认 macOS 已启用听写，或把焦点放到输入框后再点麦克风。"
+            ))))
+        }
+    }
+
     func openToolPanel(_ panel: ToolPanel) {
         showInspector = true
         toolPanel = panel
@@ -833,6 +889,46 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func archiveRuntimeThread(id threadID: String) async {
+        runtimeCatalogStatusText = "正在归档对话…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.archiveThread(id: threadID)
+            runtimeCatalogStatusText = "thread/archive：已归档 \(threadID)"
+        } catch {
+            runtimeCatalogStatusText = "归档失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func setRuntimeThreadName(id threadID: String, name: String) async {
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.setThreadName(id: threadID, name: name)
+            runtimeCatalogStatusText = "thread/name/set：已重命名"
+        } catch {
+            runtimeCatalogStatusText = "远端重命名失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func forkRuntimeThread(sourceThreadID: String, localCopyID: UUID) async {
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let serverThread = try await client.forkThread(id: sourceThreadID, options: appServerOptions())
+            guard let index = threads.firstIndex(where: { $0.id == localCopyID }) else {
+                return
+            }
+            threads[index].appServerThreadID = serverThread.id
+            threads[index].appServerSessionID = serverThread.sessionID
+            threads[index].updatedAt = Date()
+            runtimeCatalogStatusText = "thread/fork：已复制为 \(serverThread.id)"
+        } catch {
+            runtimeCatalogStatusText = "远端复制失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     func refreshWorkspaceGitDiff() async {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在读取 gitDiffToRemote…"
@@ -931,6 +1027,18 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    func resetCodexMemory() async {
+        runtimeCatalogStatusText = "正在调用 memory/reset…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.resetMemory()
+            runtimeCatalogStatusText = "memory/reset：记忆已重置"
+        } catch {
+            runtimeCatalogStatusText = "记忆重置失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
     }
 
     func refreshWorkspaceWorktrees() async {
@@ -1295,7 +1403,12 @@ final class SessionStore: ObservableObject {
         }
 
         let environmentOverrides = useProviderConfiguration ? try await appServerEnvironmentOverrides() : [:]
-        let environmentKey = useProviderConfiguration ? (environmentOverrides["CODEX_HOME"] ?? "global") : "global-tools"
+        let environmentKey: String
+        if useProviderConfiguration {
+            environmentKey = environmentOverrides["CODEX_HOME"] ?? "global"
+        } else {
+            environmentKey = selectedProvider.usesSidecar ? "global-tools" : "global"
+        }
         if appServerEnvironmentKey != nil, appServerEnvironmentKey != environmentKey {
             if let existing = appServerClient {
                 await existing.stop()
@@ -1528,7 +1641,9 @@ final class SessionStore: ObservableObject {
                 clearResolvedApproval(requestID)
             }
         case "skills/changed", "mcpServer/startupStatus/updated":
-            Task { await refreshRuntimeCatalog(forceReloadSkills: method == "skills/changed") }
+            if !isRunning {
+                Task { await refreshRuntimeCatalog(forceReloadSkills: method == "skills/changed") }
+            }
         case "item/agentMessage/delta":
             appendAgentDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":

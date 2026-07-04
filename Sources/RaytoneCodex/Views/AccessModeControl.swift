@@ -42,7 +42,10 @@ struct AccessModePopover: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 12)
-                Button("了解更多") {}
+                Button("了解更多") {
+                    store.route = .settings
+                    store.settingsPane = .configuration
+                }
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.info)

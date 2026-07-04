@@ -28,7 +28,10 @@ struct EnvironmentInfoPanel: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
             Spacer(minLength: 0)
-            Button {} label: {
+            Button {
+                store.route = .settings
+                store.settingsPane = .environments
+            } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 13, weight: .medium))
             }

@@ -1,3 +1,4 @@
+import AppKit
 import RaytoneCodexCore
 import SwiftUI
 
@@ -22,6 +23,7 @@ struct SettingsRouteView: View {
     @State private var providerStatusMessage = "未测试"
     @State private var providerThinkingEnabled = true
     @State private var instructionsStatus = ""
+    @State private var profileStatus = ""
     @State private var customInstructions = """
     Prefer concise, actionable engineering updates.
     Keep implementation notes tied to real files and runtime evidence.
@@ -241,12 +243,24 @@ struct SettingsRouteView: View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
                 Spacer(minLength: 0)
-                Button("Share") {}
+                Button("Share") {
+                    copyProfileShareSummary()
+                }
                     .buttonStyle(ChipButtonStyle())
-                Button("私有") {}
+                Button("私有") {
+                    profileStatus = "个人资料保持私有"
+                }
                     .buttonStyle(ChipButtonStyle())
-                Button("编辑") {}
+                Button("编辑") {
+                    store.settingsPane = .personalization
+                }
                     .buttonStyle(ChipButtonStyle())
+            }
+            if !profileStatus.isEmpty {
+                Text(profileStatus)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
             VStack(spacing: 8) {
@@ -806,7 +820,9 @@ struct SettingsRouteView: View {
                     }
                     SettingsToggleRow(title: "跳过工具辅助对话", description: "请勿从使用了 MCP 工具或网页搜索的对话中生成记忆", isOn: $skipToolChats)
                     SettingsValueRow(title: "重置记忆", description: "删除所有 Codex 记忆") {
-                        Button("重置") {}
+                        Button("重置") {
+                            confirmResetMemory()
+                        }
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.danger)
                             .buttonStyle(.plain)
@@ -1384,8 +1400,13 @@ struct SettingsRouteView: View {
     private var approvalMenu: some View {
         Menu {
             ForEach(CodexApprovalPolicy.allCases, id: \.self) { policy in
-                Button(SessionStore.approvalName(policy)) {
-                    store.approval = policy
+                Button {
+                    Task { await store.saveRuntimeApprovalPolicy(policy) }
+                } label: {
+                    Label(
+                        SessionStore.approvalName(policy),
+                        systemImage: policy == store.approval ? "checkmark" : "circle"
+                    )
                 }
             }
         } label: {
@@ -1398,8 +1419,13 @@ struct SettingsRouteView: View {
     private var sandboxMenu: some View {
         Menu {
             ForEach(CodexSandboxMode.allCases, id: \.self) { mode in
-                Button(ComposerView.sandboxName(mode)) {
-                    store.sandbox = mode
+                Button {
+                    Task { await store.saveRuntimeSandboxMode(mode) }
+                } label: {
+                    Label(
+                        ComposerView.sandboxName(mode),
+                        systemImage: mode == store.sandbox ? "checkmark" : "circle"
+                    )
                 }
             }
         } label: {
@@ -1412,7 +1438,9 @@ struct SettingsRouteView: View {
     private func menuValue(_ title: String, values: [String]) -> some View {
         Menu {
             ForEach(values, id: \.self) { value in
-                Button(value) {}
+                Button(value) {
+                    store.runtimeCatalogStatusText = "\(value) 已选择"
+                }
             }
         } label: {
             menuLabel(title)
@@ -1458,6 +1486,30 @@ struct SettingsRouteView: View {
         .padding(2)
         .background(Theme.fill)
         .clipShape(Capsule())
+    }
+
+    private func copyProfileShareSummary() {
+        let account = store.runtimeAccount.map(SessionStore.accountDisplayName) ?? "未返回账户"
+        let summary = """
+        RaytoneCodex
+        账户：\(account)
+        运行时：\(store.runtimeSummary)
+        工作区：\(Project.abbreviate(store.workspacePath))
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+        profileStatus = "已复制分享摘要"
+    }
+
+    private func confirmResetMemory() {
+        let alert = NSAlert()
+        alert.messageText = "重置 Codex 记忆？"
+        alert.informativeText = "这会调用 app-server 的 memory/reset 删除 Codex 记忆。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "重置")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await store.resetCodexMemory() }
     }
 
     private func metricRow(_ label: String, _ value: String) -> some View {

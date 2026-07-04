@@ -119,7 +119,10 @@ struct SidebarView: View {
 
             Spacer(minLength: 0)
 
-            Button {} label: {
+            Button {
+                store.route = .settings
+                store.settingsPane = .computerControl
+            } label: {
                 Image(systemName: "iphone.gen3")
                     .font(.system(size: 14, weight: .regular))
             }

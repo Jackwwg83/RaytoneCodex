@@ -802,6 +802,7 @@ public actor CodexAppServerClient {
     private let executable: CodexExecutable
     private let workspaceURL: URL
     private let environmentOverrides: [String: String]
+    private let experimentalApi: Bool
     private let eventContinuation: AsyncStream<ServerEvent>.Continuation
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -821,11 +822,13 @@ public actor CodexAppServerClient {
     public init(
         executable: CodexExecutable,
         workspaceURL: URL,
-        environmentOverrides: [String: String] = [:]
+        environmentOverrides: [String: String] = [:],
+        experimentalApi: Bool = true
     ) {
         self.executable = executable
         self.workspaceURL = workspaceURL
         self.environmentOverrides = environmentOverrides
+        self.experimentalApi = experimentalApi
         self.debugEnabled = ProcessInfo.processInfo.environment["RAYTONE_CODEX_APP_SERVER_DEBUG"] == "1"
         let stream = AsyncStream<ServerEvent>.makeStream()
         self.events = stream.stream
@@ -876,7 +879,7 @@ public actor CodexAppServerClient {
                 "version": .string("0.1.0")
             ]),
             "capabilities": .object([
-                "experimentalApi": .bool(false),
+                "experimentalApi": .bool(experimentalApi),
                 "optOutNotificationMethods": .array([])
             ])
         ])
@@ -1147,6 +1150,37 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func setThreadName(id threadID: String, name: String) async throws {
+        _ = try await request(method: "thread/name/set", params: .object([
+            "threadId": .string(threadID),
+            "name": .string(name)
+        ]))
+    }
+
+    public func forkThread(id threadID: String, options: CodexAppServerOptions) async throws -> CodexAppServerThread {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "cwd": .string(options.workspaceURL.path),
+            "approvalPolicy": .string(options.approvalPolicy.appServerValue),
+            "sandbox": .string(options.sandbox.rawValue),
+            "ephemeral": .bool(false)
+        ]
+        if let model = options.model {
+            params["model"] = .string(model)
+        }
+
+        let result = try await request(method: "thread/fork", params: .object(params))
+        guard let thread = result["thread"] else {
+            throw CodexAppServerError.invalidResponse("Missing thread/fork thread.")
+        }
+        return CodexAppServerThread(
+            id: thread["id"]?.stringValue ?? threadID,
+            sessionID: thread["sessionId"]?.stringValue ?? "",
+            preview: thread["preview"]?.stringValue ?? "",
+            cliVersion: result["model"]?.stringValue
+        )
+    }
+
     @discardableResult
     public func unarchiveThread(id threadID: String) async throws -> CodexRuntimeThreadSummary? {
         let result = try await request(method: "thread/unarchive", params: .object([
@@ -1176,6 +1210,10 @@ public actor CodexAppServerClient {
     public func readRemoteControlStatus() async throws -> CodexRuntimeRemoteControlStatus {
         let result = try await request(method: "remoteControl/status/read", params: nil)
         return Self.remoteControlStatus(from: result)
+    }
+
+    public func resetMemory() async throws {
+        _ = try await request(method: "memory/reset", params: nil)
     }
 
     public func listApps(threadID: String? = nil, limit: Int = 100, forceRefetch: Bool = false) async throws -> CodexRuntimeAppCatalog {
@@ -1826,7 +1864,7 @@ private extension JSONValue {
     }
 }
 
-private extension CodexApprovalPolicy {
+public extension CodexApprovalPolicy {
     var appServerValue: String {
         switch self {
         case .never:
@@ -1839,7 +1877,7 @@ private extension CodexApprovalPolicy {
     }
 }
 
-private extension CodexSandboxMode {
+public extension CodexSandboxMode {
     var appServerSandboxPolicy: JSONValue {
         switch self {
         case .readOnly:

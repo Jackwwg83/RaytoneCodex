@@ -25,14 +25,19 @@ extension SessionStore {
     /// Remove a thread. Keeps at least one thread alive and reselects if needed.
     func deleteThread(_ id: UUID) {
         guard threads.count > 1 else { return }
+        let appServerThreadID = threads.first(where: { $0.id == id })?.appServerThreadID
         let wasSelected = selectedThreadID == id
         threads.removeAll { $0.id == id }
         if wasSelected, let next = threads.first {
             selectThread(next)
         }
+        if let appServerThreadID {
+            Task { await archiveRuntimeThread(id: appServerThreadID) }
+        }
     }
 
     func duplicateSelectedThread() {
+        let sourceAppServerThreadID = selectedThread.appServerThreadID
         let copy = ChatThread(
             title: "\(selectedThread.title) 副本",
             projectID: selectedThread.projectID,
@@ -45,8 +50,12 @@ extension SessionStore {
             appServerThreadID: nil,
             appServerSessionID: nil
         )
+        let copyID = copy.id
         threads.insert(copy, at: 0)
         selectThread(copy)
+        if let sourceAppServerThreadID {
+            Task { await forkRuntimeThread(sourceThreadID: sourceAppServerThreadID, localCopyID: copyID) }
+        }
     }
 
     func renameSelectedThread() {
@@ -73,8 +82,12 @@ extension SessionStore {
         guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }) else {
             return
         }
+        let appServerThreadID = threads[index].appServerThreadID
         threads[index].title = title
         threads[index].updatedAt = Date()
+        if let appServerThreadID {
+            Task { await setRuntimeThreadName(id: appServerThreadID, name: title) }
+        }
     }
 
     /// Record an approve / deny decision on an approval request in the selected thread.

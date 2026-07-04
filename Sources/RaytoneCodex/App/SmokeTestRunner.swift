@@ -20,6 +20,10 @@ enum SmokeTestRunner {
             runAutomationSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
+        } else if CommandLine.arguments.contains("--config-write-smoke-test") {
+            runConfigWriteSmoke()
+        } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
+            runThreadManagementSmoke()
         }
     }
 
@@ -82,6 +86,10 @@ enum SmokeTestRunner {
             let runtime = store.runtimeSnapshot
             store.prompt = prompt
             await store.runPrompt()
+            let deadline = Date().addingTimeInterval(120)
+            while store.isRunning && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
 
             let items = store.selectedThread.items
             let userMessages = items.compactMap { item -> String? in
@@ -102,8 +110,14 @@ enum SmokeTestRunner {
             }
             let lastCommand = commands.last
             let finalMessage = agentMessages.last ?? ""
+            let usedExecFallback = lastCommand?.command.contains(" codex exec ") == true ||
+                lastCommand?.command.hasSuffix("/codex exec") == true ||
+                lastCommand?.command.contains("/codex exec ") == true
+            let appServerThreadID = store.selectedThread.appServerThreadID ?? ""
             let ok = userMessages.last == prompt &&
-                lastCommand?.exitCode == 0 &&
+                !store.isRunning &&
+                !usedExecFallback &&
+                !appServerThreadID.isEmpty &&
                 finalMessage == "RaytoneCodex session smoke OK" &&
                 notices.allSatisfy { notice in
                     if case .error = notice.level { return false }
@@ -117,6 +131,9 @@ enum SmokeTestRunner {
                 "runtimeVersion": runtime.version ?? "",
                 "workspacePath": workspacePath,
                 "threadTitle": store.selectedThread.title,
+                "isRunning": store.isRunning,
+                "appServerThreadID": appServerThreadID,
+                "usedExecFallback": usedExecFallback,
                 "transcriptItemCount": items.count,
                 "userMessageCount": userMessages.count,
                 "commandCount": commands.count,
@@ -279,6 +296,157 @@ enum SmokeTestRunner {
                 ] as [String: Any]
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runConfigWriteSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task {
+            let service = CodexCLIService()
+            let runtime = await service.inspectRuntime()
+            guard let executable = runtime.executable else {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "none",
+                    "runtimePath": "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "error": "Codex runtime executable was not found"
+                ])
+                exit(1)
+            }
+
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexConfigSmoke-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                let client = CodexAppServerClient(
+                    executable: executable,
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    environmentOverrides: [
+                        "CODEX_HOME": codexHome.path
+                    ]
+                )
+                try await client.initialize()
+                try await client.writeConfigValue(
+                    keyPath: "approval_policy",
+                    value: .string(CodexApprovalPolicy.onRequest.appServerValue)
+                )
+                try await client.writeConfigValue(
+                    keyPath: "sandbox_mode",
+                    value: .string(CodexSandboxMode.readOnly.rawValue)
+                )
+                try await client.resetMemory()
+                let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
+                await client.stop()
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let ok = config.approvalPolicy == "on-request" &&
+                    config.sandboxMode == "read-only" &&
+                    configText.contains("approval_policy") &&
+                    configText.contains("sandbox_mode")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "approvalPolicy": config.approvalPolicy ?? "",
+                    "sandboxMode": config.sandboxMode ?? "",
+                    "memoryReset": true,
+                    "configText": configText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runThreadManagementSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task {
+            let service = CodexCLIService()
+            let runtime = await service.inspectRuntime()
+            guard let executable = runtime.executable else {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "none",
+                    "runtimePath": "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "error": "Codex runtime executable was not found"
+                ])
+                exit(1)
+            }
+
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadSmoke-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                let client = CodexAppServerClient(
+                    executable: executable,
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    environmentOverrides: [
+                        "CODEX_HOME": codexHome.path
+                    ]
+                )
+                try await client.initialize()
+                let options = CodexAppServerOptions(
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    sandbox: .readOnly,
+                    approvalPolicy: .never
+                )
+                let thread = try await client.startThread(options: options)
+                let renamed = "Raytone smoke \(UUID().uuidString.prefix(8))"
+                try await client.setThreadName(id: thread.id, name: renamed)
+                let forked = try await client.forkThread(id: thread.id, options: options)
+                try await client.archiveThread(id: forked.id)
+                await client.stop()
+
+                let ok = !thread.id.isEmpty && !forked.id.isEmpty && thread.id != forked.id
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "threadId": thread.id,
+                    "forkedThreadId": forked.id,
+                    "renamedTo": renamed,
+                    "archivedFork": forked.id
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()

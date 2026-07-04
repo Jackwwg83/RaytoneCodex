@@ -5,6 +5,8 @@ struct PluginsPage: View {
     @ObservedObject var store: SessionStore
     @State private var selectedTab: PluginTab = .plugins
     @State private var search = ""
+    @State private var sourceFilter = "Built by OpenAI"
+    @State private var stateFilter = "全部"
 
     private let columns = [
         GridItem(.flexible(), spacing: 14),
@@ -13,24 +15,52 @@ struct PluginsPage: View {
 
     private var filteredPlugins: [CodexRuntimePlugin] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return store.runtimePlugins }
-        return store.runtimePlugins.filter {
-            $0.displayName.localizedCaseInsensitiveContains(query) ||
-                $0.name.localizedCaseInsensitiveContains(query) ||
-                $0.summary.localizedCaseInsensitiveContains(query) ||
-                $0.marketplaceDisplayName.localizedCaseInsensitiveContains(query)
+        return store.runtimePlugins.filter { plugin in
+            let matchesSource = sourceFilter == "全部来源" ||
+                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("OpenAI") ||
+                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("Codex official") ||
+                plugin.developerName?.localizedCaseInsensitiveContains("OpenAI") == true
+            let matchesState: Bool
+            switch stateFilter {
+            case "已安装":
+                matchesState = plugin.installed
+            case "未安装":
+                matchesState = !plugin.installed
+            default:
+                matchesState = true
+            }
+            let matchesQuery = query.isEmpty ||
+                plugin.displayName.localizedCaseInsensitiveContains(query) ||
+                plugin.name.localizedCaseInsensitiveContains(query) ||
+                plugin.summary.localizedCaseInsensitiveContains(query) ||
+                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains(query)
+            return matchesSource && matchesState && matchesQuery
         }
     }
 
     private var filteredSkills: [CodexRuntimeSkill] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return store.runtimeSkills }
         return store.runtimeSkills.filter {
-            $0.displayName.localizedCaseInsensitiveContains(query) ||
+            let matchesState: Bool
+            switch stateFilter {
+            case "已启用":
+                matchesState = $0.enabled
+            case "已停用":
+                matchesState = !$0.enabled
+            default:
+                matchesState = true
+            }
+            let matchesQuery = query.isEmpty ||
+                $0.displayName.localizedCaseInsensitiveContains(query) ||
                 $0.name.localizedCaseInsensitiveContains(query) ||
                 $0.summary.localizedCaseInsensitiveContains(query) ||
                 $0.scope.localizedCaseInsensitiveContains(query)
+            return matchesState && matchesQuery
         }
+    }
+
+    private var stateFilterValues: [String] {
+        selectedTab == .plugins ? ["全部", "已安装", "未安装"] : ["全部", "已启用", "已停用"]
     }
 
     var body: some View {
@@ -96,7 +126,9 @@ struct PluginsPage: View {
             .buttonStyle(ChipButtonStyle(prominent: true))
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            Button {} label: {
+            Button {
+                Task { await store.refreshRuntimeCatalog(forceReloadSkills: true) }
+            } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 14, weight: .semibold))
             }
@@ -141,17 +173,21 @@ struct PluginsPage: View {
             .background(Theme.fill)
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
 
-            filterMenu("Built by OpenAI")
-            filterMenu("全部")
+            filterMenu(selection: $sourceFilter, values: ["Built by OpenAI", "全部来源"])
+            filterMenu(selection: $stateFilter, values: stateFilterValues)
         }
     }
 
-    private func filterMenu(_ title: String) -> some View {
+    private func filterMenu(selection: Binding<String>, values: [String]) -> some View {
         Menu {
-            Button(title) {}
+            ForEach(values, id: \.self) { value in
+                Button(value) {
+                    selection.wrappedValue = value
+                }
+            }
         } label: {
             HStack(spacing: 6) {
-                Text(title)
+                Text(selection.wrappedValue)
                     .font(.system(size: 12.5, weight: .medium))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))

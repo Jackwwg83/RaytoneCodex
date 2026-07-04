@@ -134,7 +134,11 @@ private struct ThreadHeader: View {
 
             Spacer(minLength: 0)
 
-            Button {} label: {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    showInspector = false
+                }
+            } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 13, weight: .medium))
             }

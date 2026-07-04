@@ -144,7 +144,9 @@ struct ComposerView: View {
     }
 
     private var micButton: some View {
-        Button {} label: {
+        Button {
+            store.startVoiceInput()
+        } label: {
             Image(systemName: "mic")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
