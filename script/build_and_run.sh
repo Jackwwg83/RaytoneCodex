@@ -1621,6 +1621,14 @@ case "$MODE" in
       --desktop-settings-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --prevent-sleep-smoke|prevent-sleep-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --prevent-sleep-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --goal-smoke|goal-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -1663,7 +1671,7 @@ case "$MODE" in
     run_package_audit
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--tools-smoke|--file-search-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--mention-smoke|--runtime-pages-smoke|--automation-smoke|--automation-hook-smoke|--integration-pages-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-config-smoke|--provider-sidecar-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--work-mode-smoke|--desktop-settings-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--tools-smoke|--file-search-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--mention-smoke|--runtime-pages-smoke|--automation-smoke|--automation-hook-smoke|--integration-pages-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-config-smoke|--provider-sidecar-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--work-mode-smoke|--desktop-settings-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
     exit 2
     ;;
 esac

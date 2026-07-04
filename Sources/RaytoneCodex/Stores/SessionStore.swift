@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import IOKit.pwr_mgt
 import RaytoneCodexCore
 import UniformTypeIdentifiers
 import WebKit
@@ -94,7 +95,9 @@ final class SessionStore: ObservableObject {
     @Published var providerConnectionCodexConfigPath = ""
     @Published var providerConnectionProxyConfigPath = ""
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
-    @Published var isRunning = false
+    @Published var isRunning = false {
+        didSet { updatePreventSleepAssertion() }
+    }
     @Published var lastCommandPreview = ""
     @Published var lastOutputPath = ""
     @Published var lastRawOutput = ""
@@ -120,7 +123,14 @@ final class SessionStore: ObservableObject {
     private var appServerConnectionState: ConnectionState?
     private var appServerEnvironmentKey: String?
     private var activeProxySession: RaytoneProxySession?
+    private var preventSleepAssertionID: IOPMAssertionID?
     var appServerEnvironmentOverridesForTesting: [String: String] = [:]
+
+    deinit {
+        if let preventSleepAssertionID {
+            IOPMAssertionRelease(preventSleepAssertionID)
+        }
+    }
 
     init(service: CodexCLIService = CodexCLIService()) {
         self.service = service
@@ -313,6 +323,10 @@ final class SessionStore: ObservableObject {
         runtimeConfig?.memoryDisableOnExternalContext ?? false
     }
 
+    var preventSleepAssertionIsActive: Bool {
+        preventSleepAssertionID != nil
+    }
+
     static var startupScreenIdentifier: String? {
         ProcessInfo.processInfo.environment["RAYTONE_CODEX_UI_SCREEN"]?.lowercased()
     }
@@ -364,6 +378,39 @@ final class SessionStore: ObservableObject {
         desktopAppearance = settings.appearance ?? "跟随系统"
         desktopOpenTarget = settings.openTarget ?? "iTerm2"
         desktopLanguage = settings.language ?? "自动检测"
+        updatePreventSleepAssertion()
+    }
+
+    private func updatePreventSleepAssertion() {
+        if isRunning && desktopPreventSleepWhileRunning {
+            acquirePreventSleepAssertionIfNeeded()
+        } else {
+            releasePreventSleepAssertion()
+        }
+    }
+
+    private func acquirePreventSleepAssertionIfNeeded() {
+        guard preventSleepAssertionID == nil else { return }
+
+        var assertionID: IOPMAssertionID = 0
+        let result = IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            "RaytoneCodex running Codex turn" as CFString,
+            &assertionID
+        )
+
+        if result == kIOReturnSuccess {
+            preventSleepAssertionID = assertionID
+        } else {
+            runtimeCatalogErrors.append("防止系统休眠失败：IOKit \(result)")
+        }
+    }
+
+    private func releasePreventSleepAssertion() {
+        guard let assertionID = preventSleepAssertionID else { return }
+        IOPMAssertionRelease(assertionID)
+        preventSleepAssertionID = nil
     }
 
     private func applyRuntimeDefaultPermissionsProfile(_ profile: String?) {
@@ -399,6 +446,7 @@ final class SessionStore: ObservableObject {
     }
 
     func stopAppServerForTesting() async {
+        isRunning = false
         if let client = appServerClient {
             await client.stop()
         }
@@ -1127,6 +1175,7 @@ final class SessionStore: ObservableObject {
 
     func saveRuntimePreventSleepWhileRunning(_ enabled: Bool) async {
         desktopPreventSleepWhileRunning = enabled
+        updatePreventSleepAssertion()
         await saveRuntimeDesktopSetting(key: "prevent_sleep_while_running", value: .bool(enabled), statusName: "防止系统休眠")
     }
 

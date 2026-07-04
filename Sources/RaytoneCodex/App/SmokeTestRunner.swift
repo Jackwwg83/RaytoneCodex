@@ -54,6 +54,8 @@ enum SmokeTestRunner {
             runWorkModeSmoke()
         } else if CommandLine.arguments.contains("--desktop-settings-smoke-test") {
             runDesktopSettingsSmoke()
+        } else if CommandLine.arguments.contains("--prevent-sleep-smoke-test") {
+            runPreventSleepSmoke()
         } else if CommandLine.arguments.contains("--goal-smoke-test") {
             runGoalSmoke()
         } else if CommandLine.arguments.contains("--browser-navigation-smoke-test") {
@@ -1770,6 +1772,105 @@ enum SmokeTestRunner {
             ])
             exit(1)
         }
+    }
+
+    private static func runPreventSleepSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let codexHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexPreventSleepSmoke-\(UUID().uuidString)", isDirectory: true)
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                let activeBefore = store.preventSleepAssertionIsActive
+                store.desktopPreventSleepWhileRunning = true
+                store.isRunning = true
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                let activeWhileRunning = store.preventSleepAssertionIsActive
+                let pmsetDuring = (try? runProcess(
+                    ["pmset", "-g", "assertions"],
+                    cwd: URL(fileURLWithPath: workspacePath)
+                ).output) ?? ""
+                let pmsetContainsRaytone = pmsetDuring.contains("PreventUserIdleSystemSleep") &&
+                    pmsetDuring.contains("RaytoneCodex running Codex turn")
+
+                await store.saveRuntimePreventSleepWhileRunning(false)
+                let activeAfterPreferenceOff = store.preventSleepAssertionIsActive
+
+                store.isRunning = false
+                store.desktopPreventSleepWhileRunning = true
+                store.isRunning = true
+                let activeAfterReenable = store.preventSleepAssertionIsActive
+                store.isRunning = false
+                let activeAfterStop = store.preventSleepAssertionIsActive
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let ok = !activeBefore &&
+                    activeWhileRunning &&
+                    pmsetContainsRaytone &&
+                    !activeAfterPreferenceOff &&
+                    activeAfterReenable &&
+                    !activeAfterStop &&
+                    configText.contains("prevent_sleep_while_running = false")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "activeBefore": activeBefore,
+                    "activeWhileRunning": activeWhileRunning,
+                    "pmsetContainsRaytone": pmsetContainsRaytone,
+                    "activeAfterPreferenceOff": activeAfterPreferenceOff,
+                    "activeAfterReenable": activeAfterReenable,
+                    "activeAfterStop": activeAfterStop,
+                    "configPath": configURL.path,
+                    "configText": configText,
+                    "pmsetPreview": String(pmsetDuring.prefix(1600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
     }
 
     private static func runGoalSmoke() {
