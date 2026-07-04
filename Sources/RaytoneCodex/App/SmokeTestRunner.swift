@@ -22,6 +22,8 @@ enum SmokeTestRunner {
             runCatalogSmoke()
         } else if CommandLine.arguments.contains("--mcp-resource-smoke-test") {
             runMCPResourceSmoke()
+        } else if CommandLine.arguments.contains("--mcp-tool-smoke-test") {
+            runMCPToolSmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
             runAccountAuthSmoke()
         } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
@@ -941,6 +943,138 @@ enum SmokeTestRunner {
                     "runtimePath": "",
                     "runtimeVersion": "",
                     "workspacePath": workspacePath,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runMCPToolSmoke() {
+        let marker = "Raytone MCP tool smoke OK \(UUID().uuidString.prefix(8))"
+        let message = "hello from Raytone"
+        let serverName = "raytone_tool"
+        let toolName = "echo_tool"
+
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexMCPToolSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let serverURL = rootURL.appendingPathComponent("raytone_mcp_tool_server.py")
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try mcpToolSmokeServerScript(marker: marker, toolName: toolName)
+                    .write(to: serverURL, atomically: true, encoding: .utf8)
+
+                mockServer = try startMockResponsesServer(message: "Raytone MCP tool model fallback")
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+                let escapedServerPath = serverURL.path
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                let configURL = codexHomeURL.appendingPathComponent("config.toml")
+                var config = try String(contentsOf: configURL, encoding: .utf8)
+                config.append(
+                    """
+
+                    [mcp_servers.\(serverName)]
+                    command = "/usr/bin/python3"
+                    args = ["\(escapedServerPath)"]
+                    """
+                )
+                try config.write(to: configURL, atomically: true, encoding: .utf8)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("mcp-tool-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("mcp-tool-smoke: refreshRuntimeMCPServers\n", stderr)
+                await store.refreshRuntimeMCPServers()
+
+                guard let server = store.runtimeMCPServers.first(where: { $0.name == serverName }),
+                      let tool = server.tools.first(where: { $0.name == toolName }) else {
+                    mockServer?.stop()
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHome": codexHomeURL.path,
+                        "serverName": serverName,
+                        "toolName": toolName,
+                        "status": store.runtimeCatalogStatusText,
+                        "errors": store.runtimeCatalogErrors,
+                        "servers": store.runtimeMCPServers.map { server in
+                            [
+                                "name": server.name,
+                                "title": server.title,
+                                "toolNames": server.toolNames,
+                                "resourceCount": server.resourceCount
+                            ] as [String: Any]
+                        }
+                    ])
+                    exit(1)
+                }
+
+                let key = store.mcpToolCallKey(tool, server: server)
+                store.mcpToolArgumentText[key] = #"{"message":"\#(message)"}"#
+                fputs("mcp-tool-smoke: callMCPTool\n", stderr)
+                await store.callMCPTool(tool, from: server)
+                let preview = store.mcpToolCallPreview?.textPreview ?? ""
+                let threadID = store.selectedThread.appServerThreadID ?? ""
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    server.toolNames.contains(toolName) &&
+                    store.mcpToolCallPreview?.server == serverName &&
+                    store.mcpToolCallPreview?.tool == toolName &&
+                    store.mcpToolCallPreview?.isError == false &&
+                    preview.contains("echo: \(message)") &&
+                    preview.contains(marker) &&
+                    preview.contains(threadID) &&
+                    !threadID.isEmpty &&
+                    store.mcpToolCallStatusText.hasPrefix("mcpServer/tool/call")
+
+                await store.stopAppServerForTesting()
+                mockServer?.stop()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "serverName": server.name,
+                    "serverTitle": server.title,
+                    "toolName": tool.name,
+                    "toolDisplayName": tool.displayName,
+                    "threadID": threadID,
+                    "callStatus": store.mcpToolCallStatusText,
+                    "contentCount": store.mcpToolCallPreview?.content.count ?? 0,
+                    "preview": preview
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
                     "error": error.localizedDescription
                 ])
@@ -3906,6 +4040,106 @@ enum SmokeTestRunner {
                 }
             if method == "tools/list":
                 return {"tools": []}
+            if method == "ping":
+                return {}
+            raise KeyError(method)
+
+        while True:
+            message = read_message()
+            if message is None:
+                break
+            request_id = message.get("id")
+            if request_id is None:
+                continue
+            method = message.get("method")
+            params = message.get("params") or {}
+            try:
+                send_message({"jsonrpc": "2.0", "id": request_id, "result": result_for(method, params)})
+            except Exception as error:
+                send_message({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32601, "message": str(error)}
+                })
+        """
+    }
+
+    private static func mcpToolSmokeServerScript(marker: String, toolName: String) -> String {
+        let markerLiteral = String(reflecting: marker)
+        let toolNameLiteral = String(reflecting: toolName)
+        return """
+        import json
+        import sys
+
+        MARKER = \(markerLiteral)
+        TOOL_NAME = \(toolNameLiteral)
+
+        def read_message():
+            line = sys.stdin.buffer.readline()
+            if not line:
+                return None
+            return json.loads(line.decode("utf-8"))
+
+        def send_message(message):
+            body = json.dumps(message, separators=(",", ":")).encode("utf-8")
+            sys.stdout.buffer.write(body + b"\\n")
+            sys.stdout.buffer.flush()
+
+        def result_for(method, params):
+            if method == "initialize":
+                return {
+                    "protocolVersion": params.get("protocolVersion", "2024-11-05"),
+                    "capabilities": {
+                        "tools": {"listChanged": False},
+                        "resources": {"subscribe": False, "listChanged": False}
+                    },
+                    "serverInfo": {
+                        "name": "raytone-tool-smoke",
+                        "title": "Raytone MCP Tool Smoke",
+                        "version": "1.0.0"
+                    }
+                }
+            if method == "tools/list":
+                return {
+                    "tools": [{
+                        "name": TOOL_NAME,
+                        "title": "Raytone Echo Tool",
+                        "description": "Echo a message and prove mcpServer/tool/call reached the real MCP server.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string"}
+                            },
+                            "required": ["message"],
+                            "additionalProperties": False
+                        },
+                        "annotations": {"readOnlyHint": True}
+                    }]
+                }
+            if method == "resources/list":
+                return {"resources": []}
+            if method == "resources/templates/list":
+                return {"resourceTemplates": []}
+            if method == "tools/call":
+                arguments = params.get("arguments") or {}
+                meta = params.get("_meta") or {}
+                message = arguments.get("message", "")
+                thread_id = meta.get("threadId", "")
+                return {
+                    "content": [{
+                        "type": "text",
+                        "text": "echo: " + message + " · " + MARKER
+                    }],
+                    "structuredContent": {
+                        "echoed": message,
+                        "marker": MARKER,
+                        "threadId": thread_id
+                    },
+                    "isError": False,
+                    "_meta": {
+                        "calledBy": "raytone-tool-smoke"
+                    }
+                }
             if method == "ping":
                 return {}
             raise KeyError(method)

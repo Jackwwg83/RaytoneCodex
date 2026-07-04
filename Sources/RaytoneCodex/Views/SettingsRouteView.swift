@@ -1194,6 +1194,13 @@ struct SettingsRouteView: View {
                                 metricRow("版本", server.version ?? "未知")
                                 metricRow("工具", server.toolNames.isEmpty ? "无" : server.toolNames.prefix(8).joined(separator: "、"))
                                 metricRow("资源", "\(server.resourceCount) 个资源 · \(server.resourceTemplateCount) 个模板")
+                                if !server.tools.isEmpty {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ForEach(server.tools.prefix(4)) { tool in
+                                            mcpToolRow(tool, server: server)
+                                        }
+                                    }
+                                }
                                 if !server.resources.isEmpty {
                                     VStack(alignment: .leading, spacing: 7) {
                                         ForEach(server.resources.prefix(4)) { resource in
@@ -1202,6 +1209,26 @@ struct SettingsRouteView: View {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+
+            if let preview = store.mcpToolCallPreview {
+                SettingsSection(title: "工具结果", description: store.mcpToolCallStatusText) {
+                    SettingsCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            metricRow("服务器", preview.server)
+                            metricRow("工具", preview.tool)
+                            metricRow("状态", preview.isError ? "工具返回错误" : "成功")
+                            Text(diffPreview(preview.textPreview))
+                                .font(Theme.mono(11))
+                                .foregroundStyle(Theme.textSecondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(Theme.fillSubtle)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
                         }
                     }
                 }
@@ -2139,6 +2166,74 @@ struct SettingsRouteView: View {
 
     private func mcpServerCanLogin(_ server: CodexRuntimeMCPServer) -> Bool {
         server.authStatus == "notLoggedIn"
+    }
+
+    private func mcpToolArgumentsBinding(_ tool: CodexRuntimeMCPTool, server: CodexRuntimeMCPServer) -> Binding<String> {
+        let key = store.mcpToolCallKey(tool, server: server)
+        return Binding(
+            get: { store.mcpToolArgumentText[key] ?? "{}" },
+            set: { store.mcpToolArgumentText[key] = $0 }
+        )
+    }
+
+    private func mcpToolRow(_ tool: CodexRuntimeMCPTool, server: CodexRuntimeMCPServer) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "hammer")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tool.displayName)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(tool.displayDescription)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Button("调用") {
+                    Task { await store.callMCPTool(tool, from: server) }
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+                .disabled(store.runtimeCatalogIsRefreshing)
+            }
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("参数 JSON")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    TextEditor(text: mcpToolArgumentsBinding(tool, server: server))
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.textPrimary)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 54, maxHeight: 70)
+                        .padding(6)
+                        .background(Theme.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                }
+                if let inputSchema = tool.inputSchema {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("输入 schema")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                        Text(diffPreview(inputSchema.prettyJSONString))
+                            .font(Theme.mono(10.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                            .background(Theme.fill)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                    }
+                }
+            }
+        }
+        .padding(9)
+        .background(Theme.fillSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
     }
 
     private func mcpResourceRow(_ resource: CodexRuntimeMCPResource, server: CodexRuntimeMCPServer) -> some View {

@@ -74,6 +74,22 @@ public enum JSONValue: Codable, Equatable, Sendable {
     }
 }
 
+public extension JSONValue {
+    init(jsonString: String) throws {
+        self = try JSONDecoder().decode(JSONValue.self, from: Data(jsonString.utf8))
+    }
+
+    var prettyJSONString: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(self),
+              let text = String(data: data, encoding: .utf8) else {
+            return String(describing: self)
+        }
+        return text
+    }
+}
+
 public enum CodexAppServerRequestID: Codable, Hashable, Sendable, CustomStringConvertible {
     case number(Int)
     case string(String)
@@ -532,6 +548,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
     public var title: String
     public var version: String?
     public var authStatus: String
+    public var tools: [CodexRuntimeMCPTool]
     public var toolNames: [String]
     public var resources: [CodexRuntimeMCPResource]
     public var resourceCount: Int
@@ -542,6 +559,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         title: String,
         version: String?,
         authStatus: String,
+        tools: [CodexRuntimeMCPTool] = [],
         toolNames: [String],
         resources: [CodexRuntimeMCPResource] = [],
         resourceCount: Int,
@@ -551,10 +569,37 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         self.title = title
         self.version = version
         self.authStatus = authStatus
+        self.tools = tools
         self.toolNames = toolNames
         self.resources = resources
         self.resourceCount = resourceCount
         self.resourceTemplateCount = resourceTemplateCount
+    }
+}
+
+public struct CodexRuntimeMCPTool: Equatable, Sendable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var title: String?
+    public var description: String?
+    public var inputSchema: JSONValue?
+
+    public init(name: String, title: String?, description: String?, inputSchema: JSONValue?) {
+        self.name = name
+        self.title = title
+        self.description = description
+        self.inputSchema = inputSchema
+    }
+
+    public var displayName: String {
+        title?.isEmpty == false ? title! : name
+    }
+
+    public var displayDescription: String {
+        guard let description, !description.isEmpty else {
+            return name
+        }
+        return description
     }
 }
 
@@ -619,6 +664,58 @@ public struct CodexMCPResourceContent: Equatable, Sendable {
             return "二进制资源：\(blobBase64.utf8.count) 个 base64 字节"
         }
         return ""
+    }
+}
+
+public struct CodexMCPToolCallResult: Equatable, Sendable {
+    public var server: String
+    public var tool: String
+    public var content: [JSONValue]
+    public var structuredContent: JSONValue?
+    public var isError: Bool
+    public var meta: JSONValue?
+
+    public init(
+        server: String,
+        tool: String,
+        content: [JSONValue],
+        structuredContent: JSONValue?,
+        isError: Bool,
+        meta: JSONValue?
+    ) {
+        self.server = server
+        self.tool = tool
+        self.content = content
+        self.structuredContent = structuredContent
+        self.isError = isError
+        self.meta = meta
+    }
+
+    public var textPreview: String {
+        var sections = content.compactMap(Self.previewText(from:)).filter { !$0.isEmpty }
+        if let structuredContent {
+            sections.append("结构化内容\n\(structuredContent.prettyJSONString)")
+        }
+        if let meta {
+            sections.append("元数据\n\(meta.prettyJSONString)")
+        }
+        return sections.isEmpty ? "工具没有返回可显示内容" : sections.joined(separator: "\n\n")
+    }
+
+    private static func previewText(from value: JSONValue) -> String? {
+        guard let object = value.objectValue else {
+            return value.prettyJSONString
+        }
+        if object["type"]?.stringValue == "text",
+           let text = object["text"]?.stringValue {
+            return text
+        }
+        if object["type"]?.stringValue == "image" {
+            let mimeType = object["mimeType"]?.stringValue ?? "image"
+            let bytes = object["data"]?.stringValue?.utf8.count ?? 0
+            return "图片内容：\(mimeType) · \(bytes) 个 base64 字节"
+        }
+        return value.prettyJSONString
     }
 }
 
@@ -1589,6 +1686,36 @@ public actor CodexAppServerClient {
         return CodexMCPResourceReadResult(server: server, requestedURI: uri, contents: contents)
     }
 
+    public func callMCPTool(
+        threadID: String,
+        server: String,
+        tool: String,
+        arguments: JSONValue? = nil,
+        meta: JSONValue? = nil
+    ) async throws -> CodexMCPToolCallResult {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "server": .string(server),
+            "tool": .string(tool)
+        ]
+        if let arguments {
+            params["arguments"] = arguments
+        }
+        if let meta {
+            params["_meta"] = meta
+        }
+
+        let result = try await request(method: "mcpServer/tool/call", params: .object(params))
+        return CodexMCPToolCallResult(
+            server: server,
+            tool: tool,
+            content: result["content"]?.arrayValue ?? [],
+            structuredContent: result["structuredContent"],
+            isError: result["isError"]?.boolValue ?? false,
+            meta: result["_meta"]
+        )
+    }
+
     public func reloadMCPServerRegistry() async throws {
         _ = try await request(method: "config/mcpServer/reload", params: nil)
     }
@@ -2398,16 +2525,19 @@ public actor CodexAppServerClient {
             }
             let info = server["serverInfo"]
             let toolsObject = server["tools"]?.objectValue ?? [:]
-            let toolNames = toolsObject.map { key, value in
-                value["name"]?.stringValue ?? key
+            let tools = toolsObject.compactMap { key, value in
+                Self.mcpTool(from: value, fallbackName: key)
             }
+            .sorted { $0.name < $1.name }
+            let toolNames = tools.map(\.name)
             let resources = server["resources"]?.arrayValue?.compactMap(Self.mcpResource(from:)) ?? []
             return CodexRuntimeMCPServer(
                 name: name,
                 title: info?["title"]?.stringValue ?? info?["name"]?.stringValue ?? name,
                 version: info?["version"]?.stringValue,
                 authStatus: server["authStatus"]?.stringValue ?? "unsupported",
-                toolNames: toolNames.sorted(),
+                tools: tools,
+                toolNames: toolNames,
                 resources: resources,
                 resourceCount: server["resources"]?.arrayValue?.count ?? 0,
                 resourceTemplateCount: server["resourceTemplates"]?.arrayValue?.count ?? 0
@@ -2417,6 +2547,25 @@ public actor CodexAppServerClient {
         return CodexRuntimeMCPServerCatalog(
             servers: servers.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending },
             nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    private static func mcpTool(from value: JSONValue, fallbackName: String) -> CodexRuntimeMCPTool? {
+        guard let object = value.objectValue else {
+            return CodexRuntimeMCPTool(
+                name: fallbackName,
+                title: nil,
+                description: nil,
+                inputSchema: nil
+            )
+        }
+
+        let name = object["name"]?.stringValue ?? fallbackName
+        return CodexRuntimeMCPTool(
+            name: name,
+            title: object["title"]?.stringValue,
+            description: object["description"]?.stringValue,
+            inputSchema: object["inputSchema"] ?? object["input_schema"]
         )
     }
 

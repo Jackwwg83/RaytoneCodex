@@ -53,6 +53,9 @@ final class SessionStore: ObservableObject {
     @Published var runtimeMCPServers: [CodexRuntimeMCPServer] = []
     @Published var mcpResourcePreview: CodexMCPResourceReadResult?
     @Published var mcpResourceStatusText = "未读取"
+    @Published var mcpToolArgumentText: [String: String] = [:]
+    @Published var mcpToolCallPreview: CodexMCPToolCallResult?
+    @Published var mcpToolCallStatusText = "未调用"
     @Published var runtimeConfig: CodexRuntimeConfig?
     @Published var desktopShowInMenuBar = true
     @Published var desktopShowBottomPanel = true
@@ -2111,6 +2114,41 @@ final class SessionStore: ObservableObject {
         } catch {
             mcpResourceStatusText = "资源读取失败：\(error.localizedDescription)"
             runtimeCatalogStatusText = mcpResourceStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func mcpToolCallKey(_ tool: CodexRuntimeMCPTool, server: CodexRuntimeMCPServer) -> String {
+        "\(server.name)::\(tool.name)"
+    }
+
+    func callMCPTool(_ tool: CodexRuntimeMCPTool, from server: CodexRuntimeMCPServer) async {
+        runtimeCatalogIsRefreshing = true
+        mcpToolCallStatusText = "正在调用 \(tool.displayName)…"
+        runtimeCatalogErrors = []
+
+        do {
+            let key = mcpToolCallKey(tool, server: server)
+            let rawArguments = mcpToolArgumentText[key] ?? "{}"
+            let trimmedArguments = rawArguments.trimmingCharacters(in: .whitespacesAndNewlines)
+            let arguments = try JSONValue(jsonString: trimmedArguments.isEmpty ? "{}" : trimmedArguments)
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
+            let result = try await client.callMCPTool(
+                threadID: threadID,
+                server: server.name,
+                tool: tool.name,
+                arguments: arguments,
+                meta: .object(["source": .string("RaytoneCodex settings")])
+            )
+            mcpToolCallPreview = result
+            mcpToolCallStatusText = "mcpServer/tool/call：\(result.isError ? "工具返回错误" : "调用成功")"
+            runtimeCatalogStatusText = mcpToolCallStatusText
+        } catch {
+            mcpToolCallStatusText = "工具调用失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = mcpToolCallStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
 
