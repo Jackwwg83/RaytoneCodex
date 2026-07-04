@@ -215,6 +215,32 @@ enum SmokeTestRunner {
             await store.addFileReferencesToPrompt(paths: [
                 URL(fileURLWithPath: workspacePath).appendingPathComponent("Package.swift").path
             ])
+            let recommendedFiles = store.inspectorRecommendedFiles
+            let recommendedTarget = recommendedFiles.first {
+                URL(fileURLWithPath: $0).lastPathComponent == "Package.swift"
+            } ?? recommendedFiles.first
+            let expectedRecommendedPath: String
+            if let recommendedTarget {
+                if recommendedTarget.hasPrefix("/") || recommendedTarget.hasPrefix("~") {
+                    expectedRecommendedPath = (recommendedTarget as NSString).expandingTildeInPath
+                } else {
+                    expectedRecommendedPath = URL(fileURLWithPath: workspacePath)
+                        .appendingPathComponent(recommendedTarget)
+                        .standardizedFileURL
+                        .path
+                }
+                fputs("tools-smoke: openRecommendedFile\n", stderr)
+                store.filePreview = nil
+                store.openRecommendedFile(recommendedTarget)
+                for _ in 0..<40 {
+                    if store.filePreview?.path == expectedRecommendedPath {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+            } else {
+                expectedRecommendedPath = ""
+            }
             fputs("tools-smoke: refreshWorkspaceBranches\n", stderr)
             await store.refreshWorkspaceBranches()
             fputs("tools-smoke: collect result\n", stderr)
@@ -228,6 +254,8 @@ enum SmokeTestRunner {
                 lastRun?.exitCode == 0 &&
                 lastRun?.output.contains("Package.swift") == true &&
                 filePreview?.fileName == "Package.swift" &&
+                filePreview?.path == expectedRecommendedPath &&
+                recommendedTarget != nil &&
                 store.prompt.contains("Package.swift") &&
                 !currentBranch.isEmpty &&
                 store.workspaceBranches.contains(currentBranch)
@@ -243,6 +271,9 @@ enum SmokeTestRunner {
                 "fileEntryCount": store.fileEntries.count,
                 "fileEntriesPreview": Array(store.fileEntries.map(\.name).prefix(12)),
                 "fileReferencePrompt": store.prompt,
+                "recommendedFiles": recommendedFiles,
+                "recommendedTarget": recommendedTarget ?? "",
+                "recommendedExpectedPath": expectedRecommendedPath,
                 "filePreview": [
                     "fileName": filePreview?.fileName ?? "",
                     "path": filePreview?.path ?? "",

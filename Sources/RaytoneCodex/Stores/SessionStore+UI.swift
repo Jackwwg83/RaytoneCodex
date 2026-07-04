@@ -132,6 +132,64 @@ extension SessionStore {
         }
     }
 
+    /// Files shown in the inspector launcher recommendation list. Prefer real
+    /// runtime data from the current thread or workspace directory; fall back to
+    /// common repo entrypoints only before the directory has loaded.
+    var inspectorRecommendedFiles: [String] {
+        let changed = pendingChanges.map(\.path)
+        if !changed.isEmpty {
+            return Array(changed.prefix(5))
+        }
+
+        let files = fileEntries.filter { $0.isFile && !$0.name.hasPrefix(".") }
+        var selected: [String] = []
+        let priorityNames = [
+            "Package.swift",
+            "README.md",
+            "AGENTS.md",
+            "package.json",
+            "pyproject.toml",
+            "Cargo.toml"
+        ]
+
+        for name in priorityNames {
+            if let entry = files.first(where: { $0.name == name }),
+               !selected.contains(entry.path) {
+                selected.append(entry.path)
+            }
+        }
+
+        let priorityPaths = [
+            "Sources/RaytoneCodex/Views/ContentView.swift",
+            "Sources/RaytoneCodex/Stores/SessionStore.swift",
+            "docs/codex-screens-spec.md"
+        ]
+        for path in priorityPaths {
+            let absolutePath = URL(fileURLWithPath: workspacePath)
+                .appendingPathComponent(path)
+                .standardizedFileURL
+                .path
+            if FileManager.default.fileExists(atPath: absolutePath),
+               !selected.contains(absolutePath) {
+                selected.append(absolutePath)
+            }
+        }
+
+        for entry in files where !selected.contains(entry.path) {
+            selected.append(entry.path)
+        }
+
+        if !selected.isEmpty {
+            return Array(selected.prefix(5))
+        }
+
+        return [
+            "Package.swift",
+            "Sources/RaytoneCodex/Views/ContentView.swift",
+            "docs/codex-screens-spec.md"
+        ]
+    }
+
     func editActiveGoalInComposer() {
         guard let goal = selectedThread.activeGoal else { return }
         prompt = goal.title

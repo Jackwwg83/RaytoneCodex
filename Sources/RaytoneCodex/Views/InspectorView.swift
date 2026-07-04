@@ -66,6 +66,11 @@ struct InspectorView: View {
         .frame(maxHeight: .infinity)
         .background(Theme.panel)
         .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+        .task(id: store.workspacePath) {
+            if store.filePanelPath != store.workspacePath || store.fileEntries.isEmpty {
+                await store.loadFilePanelDirectory(store.workspacePath)
+            }
+        }
     }
 
     private var header: some View {
@@ -95,15 +100,7 @@ struct InspectorView: View {
     }
 
     private var recommendedFiles: [String] {
-        let changed = store.pendingChanges.map(\.path)
-        if changed.isEmpty {
-            return [
-                "Package.swift",
-                "Sources/RaytoneCodex/Views/ContentView.swift",
-                "docs/codex-screens-spec.md"
-            ]
-        }
-        return Array(changed.prefix(5))
+        store.inspectorRecommendedFiles
     }
 }
 
