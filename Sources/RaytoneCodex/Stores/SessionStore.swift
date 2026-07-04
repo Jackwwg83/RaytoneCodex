@@ -189,6 +189,46 @@ final class SessionStore: ObservableObject {
         runtimeSnapshot.executable?.url.path ?? "Not found"
     }
 
+    var runtimeVersionDisplay: String {
+        guard let version = runtimeSnapshot.version,
+              !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return runtimeSnapshot.executable == nil ? "未检测到" : "版本未知"
+        }
+        return version
+    }
+
+    var runtimeSourceDisplay: String {
+        guard let source = runtimeSnapshot.executable?.source else {
+            return "未找到"
+        }
+        switch source {
+        case .appBundle:
+            return "App 内置"
+        case .environment:
+            return "环境变量指定"
+        case .officialCodexApp:
+            return "已安装 Codex.app"
+        case .path:
+            return "PATH"
+        case .commonPath:
+            return "常见安装路径"
+        }
+    }
+
+    var runtimeBundlingDisplay: String {
+        guard let executable = runtimeSnapshot.executable else {
+            return runtimeSnapshot.errorDescription ?? "未找到 Codex CLI"
+        }
+        if executable.source == .appBundle {
+            return "已使用 App 内置 CLI"
+        }
+        return "当前开发/测试使用外部 CLI：\(runtimeSourceDisplay)"
+    }
+
+    var runtimeDependencyReady: Bool {
+        runtimeSnapshot.executable != nil
+    }
+
     var selectedProvider: RaytoneProviderConfiguration {
         providers.first { $0.id == selectedProviderID } ?? providers[0]
     }

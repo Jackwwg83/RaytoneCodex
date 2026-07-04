@@ -2292,13 +2292,24 @@ enum SmokeTestRunner {
                 (gitStatus.hasPrefix("Git 差异读取失败") && store.workspaceGitStatusText.isEmpty) ||
                 store.runtimeProfileDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                 store.runtimeProfileHandle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                store.runtimeProfileInitials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                store.runtimeProfileInitials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                !store.runtimeDependencyReady ||
+                store.runtimeVersionDisplay.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                store.runtimePath == "Not found"
 
             emitJSON([
                 "ok": !hardFailure,
                 "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                 "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                 "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "runtimeDependencies": [
+                    "ready": store.runtimeDependencyReady,
+                    "version": store.runtimeVersionDisplay,
+                    "source": store.runtimeSourceDisplay,
+                    "bundling": store.runtimeBundlingDisplay,
+                    "path": store.runtimePath,
+                    "sidecar": store.sidecarStatusText
+                ] as [String: Any],
                 "workspacePath": workspacePath,
                 "accountStatus": accountStatus,
                 "accountErrors": accountErrors,

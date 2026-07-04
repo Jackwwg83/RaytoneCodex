@@ -895,11 +895,32 @@ struct SettingsRouteView: View {
             SettingsSection(title: "工作空间依赖项") {
                 SettingsCard {
                     SettingsValueRow(title: "当前版本", description: nil) {
-                        Text("26.601.10930")
+                        Text(store.runtimeVersionDisplay)
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    SettingsToggleRow(title: "Codex 依赖项", description: "允许 Codex 安装并提供随附的 Node.js 和 Python 工具", isOn: .constant(true))
+                    SettingsValueRow(title: "Codex CLI", description: "RaytoneCodex 会优先使用 App 内置 CLI；开发模式可由 RAYTONE_CODEX_CLI 覆盖") {
+                        statusBadge(store.runtimeDependencyReady ? store.runtimeSourceDisplay : "未找到", ok: store.runtimeDependencyReady)
+                    }
+                    SettingsValueRow(title: "一体化状态", description: "用于确认安装包是否真正携带 Codex CLI") {
+                        Text(store.runtimeBundlingDisplay)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    SettingsValueRow(title: "CLI 路径", description: "当前实际执行 codex app-server / codex exec 的二进制") {
+                        Text(Project.abbreviate(store.runtimePath))
+                            .font(Theme.mono(11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    SettingsValueRow(title: "Sidecar", description: "第三方 provider 的本地转换层随 App bundle 分发") {
+                        statusBadge(store.sidecarStatusText, ok: store.sidecarStatusText == "直连" || store.sidecarStatusText.contains("127.0.0.1"))
+                    }
                     SettingsValueRow(title: "诊断 Codex 工作空间中的问题", description: "检查当前捆绑包并记录诊断日志") {
                         Button("诊断") {
                             Task { await store.diagnoseWorkspaceRuntime() }
