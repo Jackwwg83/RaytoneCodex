@@ -3179,8 +3179,11 @@ enum SmokeTestRunner {
 
             let codexHome = FileManager.default.temporaryDirectory
                 .appendingPathComponent("RaytoneCodexThreadSmoke-\(UUID().uuidString)", isDirectory: true)
+            var mockServer: MockResponsesServer?
             do {
                 try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                mockServer = try startMockResponsesServer(message: "Raytone thread management smoke OK")
+                try writeMockCodexConfig(codexHome: codexHome, baseURL: mockServer!.baseURL)
                 let client = CodexAppServerClient(
                     executable: executable,
                     workspaceURL: URL(fileURLWithPath: workspacePath),
@@ -3210,6 +3213,7 @@ enum SmokeTestRunner {
                     !forked.id.isEmpty &&
                     thread.id != forked.id &&
                     storeSmoke.ok
+                mockServer?.stop()
                 var payload: [String: Any] = [
                     "ok": ok,
                     "runtimeSource": runtime.executable?.source.rawValue ?? "none",
@@ -3226,6 +3230,7 @@ enum SmokeTestRunner {
                 emitJSON(payload)
                 exit(ok ? 0 : 1)
             } catch {
+                mockServer?.stop()
                 emitJSON([
                     "ok": false,
                     "runtimeSource": runtime.executable?.source.rawValue ?? "none",
@@ -3250,6 +3255,7 @@ enum SmokeTestRunner {
         let store = SessionStore()
         store.workspacePath = workspacePath
         store.filePanelPath = workspacePath
+        store.model = "mock-model"
         store.sandbox = .readOnly
         store.approval = .never
         store.appServerEnvironmentOverridesForTesting = [
@@ -3276,6 +3282,20 @@ enum SmokeTestRunner {
         store.duplicateSelectedThread()
         let forkLocalID = store.selectedThreadID
         let forkServerID = await waitForThreadServerID(in: store, localThreadID: forkLocalID)
+        if !forkServerID.isEmpty,
+           let fork = store.threads.first(where: { $0.id == forkLocalID }) {
+            store.selectThread(fork)
+            await store.setActiveGoal(objective: "Raytone fork archive restore seed")
+            store.prompt = "请回复：Raytone thread management smoke OK"
+            await store.runPrompt()
+            await waitForStoreToSettle(store)
+        }
+        let forkPromptPersisted = store.selectedThread.items.contains { item in
+            if case let .agentMessage(text) = item.kind {
+                return text.contains("Raytone thread management smoke OK")
+            }
+            return false
+        }
 
         if !forkServerID.isEmpty {
             store.deleteThread(forkLocalID)
@@ -3285,6 +3305,16 @@ enum SmokeTestRunner {
 
         let forkArchived = !forkServerID.isEmpty &&
             store.archivedRuntimeThreads.contains { $0.id == forkServerID && $0.archived }
+        let archiveStatus = store.runtimeCatalogStatusText
+        let archivedForkSummary = store.archivedRuntimeThreads.first { $0.id == forkServerID }
+        if let archivedForkSummary {
+            await store.unarchiveRuntimeThread(archivedForkSummary)
+        }
+        let unarchiveStatus = store.runtimeCatalogStatusText
+        let forkUnarchived = !forkServerID.isEmpty &&
+            store.threads.contains { $0.appServerThreadID == forkServerID }
+        let forkRemovedFromArchive = !forkServerID.isEmpty &&
+            !store.archivedRuntimeThreads.contains { $0.id == forkServerID }
         await store.stopAppServerForTesting()
 
         let ok = !originalServerID.isEmpty &&
@@ -3292,7 +3322,11 @@ enum SmokeTestRunner {
             runtimeRenamed &&
             !forkServerID.isEmpty &&
             forkServerID != originalServerID &&
-            forkArchived
+            forkPromptPersisted &&
+            forkArchived &&
+            forkUnarchived &&
+            forkRemovedFromArchive &&
+            unarchiveStatus.hasPrefix("thread/unarchive")
 
         return StoreThreadManagementSmokeResult(
             ok: ok,
@@ -3303,8 +3337,12 @@ enum SmokeTestRunner {
             runtimeRenamed: runtimeRenamed,
             forkLocalID: forkLocalID.uuidString,
             forkServerID: forkServerID,
+            forkPromptPersisted: forkPromptPersisted,
             forkArchived: forkArchived,
-            archiveStatus: store.runtimeCatalogStatusText,
+            forkUnarchived: forkUnarchived,
+            forkRemovedFromArchive: forkRemovedFromArchive,
+            archiveStatus: archiveStatus,
+            unarchiveStatus: unarchiveStatus,
             archivedCount: store.archivedRuntimeThreads.count
         )
     }
@@ -3344,8 +3382,12 @@ enum SmokeTestRunner {
         let runtimeRenamed: Bool
         let forkLocalID: String
         let forkServerID: String
+        let forkPromptPersisted: Bool
         let forkArchived: Bool
+        let forkUnarchived: Bool
+        let forkRemovedFromArchive: Bool
         let archiveStatus: String
+        let unarchiveStatus: String
         let archivedCount: Int
 
         var payload: [String: Any] {
@@ -3359,8 +3401,12 @@ enum SmokeTestRunner {
                     "runtimeRenamed": runtimeRenamed,
                     "forkLocalID": forkLocalID,
                     "forkServerID": forkServerID,
+                    "forkPromptPersisted": forkPromptPersisted,
                     "forkArchived": forkArchived,
+                    "forkUnarchived": forkUnarchived,
+                    "forkRemovedFromArchive": forkRemovedFromArchive,
                     "archiveStatus": archiveStatus,
+                    "unarchiveStatus": unarchiveStatus,
                     "archivedCount": archivedCount
                 ] as [String: Any]
             ]

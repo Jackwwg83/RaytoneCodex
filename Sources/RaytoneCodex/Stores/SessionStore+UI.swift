@@ -27,14 +27,25 @@ extension SessionStore {
     /// Remove a thread. Keeps at least one thread alive and reselects if needed.
     func deleteThread(_ id: UUID) {
         guard threads.count > 1 else { return }
-        let appServerThreadID = threads.first(where: { $0.id == id })?.appServerThreadID
+        let thread = threads.first(where: { $0.id == id })
+        let appServerThreadID = thread?.appServerThreadID
+        let projectPath = thread.flatMap { target in
+            projects.first(where: { $0.id == target.projectID })?.path
+        }
         let wasSelected = selectedThreadID == id
         threads.removeAll { $0.id == id }
         if wasSelected, let next = threads.first {
             selectThread(next)
         }
-        if let appServerThreadID {
-            Task { await archiveRuntimeThread(id: appServerThreadID) }
+        if let appServerThreadID, let thread {
+            Task {
+                await archiveRuntimeThread(
+                    id: appServerThreadID,
+                    title: thread.title,
+                    preview: thread.preview,
+                    cwd: projectPath
+                )
+            }
         }
     }
 

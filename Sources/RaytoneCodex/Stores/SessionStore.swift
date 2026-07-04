@@ -2643,8 +2643,8 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             let catalog = try await client.listThreads(archived: true, cwd: nil, limit: 50)
-            archivedRuntimeThreads = catalog.threads
-            runtimeCatalogStatusText = "thread/list：\(catalog.threads.count) 个已归档对话"
+            archivedRuntimeThreads = mergedArchivedRuntimeThreads(serverThreads: catalog.threads)
+            runtimeCatalogStatusText = "thread/list：\(archivedRuntimeThreads.count) 个已归档对话"
         } catch {
             runtimeCatalogStatusText = "已归档对话读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
@@ -2690,27 +2690,96 @@ final class SessionStore: ObservableObject {
     }
 
     func unarchiveRuntimeThread(_ thread: CodexRuntimeThreadSummary) async {
+        runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在恢复 \(thread.title)…"
+        runtimeCatalogErrors = []
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            _ = try await client.unarchiveThread(id: thread.id)
+            let restoredThread = try await client.unarchiveThread(id: thread.id)
+            archivedRuntimeThreads.removeAll { $0.id == thread.id }
+            if let restoredThread {
+                mergeRuntimeThreads([restoredThread])
+            }
             await refreshArchivedThreads()
+            await refreshRuntimeThreads(searchTerm: restoredThread?.title ?? thread.title, limit: 20)
+            runtimeCatalogStatusText = "thread/unarchive：已恢复 \(restoredThread?.title ?? thread.title)"
         } catch {
+            if Self.isRecoverableUnarchiveReadFailure(error) {
+                archivedRuntimeThreads.removeAll { $0.id == thread.id }
+                mergeRuntimeThreads([CodexRuntimeThreadSummary(
+                    id: thread.id,
+                    title: thread.title,
+                    preview: thread.preview,
+                    cwd: thread.cwd,
+                    modelProvider: thread.modelProvider,
+                    source: thread.source,
+                    createdAt: thread.createdAt,
+                    updatedAt: ISO8601DateFormatter().string(from: Date()),
+                    archived: false,
+                    gitBranch: thread.gitBranch,
+                    gitSHA: thread.gitSHA,
+                    gitOriginURL: thread.gitOriginURL
+                )])
+                await refreshArchivedThreads()
+                runtimeCatalogStatusText = "thread/unarchive：已恢复 \(thread.title)"
+                runtimeCatalogErrors = []
+                runtimeCatalogIsRefreshing = false
+                return
+            }
             runtimeCatalogStatusText = "恢复失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+        runtimeCatalogIsRefreshing = false
     }
 
-    func archiveRuntimeThread(id threadID: String) async {
+    func archiveRuntimeThread(
+        id threadID: String,
+        title: String? = nil,
+        preview: String? = nil,
+        cwd: String? = nil
+    ) async {
         runtimeCatalogStatusText = "正在归档对话…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             try await client.archiveThread(id: threadID)
+            rememberArchivedRuntimeThread(id: threadID, title: title, preview: preview, cwd: cwd)
             runtimeCatalogStatusText = "thread/archive：已归档 \(threadID)"
         } catch {
             runtimeCatalogStatusText = "归档失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    private func rememberArchivedRuntimeThread(id threadID: String, title: String?, preview: String?, cwd: String?) {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let trimmedPreview = preview?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let summary = CodexRuntimeThreadSummary(
+            id: threadID,
+            title: trimmedTitle.isEmpty ? "未命名对话" : trimmedTitle,
+            preview: trimmedPreview,
+            cwd: cwd,
+            modelProvider: nil,
+            source: nil,
+            createdAt: now,
+            updatedAt: now,
+            archived: true,
+            gitBranch: nil,
+            gitSHA: nil,
+            gitOriginURL: nil
+        )
+        archivedRuntimeThreads.removeAll { $0.id == threadID }
+        archivedRuntimeThreads.insert(summary, at: 0)
+    }
+
+    private func mergedArchivedRuntimeThreads(serverThreads: [CodexRuntimeThreadSummary]) -> [CodexRuntimeThreadSummary] {
+        var seenIDs = Set(serverThreads.map(\.id))
+        var merged = serverThreads
+        for thread in archivedRuntimeThreads where !seenIDs.contains(thread.id) {
+            merged.append(thread)
+            seenIDs.insert(thread.id)
+        }
+        return merged
     }
 
     func setRuntimeThreadName(id threadID: String, name: String) async {
@@ -4804,6 +4873,12 @@ final class SessionStore: ObservableObject {
             return true
         }
         return error.localizedDescription.contains("CancellationError")
+    }
+
+    private static func isRecoverableUnarchiveReadFailure(_ error: Error) -> Bool {
+        let description = error.localizedDescription
+        return description.contains("failed to unarchive session") &&
+            description.contains("failed to read unarchived thread")
     }
 
     private static func shellQuoted(_ value: String) -> String {
