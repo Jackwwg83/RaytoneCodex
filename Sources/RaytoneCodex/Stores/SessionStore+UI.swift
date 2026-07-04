@@ -281,6 +281,9 @@ extension SessionStore {
             .appendingPathComponent("docs/browser-sample.html")
         browserURL = sampleURL
         browserTitle = "RaytoneCodex 本地示例"
+        browserCanGoBack = false
+        browserCanGoForward = false
+        browserNavigationCommand = nil
         openToolPanel(.browser)
     }
 

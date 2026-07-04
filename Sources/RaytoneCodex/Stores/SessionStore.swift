@@ -26,6 +26,9 @@ final class SessionStore: ObservableObject {
     @Published var browserURL: URL?
     @Published var browserTitle = "浏览器"
     @Published var browserReloadToken = UUID()
+    @Published var browserCanGoBack = false
+    @Published var browserCanGoForward = false
+    @Published var browserNavigationCommand: BrowserNavigationCommand?
     @Published var browserScreenshotStatusText = ""
     @Published var filePanelPath = ""
     @Published var fileEntries: [WorkspaceFileEntry] = []
@@ -1306,6 +1309,8 @@ final class SessionStore: ObservableObject {
         guard let url else { return }
         browserURL = url
         browserTitle = url.isFileURL ? url.lastPathComponent : (url.host ?? url.absoluteString)
+        browserCanGoBack = false
+        browserCanGoForward = false
         openToolPanel(.browser)
     }
 
@@ -1317,12 +1322,42 @@ final class SessionStore: ObservableObject {
     func newBrowserTab() {
         browserURL = nil
         browserTitle = "浏览器"
+        browserCanGoBack = false
+        browserCanGoForward = false
+        browserNavigationCommand = nil
         browserScreenshotStatusText = ""
         openToolPanel(.browser)
     }
 
     func reloadBrowserPanel() {
         browserReloadToken = UUID()
+    }
+
+    func goBackInBrowser() {
+        browserNavigationCommand = BrowserNavigationCommand(action: .back)
+    }
+
+    func goForwardInBrowser() {
+        browserNavigationCommand = BrowserNavigationCommand(action: .forward)
+    }
+
+    func updateBrowserNavigationState(
+        url: URL?,
+        title: String?,
+        canGoBack: Bool,
+        canGoForward: Bool
+    ) {
+        browserCanGoBack = canGoBack
+        browserCanGoForward = canGoForward
+        if let url {
+            browserURL = url
+        }
+        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedTitle.isEmpty {
+            browserTitle = trimmedTitle
+        } else if let url {
+            browserTitle = url.isFileURL ? url.lastPathComponent : (url.host ?? url.absoluteString)
+        }
     }
 
     func captureBrowserPanelScreenshot() {

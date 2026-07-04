@@ -106,6 +106,21 @@ struct ActiveGoal: Equatable {
     var startedAt: Date
 }
 
+struct BrowserNavigationCommand: Equatable {
+    enum Action: Equatable {
+        case back
+        case forward
+    }
+
+    let id: UUID
+    let action: Action
+
+    init(id: UUID = UUID(), action: Action) {
+        self.id = id
+        self.action = action
+    }
+}
+
 struct ProgressStep: Identifiable, Equatable {
     enum State: Equatable {
         case done

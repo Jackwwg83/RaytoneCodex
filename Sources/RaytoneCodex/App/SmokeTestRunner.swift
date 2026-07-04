@@ -52,6 +52,8 @@ enum SmokeTestRunner {
             runDesktopSettingsSmoke()
         } else if CommandLine.arguments.contains("--goal-smoke-test") {
             runGoalSmoke()
+        } else if CommandLine.arguments.contains("--browser-navigation-smoke-test") {
+            runBrowserNavigationSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -1595,6 +1597,84 @@ enum SmokeTestRunner {
                 ])
                 exit(1)
             }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runBrowserNavigationSmoke() {
+        Task { @MainActor in
+            let store = SessionStore()
+            let firstURL = URL(fileURLWithPath: "/tmp/raytone-browser-one.html")
+            let secondURL = URL(fileURLWithPath: "/tmp/raytone-browser-two.html")
+
+            store.updateBrowserNavigationState(
+                url: firstURL,
+                title: "第一页",
+                canGoBack: false,
+                canGoForward: false
+            )
+            let initialState: [String: Any] = [
+                "url": store.browserURL?.path ?? "",
+                "title": store.browserTitle,
+                "canGoBack": store.browserCanGoBack,
+                "canGoForward": store.browserCanGoForward
+            ]
+
+            store.updateBrowserNavigationState(
+                url: secondURL,
+                title: "第二页",
+                canGoBack: true,
+                canGoForward: false
+            )
+            store.goBackInBrowser()
+            let backCommand = store.browserNavigationCommand
+            store.updateBrowserNavigationState(
+                url: firstURL,
+                title: "第一页",
+                canGoBack: false,
+                canGoForward: true
+            )
+            let afterBackState: [String: Any] = [
+                "url": store.browserURL?.path ?? "",
+                "title": store.browserTitle,
+                "canGoBack": store.browserCanGoBack,
+                "canGoForward": store.browserCanGoForward,
+                "command": backCommand?.action == .back ? "back" : "missing"
+            ]
+
+            store.goForwardInBrowser()
+            let forwardCommand = store.browserNavigationCommand
+            store.updateBrowserNavigationState(
+                url: secondURL,
+                title: "第二页",
+                canGoBack: true,
+                canGoForward: false
+            )
+            let afterForwardState: [String: Any] = [
+                "url": store.browserURL?.path ?? "",
+                "title": store.browserTitle,
+                "canGoBack": store.browserCanGoBack,
+                "canGoForward": store.browserCanGoForward,
+                "command": forwardCommand?.action == .forward ? "forward" : "missing"
+            ]
+
+            let ok = initialState["title"] as? String == "第一页" &&
+                initialState["canGoBack"] as? Bool == false &&
+                initialState["canGoForward"] as? Bool == false &&
+                backCommand?.action == .back &&
+                afterBackState["title"] as? String == "第一页" &&
+                afterBackState["canGoForward"] as? Bool == true &&
+                forwardCommand?.action == .forward &&
+                afterForwardState["title"] as? String == "第二页" &&
+                afterForwardState["canGoBack"] as? Bool == true
+            emitJSON([
+                "ok": ok,
+                "initial": initialState,
+                "afterBack": afterBackState,
+                "afterForward": afterForwardState
+            ])
+            exit(ok ? 0 : 1)
         }
 
         dispatchMain()

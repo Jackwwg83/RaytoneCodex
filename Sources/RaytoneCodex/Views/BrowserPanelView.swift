@@ -12,7 +12,12 @@ struct BrowserPanelView: View {
             toolbar
             ZStack {
                 if let url = store.browserURL {
-                    BrowserWebView(url: url, reloadToken: store.browserReloadToken)
+                    BrowserWebView(
+                        store: store,
+                        url: url,
+                        reloadToken: store.browserReloadToken,
+                        navigationCommand: store.browserNavigationCommand
+                    )
                 } else {
                     browserEmptyState
                 }
@@ -109,8 +114,12 @@ struct BrowserPanelView: View {
 
     private var toolbar: some View {
         HStack(spacing: 7) {
-            toolbarButton("chevron.left", "返回", disabled: true)
-            toolbarButton("chevron.right", "前进", disabled: true)
+            toolbarButton("chevron.left", "返回", disabled: !store.browserCanGoBack) {
+                store.goBackInBrowser()
+            }
+            toolbarButton("chevron.right", "前进", disabled: !store.browserCanGoForward) {
+                store.goForwardInBrowser()
+            }
             toolbarButton("arrow.clockwise", "重新加载") {
                 store.reloadBrowserPanel()
             }
@@ -197,28 +206,52 @@ struct BrowserPanelView: View {
 }
 
 private struct BrowserWebView: NSViewRepresentable {
+    @ObservedObject var store: SessionStore
     let url: URL
     let reloadToken: UUID
+    let navigationCommand: BrowserNavigationCommand?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(store: store)
     }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         load(url, in: webView, coordinator: context.coordinator)
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.store = store
+
+        if let navigationCommand,
+           context.coordinator.handledNavigationCommandID != navigationCommand.id {
+            context.coordinator.handledNavigationCommandID = navigationCommand.id
+            switch navigationCommand.action {
+            case .back:
+                if webView.canGoBack {
+                    webView.goBack()
+                    return
+                }
+            case .forward:
+                if webView.canGoForward {
+                    webView.goForward()
+                    return
+                }
+            }
+            context.coordinator.publishNavigationState(from: webView)
+        }
+
         guard context.coordinator.loadedURL != url else {
             if context.coordinator.reloadToken != reloadToken {
                 context.coordinator.reloadToken = reloadToken
                 webView.reload()
             }
+            context.coordinator.publishNavigationState(from: webView)
             return
         }
         load(url, in: webView, coordinator: context.coordinator)
@@ -234,8 +267,44 @@ private struct BrowserWebView: NSViewRepresentable {
         }
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        weak var store: SessionStore?
         var loadedURL: URL?
         var reloadToken: UUID?
+
+        var handledNavigationCommandID: UUID?
+
+        init(store: SessionStore) {
+            self.store = store
+        }
+
+        func publishNavigationState(from webView: WKWebView) {
+            let currentURL = webView.url
+            let currentTitle = webView.title
+            let canGoBack = webView.canGoBack
+            let canGoForward = webView.canGoForward
+            Task { @MainActor [weak self] in
+                self?.store?.updateBrowserNavigationState(
+                    url: currentURL,
+                    title: currentTitle,
+                    canGoBack: canGoBack,
+                    canGoForward: canGoForward
+                )
+            }
+        }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            loadedURL = webView.url
+            publishNavigationState(from: webView)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            loadedURL = webView.url
+            publishNavigationState(from: webView)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            publishNavigationState(from: webView)
+        }
     }
 }
