@@ -1177,11 +1177,16 @@ public actor CodexAppServerClient {
         threadID: String,
         prompt: String,
         options: CodexAppServerOptions,
-        mentions: [CodexAppServerMention] = []
+        mentions: [CodexAppServerMention] = [],
+        localImagePaths: [String] = []
     ) async throws -> CodexAppServerTurn {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
-            "input": Self.userInputItems(prompt: prompt, mentions: mentions),
+            "input": Self.userInputItems(
+                prompt: prompt,
+                mentions: mentions,
+                localImagePaths: localImagePaths
+            ),
             "cwd": .string(options.workspaceURL.path),
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
             "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
@@ -1234,17 +1239,26 @@ public actor CodexAppServerClient {
         threadID: String,
         expectedTurnID: String,
         prompt: String,
-        mentions: [CodexAppServerMention] = []
+        mentions: [CodexAppServerMention] = [],
+        localImagePaths: [String] = []
     ) async throws {
         let params: JSONValue = .object([
             "threadId": .string(threadID),
             "expectedTurnId": .string(expectedTurnID),
-            "input": Self.userInputItems(prompt: prompt, mentions: mentions)
+            "input": Self.userInputItems(
+                prompt: prompt,
+                mentions: mentions,
+                localImagePaths: localImagePaths
+            )
         ])
         _ = try await request(method: "turn/steer", params: params)
     }
 
-    public static func userInputItems(prompt: String, mentions: [CodexAppServerMention] = []) -> JSONValue {
+    public static func userInputItems(
+        prompt: String,
+        mentions: [CodexAppServerMention] = [],
+        localImagePaths: [String] = []
+    ) -> JSONValue {
         var items: [JSONValue] = [
             .object([
                 "type": .string("text"),
@@ -1257,6 +1271,12 @@ public actor CodexAppServerClient {
                 "type": .string("mention"),
                 "name": .string(mention.name),
                 "path": .string(mention.path)
+            ])
+        })
+        items.append(contentsOf: localImagePaths.map { path in
+            .object([
+                "type": .string("localImage"),
+                "path": .string(path)
             ])
         })
         return .array(items)

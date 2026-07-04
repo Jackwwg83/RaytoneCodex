@@ -79,6 +79,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimeCatalogErrors: [String] = []
     @Published var runtimeCatalogIsRefreshing = false
     @Published var lastMentionInputPreview: [[String: String]] = []
+    @Published var pendingLocalImagePaths: [String] = []
+    @Published var lastLocalImageInputPreview: [String] = []
     @Published var settingsPane: SettingsPane = .general
     @Published var providers: [RaytoneProviderConfiguration] = RaytoneProviderConfiguration.defaultProviders
     @Published var selectedProviderID = "openai"
@@ -442,7 +444,8 @@ final class SessionStore: ObservableObject {
         }
 
         if isRunning {
-            await steerRunningTurn(trimmedPrompt)
+            let localImages = consumePendingLocalImages()
+            await steerRunningTurn(trimmedPrompt, localImagePaths: localImages)
             return
         }
 
@@ -451,7 +454,8 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        await runAgentPrompt(trimmedPrompt)
+        let localImages = consumePendingLocalImages()
+        await runAgentPrompt(trimmedPrompt, localImagePaths: localImages)
     }
 
     func sendSideChatMessage(_ message: String? = nil) async {
@@ -474,7 +478,11 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private func runAgentPrompt(_ runtimePrompt: String, displayedPrompt: String? = nil) async {
+    private func runAgentPrompt(
+        _ runtimePrompt: String,
+        displayedPrompt: String? = nil,
+        localImagePaths: [String] = []
+    ) async {
         isRunning = true
         let userMessage = displayedPrompt ?? runtimePrompt
 
@@ -488,7 +496,7 @@ final class SessionStore: ObservableObject {
         }
 
         do {
-            try await runPromptWithAppServer(runtimePrompt)
+            try await runPromptWithAppServer(runtimePrompt, localImagePaths: localImagePaths)
             return
         } catch {
             if selectedProvider.usesSidecar {
@@ -728,7 +736,7 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    private func steerRunningTurn(_ trimmedPrompt: String) async -> Bool {
+    private func steerRunningTurn(_ trimmedPrompt: String, localImagePaths: [String] = []) async -> Bool {
         prompt = ""
         updateSelectedThread { thread in
             thread.items.append(TranscriptItem(kind: .userMessage(trimmedPrompt)))
@@ -752,7 +760,8 @@ final class SessionStore: ObservableObject {
                 threadID: threadID,
                 expectedTurnID: turnID,
                 prompt: trimmedPrompt,
-                mentions: mentions
+                mentions: mentions,
+                localImagePaths: localImagePaths
             )
             return true
         } catch {
@@ -887,6 +896,8 @@ final class SessionStore: ObservableObject {
         lastCommandPreview = ""
         lastOutputPath = ""
         lastRawOutput = ""
+        pendingLocalImagePaths = []
+        lastLocalImageInputPreview = []
     }
 
     func chooseAccessMode(_ mode: AccessMode) {
@@ -1211,7 +1222,7 @@ final class SessionStore: ObservableObject {
         panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .heic, .tiff]
 
         guard panel.runModal() == .OK else { return }
-        Task { await addFileReferencesToPrompt(paths: panel.urls.map(\.path), label: "图片") }
+        Task { await addImageReferencesToPrompt(paths: panel.urls.map(\.path)) }
     }
 
     func addFileReferencesToPrompt(paths: [String], label: String = "文件") async {
@@ -1229,6 +1240,28 @@ final class SessionStore: ObservableObject {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         prompt = trimmed.isEmpty ? block : "\(trimmed)\n\n\(block)"
         await openFilePathInPanel(normalizedPaths[0])
+    }
+
+    func addImageReferencesToPrompt(paths: [String]) async {
+        let normalizedPaths = paths
+            .map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+            .filter { !$0.isEmpty }
+        guard !normalizedPaths.isEmpty else { return }
+
+        var seenPaths = Set(pendingLocalImagePaths)
+        for path in normalizedPaths where !seenPaths.contains(path) {
+            pendingLocalImagePaths.append(path)
+            seenPaths.insert(path)
+        }
+
+        await addFileReferencesToPrompt(paths: normalizedPaths, label: "图片")
+    }
+
+    private func consumePendingLocalImages() -> [String] {
+        let images = pendingLocalImagePaths
+        pendingLocalImagePaths = []
+        lastLocalImageInputPreview = images
+        return images
     }
 
     func openRecommendedFile(_ path: String) {
@@ -2592,7 +2625,7 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private func runPromptWithAppServer(_ trimmedPrompt: String) async throws {
+    private func runPromptWithAppServer(_ trimmedPrompt: String, localImagePaths: [String] = []) async throws {
         let options = appServerOptions()
         let client = try await ensureAppServerClient()
         let mentions = await pluginMentions(in: trimmedPrompt)
@@ -2602,7 +2635,8 @@ final class SessionStore: ObservableObject {
             threadID: threadID,
             prompt: trimmedPrompt,
             options: options,
-            mentions: mentions
+            mentions: mentions,
+            localImagePaths: localImagePaths
         )
         activeAppServerTurnID = turn.id
         isRunning = turn.status == "inProgress"

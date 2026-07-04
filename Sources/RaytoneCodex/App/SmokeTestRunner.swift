@@ -12,6 +12,8 @@ enum SmokeTestRunner {
             runToolsSmoke()
         } else if CommandLine.arguments.contains("--file-search-smoke-test") {
             runFileSearchSmoke()
+        } else if CommandLine.arguments.contains("--local-image-input-smoke-test") {
+            runLocalImageInputSmoke()
         } else if CommandLine.arguments.contains("--review-smoke-test") {
             runReviewSmoke()
         } else if CommandLine.arguments.contains("--catalog-smoke-test") {
@@ -372,6 +374,109 @@ enum SmokeTestRunner {
                 ])
                 exit(ok ? 0 : 1)
             } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runLocalImageInputSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexLocalImageSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexLocalImageCodexHome-\(UUID().uuidString)", isDirectory: true)
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+
+                let imageURL = workspaceURL.appendingPathComponent("raytone-local-image-smoke.png")
+                let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+                guard let pngData = Data(base64Encoded: pngBase64) else {
+                    throw NSError(
+                        domain: "RaytoneCodexLocalImageSmoke",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "failed to decode smoke PNG"]
+                    )
+                }
+                try pngData.write(to: imageURL)
+
+                mockServer = try startMockResponsesServer(message: "Raytone local image smoke OK")
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "LocalImageSmoke"
+                }
+
+                await store.refreshRuntime()
+                store.prompt = "请根据图片回复：Raytone local image smoke OK"
+                await store.addImageReferencesToPrompt(paths: [imageURL.path])
+                let turnInput = CodexAppServerClient.userInputItems(
+                    prompt: store.prompt,
+                    localImagePaths: store.pendingLocalImagePaths
+                )
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+                await store.stopAppServerForTesting()
+
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
+                let requestContainsImage = requestLog.contains("input_image") ||
+                    requestLog.contains("localImage") ||
+                    requestLog.contains("raytone-local-image-smoke")
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    !store.isRunning &&
+                    store.lastLocalImageInputPreview == [imageURL.path] &&
+                    store.pendingLocalImagePaths.isEmpty &&
+                    agentMessages.contains("Raytone local image smoke OK") &&
+                    requestLog.contains("/v1/responses") &&
+                    requestContainsImage
+
+                mockServer?.stop()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "imagePath": imageURL.path,
+                    "lastLocalImageInputPreview": store.lastLocalImageInputPreview,
+                    "pendingLocalImageCount": store.pendingLocalImagePaths.count,
+                    "turnInput": jsonObject(from: turnInput),
+                    "requestContainsImage": requestContainsImage,
+                    "mockRequestLogPreview": String(requestLog.prefix(1200)),
+                    "agentMessages": agentMessages
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
                 emitJSON([
                     "ok": false,
                     "runtimeSource": "unknown",
