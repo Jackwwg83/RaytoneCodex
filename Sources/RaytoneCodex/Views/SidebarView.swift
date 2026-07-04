@@ -6,6 +6,7 @@ struct SidebarView: View {
     @ObservedObject var store: SessionStore
     @State private var showSearch = false
     @State private var search = ""
+    @State private var runtimeSearchTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +20,20 @@ struct SidebarView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.sidebar)
         .overlay(alignment: .trailing) { Hairline(axis: .vertical) }
+        .onChange(of: search) { _, newValue in
+            scheduleRuntimeSearch(for: newValue)
+        }
+        .onChange(of: showSearch) { _, isVisible in
+            if isVisible {
+                scheduleRuntimeSearch(for: search)
+            } else {
+                runtimeSearchTask?.cancel()
+                runtimeSearchTask = nil
+            }
+        }
+        .onDisappear {
+            runtimeSearchTask?.cancel()
+        }
     }
 
     // MARK: Top actions
@@ -76,7 +91,8 @@ struct SidebarView: View {
                     SectionLabel(text: "项目")
                     Spacer(minLength: 0)
                     Button {
-                        Task { await store.refreshRuntimeThreads(searchTerm: trimmedSearch.isEmpty ? nil : trimmedSearch) }
+                        runtimeSearchTask?.cancel()
+                        Task { await refreshRuntimeThreadsForSearch() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 10.5, weight: .semibold))
@@ -148,6 +164,33 @@ struct SidebarView: View {
 
     private var trimmedSearch: String {
         search.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    private var runtimeSearchTerm: String {
+        search.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func scheduleRuntimeSearch(for value: String) {
+        runtimeSearchTask?.cancel()
+        guard showSearch else { return }
+
+        let term = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        runtimeSearchTask = Task { @MainActor in
+            let delay: UInt64 = term.isEmpty ? 150_000_000 : 350_000_000
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            await store.refreshRuntimeThreads(
+                searchTerm: term.isEmpty ? nil : term,
+                limit: term.isEmpty ? 50 : 25
+            )
+        }
+    }
+
+    private func refreshRuntimeThreadsForSearch() async {
+        await store.refreshRuntimeThreads(
+            searchTerm: runtimeSearchTerm.isEmpty ? nil : runtimeSearchTerm,
+            limit: runtimeSearchTerm.isEmpty ? 50 : 25
+        )
     }
 
     private var visibleProjects: [Project] {
