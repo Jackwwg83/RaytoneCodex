@@ -4644,9 +4644,35 @@ enum SmokeTestRunner {
             fputs("remote-control-smoke: remoteControl/status/read\n", stderr)
             await store.refreshRemoteControlStatus()
 
-            let errors = store.runtimeCatalogErrors
+            let initialStatus = store.runtimeRemoteControlStatus
+            let initialMode = store.workspaceExecutionMode.title
+
+            fputs("remote-control-smoke: remoteControl/enable\n", stderr)
+            await store.enableRemoteControlMode()
+            let enabledStatus = store.runtimeRemoteControlStatus
+            let enabledErrors = store.runtimeCatalogErrors
+            let enabledMode = store.workspaceExecutionMode.title
+
+            fputs("remote-control-smoke: remoteControl/disable\n", stderr)
+            await store.disableRemoteControlMode()
+            let disabledStatus = store.runtimeRemoteControlStatus
+            let disabledErrors = store.runtimeCatalogErrors
+            let disabledMode = store.workspaceExecutionMode.title
+
+            var restored = false
+            var restoreErrors: [String] = []
+            if initialStatus?.status != "disabled" {
+                fputs("remote-control-smoke: restore remoteControl/enable\n", stderr)
+                await store.enableRemoteControlMode()
+                restored = store.runtimeRemoteControlStatus?.status != "disabled"
+                restoreErrors = store.runtimeCatalogErrors
+            }
+
+            let errors = enabledErrors + disabledErrors + restoreErrors
             let ok = store.runtimeSnapshot.executable != nil &&
-                store.runtimeRemoteControlStatus != nil &&
+                initialStatus != nil &&
+                enabledStatus?.status != "disabled" &&
+                disabledStatus?.status == "disabled" &&
                 errors.isEmpty
 
             emitJSON([
@@ -4657,8 +4683,23 @@ enum SmokeTestRunner {
                 "workspacePath": workspacePath,
                 "catalogStatus": store.runtimeCatalogStatusText,
                 "catalogErrors": errors,
-                "workspaceExecutionMode": store.workspaceExecutionMode.title,
-                "remoteControl": remoteControlPayload(store.runtimeRemoteControlStatus)
+                "initial": [
+                    "workspaceExecutionMode": initialMode,
+                    "remoteControl": remoteControlPayload(initialStatus)
+                ] as [String: Any],
+                "afterEnable": [
+                    "workspaceExecutionMode": enabledMode,
+                    "remoteControl": remoteControlPayload(enabledStatus),
+                    "errors": enabledErrors
+                ] as [String: Any],
+                "afterDisable": [
+                    "workspaceExecutionMode": disabledMode,
+                    "remoteControl": remoteControlPayload(disabledStatus),
+                    "errors": disabledErrors
+                ] as [String: Any],
+                "restoredInitialEnabledState": restored,
+                "clientCount": store.runtimeRemoteControlClients.count,
+                "clientListNextCursor": store.runtimeRemoteControlClientsNextCursor ?? ""
             ])
             exit(ok ? 0 : 1)
         }

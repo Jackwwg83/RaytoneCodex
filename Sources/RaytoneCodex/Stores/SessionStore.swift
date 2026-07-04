@@ -75,6 +75,9 @@ final class SessionStore: ObservableObject {
     @Published var runtimeRequirements: CodexRuntimeConfigRequirements?
     @Published var runtimeRemoteControlStatus: CodexRuntimeRemoteControlStatus?
     @Published var runtimeRemoteControlPairing: CodexRemoteControlPairing?
+    @Published var runtimeRemoteControlPairingClaimed: Bool?
+    @Published var runtimeRemoteControlClients: [CodexRemoteControlClient] = []
+    @Published var runtimeRemoteControlClientsNextCursor: String?
     @Published var runtimeRealtimeVoices: CodexRealtimeVoices?
     @Published var voiceInputStatusText = "麦克风"
     @Published var runtimeApps: [CodexRuntimeAppInfo] = []
@@ -3120,7 +3123,13 @@ final class SessionStore: ObservableObject {
             }
 
             do {
-                runtimeRemoteControlStatus = try await client.readRemoteControlStatus()
+                let status = try await client.readRemoteControlStatus()
+                applyRemoteControlStatus(status)
+                do {
+                    try await loadRemoteControlClientsIfAvailable(using: client, environmentID: status.environmentID)
+                } catch {
+                    errors.append("remoteControl/client/list：\(error.localizedDescription)")
+                }
             } catch {
                 errors.append("remoteControl/status/read：\(error.localizedDescription)")
             }
@@ -3312,8 +3321,12 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
             let status = try await client.readRemoteControlStatus()
-            runtimeRemoteControlStatus = status
-            workspaceExecutionMode = status.status == "disabled" ? .local : .cloudPending
+            applyRemoteControlStatus(status)
+            do {
+                try await loadRemoteControlClientsIfAvailable(using: client, environmentID: status.environmentID)
+            } catch {
+                runtimeCatalogErrors.append("remoteControl/client/list：\(error.localizedDescription)")
+            }
             runtimeCatalogStatusText = "remoteControl/status/read：\(Self.remoteControlStatusDisplayName(status.status))"
         } catch {
             runtimeCatalogStatusText = "remoteControl/status/read 失败：\(error.localizedDescription)"
@@ -3334,7 +3347,12 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
             let status = try await client.enableRemoteControl()
-            runtimeRemoteControlStatus = status
+            applyRemoteControlStatus(status)
+            do {
+                try await loadRemoteControlClientsIfAvailable(using: client, environmentID: status.environmentID)
+            } catch {
+                runtimeCatalogErrors.append("remoteControl/client/list：\(error.localizedDescription)")
+            }
             runtimeCatalogStatusText = "remoteControl/enable：\(Self.remoteControlStatusDisplayName(status.status))"
         } catch {
             workspaceExecutionMode = .local
@@ -3348,6 +3366,7 @@ final class SessionStore: ObservableObject {
     func disableRemoteControlMode() async {
         workspaceExecutionMode = .local
         runtimeRemoteControlPairing = nil
+        runtimeRemoteControlPairingClaimed = nil
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在通过 remoteControl/disable 停用云端模式…"
         runtimeCatalogErrors = []
@@ -3355,7 +3374,7 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
             let status = try await client.disableRemoteControl()
-            runtimeRemoteControlStatus = status
+            applyRemoteControlStatus(status)
             runtimeCatalogStatusText = "remoteControl/disable：\(Self.remoteControlStatusDisplayName(status.status))"
         } catch {
             runtimeCatalogStatusText = "remoteControl/disable 失败：\(error.localizedDescription)"
@@ -3375,17 +3394,97 @@ final class SessionStore: ObservableObject {
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
-            runtimeRemoteControlStatus = try await client.enableRemoteControl()
+            let status = try await client.enableRemoteControl()
+            applyRemoteControlStatus(status)
             let pairing = try await client.startRemoteControlPairing(manualCode: manualCode)
             runtimeRemoteControlPairing = pairing
+            let pairingStatus = try await client.readRemoteControlPairingStatus(pairingCode: pairing.pairingCode)
+            runtimeRemoteControlPairingClaimed = pairingStatus.claimed
+            do {
+                try await loadRemoteControlClientsIfAvailable(using: client, environmentID: pairing.environmentID)
+            } catch {
+                runtimeCatalogErrors.append("remoteControl/client/list：\(error.localizedDescription)")
+            }
             let manualText = pairing.manualPairingCode.map { " · 手动码 \($0)" } ?? ""
-            runtimeCatalogStatusText = "remoteControl/pairing/start：\(pairing.pairingCode)\(manualText)"
+            let claimedText = pairingStatus.claimed ? "已领取" : "等待领取"
+            runtimeCatalogStatusText = "remoteControl/pairing/start：\(pairing.pairingCode)\(manualText) · \(claimedText)"
         } catch {
             runtimeCatalogStatusText = "remoteControl/pairing/start 失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    func refreshRemoteControlPairingStatus() async {
+        guard let pairing = runtimeRemoteControlPairing else {
+            runtimeRemoteControlPairingClaimed = nil
+            runtimeCatalogStatusText = "没有可查询的远程控制配对码"
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 remoteControl/pairing/status 检查配对状态…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
+            let status = try await client.readRemoteControlPairingStatus(pairingCode: pairing.pairingCode)
+            runtimeRemoteControlPairingClaimed = status.claimed
+            runtimeCatalogStatusText = "remoteControl/pairing/status：\(status.claimed ? "已领取" : "等待领取")"
+        } catch {
+            runtimeCatalogStatusText = "remoteControl/pairing/status 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func refreshRemoteControlClients() async {
+        let environmentID = runtimeRemoteControlStatus?.environmentID ?? runtimeRemoteControlPairing?.environmentID
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 remoteControl/client/list 读取授权客户端…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
+            try await loadRemoteControlClientsIfAvailable(using: client, environmentID: environmentID)
+            let count = runtimeRemoteControlClients.count
+            runtimeCatalogStatusText = environmentID?.isEmpty == false
+                ? "remoteControl/client/list：\(count) 个授权客户端"
+                : "remoteControl/client/list：当前没有环境 ID"
+        } catch {
+            runtimeCatalogStatusText = "remoteControl/client/list 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    private func applyRemoteControlStatus(_ status: CodexRuntimeRemoteControlStatus) {
+        runtimeRemoteControlStatus = status
+        workspaceExecutionMode = status.status == "disabled" ? .local : .cloudPending
+        if status.status == "disabled" {
+            runtimeRemoteControlPairing = nil
+            runtimeRemoteControlPairingClaimed = nil
+            runtimeRemoteControlClients = []
+            runtimeRemoteControlClientsNextCursor = nil
+        }
+    }
+
+    private func loadRemoteControlClientsIfAvailable(
+        using client: CodexAppServerClient,
+        environmentID: String?
+    ) async throws {
+        guard let environmentID, !environmentID.isEmpty else {
+            runtimeRemoteControlClients = []
+            runtimeRemoteControlClientsNextCursor = nil
+            return
+        }
+
+        let catalog = try await client.listRemoteControlClients(environmentID: environmentID)
+        runtimeRemoteControlClients = catalog.clients
+        runtimeRemoteControlClientsNextCursor = catalog.nextCursor
     }
 
     func togglePluginInstallation(_ plugin: CodexRuntimePlugin) async {

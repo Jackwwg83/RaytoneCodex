@@ -1196,6 +1196,57 @@ public struct CodexRemoteControlPairing: Equatable, Sendable {
     }
 }
 
+public struct CodexRemoteControlPairingStatus: Equatable, Sendable {
+    public var claimed: Bool
+
+    public init(claimed: Bool) {
+        self.claimed = claimed
+    }
+}
+
+public struct CodexRemoteControlClient: Equatable, Identifiable, Sendable {
+    public var id: String { clientID }
+
+    public var clientID: String
+    public var displayName: String?
+    public var deviceType: String?
+    public var platform: String?
+    public var osVersion: String?
+    public var deviceModel: String?
+    public var appVersion: String?
+    public var lastSeenAt: Int?
+
+    public init(
+        clientID: String,
+        displayName: String?,
+        deviceType: String?,
+        platform: String?,
+        osVersion: String?,
+        deviceModel: String?,
+        appVersion: String?,
+        lastSeenAt: Int?
+    ) {
+        self.clientID = clientID
+        self.displayName = displayName
+        self.deviceType = deviceType
+        self.platform = platform
+        self.osVersion = osVersion
+        self.deviceModel = deviceModel
+        self.appVersion = appVersion
+        self.lastSeenAt = lastSeenAt
+    }
+}
+
+public struct CodexRemoteControlClientCatalog: Equatable, Sendable {
+    public var clients: [CodexRemoteControlClient]
+    public var nextCursor: String?
+
+    public init(clients: [CodexRemoteControlClient], nextCursor: String?) {
+        self.clients = clients
+        self.nextCursor = nextCursor
+    }
+}
+
 public struct CodexRealtimeVoices: Equatable, Sendable {
     public var v1: [String]
     public var v2: [String]
@@ -2109,6 +2160,39 @@ public actor CodexAppServerClient {
             environmentID: result["environmentId"]?.stringValue ?? "",
             expiresAt: result["expiresAt"]?.intValue ?? 0
         )
+    }
+
+    public func readRemoteControlPairingStatus(
+        pairingCode: String? = nil,
+        manualPairingCode: String? = nil
+    ) async throws -> CodexRemoteControlPairingStatus {
+        var params: [String: JSONValue] = [:]
+        if let pairingCode, !pairingCode.isEmpty {
+            params["pairingCode"] = .string(pairingCode)
+        }
+        if let manualPairingCode, !manualPairingCode.isEmpty {
+            params["manualPairingCode"] = .string(manualPairingCode)
+        }
+        let result = try await request(method: "remoteControl/pairing/status", params: .object(params))
+        return CodexRemoteControlPairingStatus(claimed: result["claimed"]?.boolValue ?? false)
+    }
+
+    public func listRemoteControlClients(
+        environmentID: String,
+        cursor: String? = nil,
+        limit: Int = 25,
+        order: String = "desc"
+    ) async throws -> CodexRemoteControlClientCatalog {
+        var params: [String: JSONValue] = [
+            "environmentId": .string(environmentID),
+            "limit": .number(Double(limit)),
+            "order": .string(order)
+        ]
+        if let cursor, !cursor.isEmpty {
+            params["cursor"] = .string(cursor)
+        }
+        let result = try await request(method: "remoteControl/client/list", params: .object(params))
+        return Self.remoteControlClientCatalog(from: result)
     }
 
     public func listRealtimeVoices() async throws -> CodexRealtimeVoices {
@@ -3156,6 +3240,28 @@ public actor CodexAppServerClient {
             serverName: result?["serverName"]?.stringValue ?? "",
             installationID: result?["installationId"]?.stringValue ?? "",
             environmentID: result?["environmentId"]?.stringValue
+        )
+    }
+
+    private static func remoteControlClientCatalog(from result: JSONValue) -> CodexRemoteControlClientCatalog {
+        let clients = result["data"]?.arrayValue?.compactMap { value -> CodexRemoteControlClient? in
+            guard let clientID = value["clientId"]?.stringValue else {
+                return nil
+            }
+            return CodexRemoteControlClient(
+                clientID: clientID,
+                displayName: value["displayName"]?.stringValue,
+                deviceType: value["deviceType"]?.stringValue,
+                platform: value["platform"]?.stringValue,
+                osVersion: value["osVersion"]?.stringValue,
+                deviceModel: value["deviceModel"]?.stringValue,
+                appVersion: value["appVersion"]?.stringValue,
+                lastSeenAt: value["lastSeenAt"]?.intValue
+            )
+        } ?? []
+        return CodexRemoteControlClientCatalog(
+            clients: clients,
+            nextCursor: result["nextCursor"]?.stringValue
         )
     }
 

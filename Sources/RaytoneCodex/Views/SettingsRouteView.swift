@@ -1691,7 +1691,58 @@ struct SettingsRouteView: View {
                         metricRow("手动码", manualCode)
                     }
                     metricRow("配对环境", pairing.environmentID)
+                    metricRow("领取状态", remotePairingClaimedText(store.runtimeRemoteControlPairingClaimed))
                     metricRow("过期时间", remotePairingExpiryText(pairing.expiresAt))
+                    HStack(spacing: 8) {
+                        Button("检查配对状态") {
+                            Task { await store.refreshRemoteControlPairingStatus() }
+                        }
+                        .buttonStyle(ChipButtonStyle())
+                        .disabled(store.runtimeCatalogIsRefreshing)
+                    }
+                    .padding(.top, 6)
+                }
+                Divider()
+                    .overlay(Theme.borderSoft)
+                    .padding(.vertical, 8)
+                HStack {
+                    Text("授权客户端")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 0)
+                    Button("刷新客户端") {
+                        Task { await store.refreshRemoteControlClients() }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.runtimeCatalogIsRefreshing)
+                }
+                if store.runtimeRemoteControlClients.isEmpty {
+                    Text(remoteClientEmptyText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.top, 6)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(store.runtimeRemoteControlClients) { client in
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "iphone.and.arrow.forward")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(client.displayName ?? client.clientID)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Text(remoteClientDetailText(client))
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Theme.textSecondary)
+                                        .lineLimit(2)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                    .padding(.top, 8)
                 }
                 HStack(spacing: 8) {
                     Button("启用云端模式") {
@@ -2196,10 +2247,44 @@ struct SettingsRouteView: View {
         SessionStore.remoteControlStatusDisplayName(value)
     }
 
+    private var remoteClientEmptyText: String {
+        if store.runtimeRemoteControlStatus?.environmentID?.isEmpty == false ||
+            store.runtimeRemoteControlPairing?.environmentID.isEmpty == false {
+            return "remoteControl/client/list 没有返回授权客户端。"
+        }
+        return "remoteControl/status/read 尚未返回环境 ID，连接成功后会读取客户端列表。"
+    }
+
+    private func remotePairingClaimedText(_ value: Bool?) -> String {
+        guard let value else { return "未查询" }
+        return value ? "已领取" : "等待领取"
+    }
+
     private func remotePairingExpiryText(_ value: Int) -> String {
         guard value > 0 else { return "未返回" }
         let date = Date(timeIntervalSince1970: TimeInterval(value))
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func remoteClientDetailText(_ client: CodexRemoteControlClient) -> String {
+        var parts: [String] = []
+        if let platform = client.platform, !platform.isEmpty {
+            parts.append(platform)
+        }
+        if let deviceType = client.deviceType, !deviceType.isEmpty {
+            parts.append(deviceType)
+        }
+        if let deviceModel = client.deviceModel, !deviceModel.isEmpty {
+            parts.append(deviceModel)
+        }
+        if let appVersion = client.appVersion, !appVersion.isEmpty {
+            parts.append("App \(appVersion)")
+        }
+        if let lastSeenAt = client.lastSeenAt {
+            let date = Date(timeIntervalSince1970: TimeInterval(lastSeenAt))
+            parts.append("上次在线 \(date.formatted(date: .abbreviated, time: .shortened))")
+        }
+        return parts.isEmpty ? client.clientID : parts.joined(separator: " · ")
     }
 
     private func tokenText(_ value: Int?) -> String {
