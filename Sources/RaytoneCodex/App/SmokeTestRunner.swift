@@ -2289,7 +2289,10 @@ enum SmokeTestRunner {
 
             let hardFailure = store.runtimeSnapshot.executable == nil ||
                 archivedStatus.hasPrefix("已归档对话读取失败") ||
-                (gitStatus.hasPrefix("Git 差异读取失败") && store.workspaceGitStatusText.isEmpty)
+                (gitStatus.hasPrefix("Git 差异读取失败") && store.workspaceGitStatusText.isEmpty) ||
+                store.runtimeProfileDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                store.runtimeProfileHandle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                store.runtimeProfileInitials.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
             emitJSON([
                 "ok": !hardFailure,
@@ -2305,6 +2308,12 @@ enum SmokeTestRunner {
                     "planType": store.runtimeAccount?.planType ?? "",
                     "requiresOpenAIAuth": store.runtimeAccount?.requiresOpenAIAuth ?? false
                 ] as [String: Any],
+                "profile": [
+                    "displayName": store.runtimeProfileDisplayName,
+                    "handle": store.runtimeProfileHandle,
+                    "initials": store.runtimeProfileInitials,
+                    "source": "account/read"
+                ],
                 "tokenUsage": [
                     "lifetimeTokens": store.runtimeTokenUsage?.lifetimeTokens.map { $0 as Any } ?? NSNull(),
                     "peakDailyTokens": store.runtimeTokenUsage?.peakDailyTokens.map { $0 as Any } ?? NSNull(),

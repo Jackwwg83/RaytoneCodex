@@ -377,24 +377,29 @@ struct SettingsRouteView: View {
             }
 
             VStack(spacing: 8) {
-                Text("HW")
+                Text(store.runtimeProfileInitials)
                     .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(Theme.transcript)
                     .frame(width: 76, height: 76)
-                    .background(Theme.warning)
+                    .background(store.runtimeAccount == nil ? Theme.textTertiary : Theme.warning)
                     .clipShape(Circle())
-                Text("Hongqian Wu")
+                Text(store.runtimeProfileDisplayName)
                     .font(.system(size: 20, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 HStack(spacing: 6) {
-                    Text("@hqwu810")
+                    Text(store.runtimeProfileHandle)
                         .font(.system(size: 12.5))
                         .foregroundStyle(Theme.textSecondary)
-                    Text("Pro")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(store.runtimeAccount?.planType ?? accountKindName(store.runtimeAccount?.kind))
                         .font(.system(size: 11, weight: .semibold))
                         .padding(.horizontal, 7)
                         .frame(height: 20)
                         .background(Theme.fill)
                         .clipShape(Capsule())
+                    statusBadge(accountKindName(store.runtimeAccount?.kind), ok: store.runtimeAccount?.kind != nil && store.runtimeAccount?.kind != "notLoggedIn")
                 }
             }
             .frame(maxWidth: .infinity)
@@ -794,8 +799,7 @@ struct SettingsRouteView: View {
             let ratio = Double(buckets[index].tokens) / Double(maxTokens)
             return buckets[index].tokens == 0 ? 0.08 : 0.12 + min(ratio, 1.0) * 0.65
         }
-        let value = (row * 11 + column * 7) % 6
-        return value == 0 ? 0.08 : 0.12 + Double(value) * 0.13
+        return 0.08
     }
 
     private var insightCard: some View {

@@ -226,6 +226,39 @@ final class SessionStore: ObservableObject {
         return generate && use
     }
 
+    var runtimeProfileDisplayName: String {
+        guard let account = runtimeAccount else {
+            return "未登录 Codex"
+        }
+
+        switch account.kind {
+        case "chatgpt":
+            return account.email?.isEmpty == false ? account.email! : "ChatGPT"
+        case "apiKey":
+            return "OpenAI API Key"
+        case "amazonBedrock":
+            return "Amazon Bedrock"
+        default:
+            return Self.accountDisplayName(account)
+        }
+    }
+
+    var runtimeProfileHandle: String {
+        guard let account = runtimeAccount else {
+            return "运行 codex login"
+        }
+        if let email = account.email,
+           let localPart = email.split(separator: "@").first,
+           !localPart.isEmpty {
+            return "@\(localPart)"
+        }
+        return account.kind == "notLoggedIn" ? "未连接账户" : account.kind
+    }
+
+    var runtimeProfileInitials: String {
+        Self.initials(from: runtimeProfileDisplayName)
+    }
+
     var runtimeSkipToolAssistedChats: Bool {
         runtimeConfig?.memoryDisableOnExternalContext ?? false
     }
@@ -3377,6 +3410,21 @@ final class SessionStore: ObservableObject {
         default:
             return account.requiresOpenAIAuth ? "需要登录 OpenAI" : "未登录"
         }
+    }
+
+    static func initials(from value: String) -> String {
+        let words = value
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+        let initials = words
+            .prefix(2)
+            .compactMap(\.first)
+            .map { String($0).uppercased() }
+            .joined()
+        if !initials.isEmpty {
+            return initials
+        }
+        return String(value.prefix(2)).uppercased()
     }
 
     static func diffSummary(_ diff: String) -> (files: Int, additions: Int, deletions: Int) {
