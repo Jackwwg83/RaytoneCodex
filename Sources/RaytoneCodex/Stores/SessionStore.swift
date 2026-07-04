@@ -3607,11 +3607,22 @@ final class SessionStore: ObservableObject {
     }
 
     func revealCodexHomeSubfolder(_ subfolder: String) {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex")
-            .appendingPathComponent(subfolder)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        let url = ensureCodexHomeSubfolder(subfolder)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @discardableResult
+    func ensureCodexHomeSubfolder(_ subfolder: String) -> URL {
+        let trimmedSubfolder = subfolder.trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
+        let safeSubfolder = trimmedSubfolder.isEmpty ? "plugins" : trimmedSubfolder
+        let url = Self.defaultCodexConfigURL(
+            overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
+        )
+        .deletingLastPathComponent()
+        .appendingPathComponent(safeSubfolder, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        runtimeCatalogStatusText = "已准备 Codex \(safeSubfolder) 目录：\(Project.abbreviate(url.path))"
+        return url
     }
 
     func diagnoseWorkspaceRuntime() async {

@@ -5,7 +5,7 @@ struct PluginsPage: View {
     @ObservedObject var store: SessionStore
     @State private var selectedTab: PluginTab = .plugins
     @State private var search = ""
-    @State private var sourceFilter = "Built by OpenAI"
+    @State private var sourceFilter = "OpenAI 构建"
     @State private var stateFilter = "全部"
 
     private let columns = [
@@ -174,7 +174,7 @@ struct PluginsPage: View {
             .background(Theme.fill)
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
 
-            filterMenu(selection: $sourceFilter, values: ["Built by OpenAI", "全部来源"])
+            filterMenu(selection: $sourceFilter, values: ["OpenAI 构建", "全部来源"])
             filterMenu(selection: $stateFilter, values: stateFilterValues)
         }
     }

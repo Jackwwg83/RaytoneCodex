@@ -26,6 +26,8 @@ enum SmokeTestRunner {
             runMCPToolSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
+        } else if CommandLine.arguments.contains("--codex-home-directory-smoke-test") {
+            runCodexHomeDirectorySmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
             runAccountAuthSmoke()
         } else if CommandLine.arguments.contains("--connection-recovery-smoke-test") {
@@ -1284,6 +1286,58 @@ enum SmokeTestRunner {
                     "codexHome": codexHomeURL.path,
                     "error": error.localizedDescription
                 ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runCodexHomeDirectorySmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexHomeDirectorySmoke-\(UUID().uuidString)", isDirectory: true)
+
+            do {
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                let store = SessionStore()
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                let pluginsURL = store.ensureCodexHomeSubfolder("plugins")
+                let skillsURL = store.ensureCodexHomeSubfolder("skills")
+                let trimmedURL = store.ensureCodexHomeSubfolder("/plugins/")
+
+                let pluginExists = fileManager.fileExists(atPath: pluginsURL.path)
+                let skillsExists = fileManager.fileExists(atPath: skillsURL.path)
+                let ok = pluginExists &&
+                    skillsExists &&
+                    pluginsURL.path == codexHomeURL.appendingPathComponent("plugins").path &&
+                    skillsURL.path == codexHomeURL.appendingPathComponent("skills").path &&
+                    trimmedURL.path == pluginsURL.path &&
+                    store.runtimeCatalogStatusText.contains(codexHomeURL.lastPathComponent)
+
+                emitJSON([
+                    "ok": ok,
+                    "codexHome": codexHomeURL.path,
+                    "pluginsURL": pluginsURL.path,
+                    "skillsURL": skillsURL.path,
+                    "trimmedURL": trimmedURL.path,
+                    "pluginExists": pluginExists,
+                    "skillsExists": skillsExists,
+                    "status": store.runtimeCatalogStatusText
+                ])
+                try? fileManager.removeItem(at: codexHomeURL)
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                try? fileManager.removeItem(at: codexHomeURL)
                 exit(1)
             }
         }
