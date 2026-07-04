@@ -108,7 +108,10 @@ struct ComposerView: View {
                         Button {
                             store.chooseProviderModel(providerID: provider.id, model: model)
                         } label: {
-                            Label(model, systemImage: provider.id == store.selectedProviderID && model == store.selectedProvider.model ? "checkmark" : "circle")
+                            Label(
+                                store.modelMenuTitle(providerID: provider.id, model: model),
+                                systemImage: provider.id == store.selectedProviderID && model == store.selectedProvider.model ? "checkmark" : "circle"
+                            )
                         }
                     }
                 }

@@ -65,6 +65,7 @@ final class SessionStore: ObservableObject {
     @Published var settingsPane: SettingsPane = .general
     @Published var providers: [RaytoneProviderConfiguration] = RaytoneProviderConfiguration.defaultProviders
     @Published var selectedProviderID = "openai"
+    @Published var codexModelCatalog: [CodexAppServerModel] = []
     @Published var sidecarStatusText = "未启动"
     @Published var modelCatalogStatusText = "未刷新"
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
@@ -174,7 +175,16 @@ final class SessionStore: ObservableObject {
     }
 
     var modelDisplayName: String {
-        selectedProvider.usesSidecar ? "\(selectedProvider.displayName) › \(selectedProvider.model)" : (model.isEmpty ? selectedProvider.model : model)
+        if selectedProvider.usesSidecar {
+            return "\(selectedProvider.displayName) › \(selectedProvider.model)"
+        }
+        let selectedModel = model.isEmpty ? selectedProvider.model : model
+        return codexModelMetadata(id: selectedModel)?.displayName ?? selectedModel
+    }
+
+    var selectedCodexModelMetadata: CodexAppServerModel? {
+        let selectedModel = model.isEmpty ? selectedProvider.model : model
+        return codexModelMetadata(id: selectedModel)
     }
 
     var runtimeThinkingEnabled: Bool {
@@ -1048,6 +1058,7 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient()
             let models = try await client.listModels(limit: 100, includeHidden: false)
+            codexModelCatalog = models
             let modelIDs = models.map(\.id)
             if !modelIDs.isEmpty,
                let openAIIndex = providers.firstIndex(where: { $0.id == "openai" }) {
@@ -1056,6 +1067,9 @@ final class SessionStore: ObservableObject {
                    let defaultModel = models.first(where: \.isDefault)?.id ?? modelIDs.first {
                     model = defaultModel
                     providers[openAIIndex].model = defaultModel
+                    updateSelectedThread { thread in
+                        thread.model = defaultModel
+                    }
                 }
             }
             modelCatalogStatusText = modelIDs.isEmpty ? "app-server 未返回模型" : "已读取 \(modelIDs.count) 个模型"
@@ -1898,6 +1912,26 @@ final class SessionStore: ObservableObject {
     func chooseProviderModel(providerID: String, model: String) {
         guard applyProviderModelSelection(providerID: providerID, model: model) != nil else { return }
         Task { await resetAppServerForProviderChange() }
+    }
+
+    func codexModelMetadata(id: String) -> CodexAppServerModel? {
+        codexModelCatalog.first { $0.id == id || $0.model == id }
+    }
+
+    func modelMenuTitle(providerID: String, model modelID: String) -> String {
+        guard providerID == "openai",
+              let metadata = codexModelMetadata(id: modelID) else {
+            return modelID
+        }
+
+        var parts = [metadata.displayName.isEmpty ? modelID : metadata.displayName]
+        if let effort = metadata.defaultReasoningEffort, !effort.isEmpty {
+            parts.append("推理 \(effort)")
+        }
+        if metadata.supportsPersonality {
+            parts.append("个性")
+        }
+        return parts.joined(separator: " · ")
     }
 
     @discardableResult

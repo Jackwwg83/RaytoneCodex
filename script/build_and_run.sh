@@ -1431,6 +1431,14 @@ case "$MODE" in
       --personality-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --model-catalog-smoke|model-catalog-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --model-catalog-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --model-config-smoke|model-config-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -1471,7 +1479,7 @@ case "$MODE" in
     run_package_audit
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--tools-smoke|--file-search-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--mention-smoke|--runtime-pages-smoke|--automation-smoke|--automation-hook-smoke|--integration-pages-smoke|--access-mode-smoke|--personality-smoke|--model-config-smoke|--reasoning-config-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--tools-smoke|--file-search-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--mention-smoke|--runtime-pages-smoke|--automation-smoke|--automation-hook-smoke|--integration-pages-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-config-smoke|--reasoning-config-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
     exit 2
     ;;
 esac

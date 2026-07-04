@@ -224,14 +224,46 @@ public struct CodexAppServerReview: Equatable, Sendable {
     }
 }
 
-public struct CodexAppServerModel: Equatable, Sendable {
+public struct CodexReasoningEffortOption: Equatable, Sendable {
+    public var effort: String
+    public var description: String
+
+    public init(effort: String, description: String) {
+        self.effort = effort
+        self.description = description
+    }
+}
+
+public struct CodexAppServerModel: Equatable, Sendable, Identifiable {
     public var id: String
+    public var model: String
     public var displayName: String
+    public var description: String
+    public var supportedReasoningEfforts: [CodexReasoningEffortOption]
+    public var defaultReasoningEffort: String?
+    public var inputModalities: [String]
+    public var supportsPersonality: Bool
     public var isDefault: Bool
 
-    public init(id: String, displayName: String, isDefault: Bool) {
+    public init(
+        id: String,
+        model: String,
+        displayName: String,
+        description: String,
+        supportedReasoningEfforts: [CodexReasoningEffortOption],
+        defaultReasoningEffort: String?,
+        inputModalities: [String],
+        supportsPersonality: Bool,
+        isDefault: Bool
+    ) {
         self.id = id
+        self.model = model
         self.displayName = displayName
+        self.description = description
+        self.supportedReasoningEfforts = supportedReasoningEfforts
+        self.defaultReasoningEffort = defaultReasoningEffort
+        self.inputModalities = inputModalities
+        self.supportsPersonality = supportsPersonality
         self.isDefault = isDefault
     }
 }
@@ -1147,9 +1179,26 @@ public actor CodexAppServerClient {
             guard let object = value.objectValue else { return nil }
             let id = object["id"]?.stringValue ?? object["model"]?.stringValue
             guard let id else { return nil }
+            let model = object["model"]?.stringValue ?? id
+            let supportedReasoningEfforts = object["supportedReasoningEfforts"]?.arrayValue?.compactMap { value -> CodexReasoningEffortOption? in
+                guard let option = value.objectValue,
+                      let effort = option["reasoningEffort"]?.stringValue else {
+                    return nil
+                }
+                return CodexReasoningEffortOption(
+                    effort: effort,
+                    description: option["description"]?.stringValue ?? effort
+                )
+            } ?? []
             return CodexAppServerModel(
                 id: id,
+                model: model,
                 displayName: object["displayName"]?.stringValue ?? id,
+                description: object["description"]?.stringValue ?? "",
+                supportedReasoningEfforts: supportedReasoningEfforts,
+                defaultReasoningEffort: object["defaultReasoningEffort"]?.stringValue,
+                inputModalities: object["inputModalities"]?.arrayValue?.compactMap(\.stringValue) ?? [],
+                supportsPersonality: object["supportsPersonality"]?.boolValue ?? false,
                 isDefault: object["isDefault"]?.boolValue ?? false
             )
         } ?? []

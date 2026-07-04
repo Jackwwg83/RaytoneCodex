@@ -30,6 +30,8 @@ enum SmokeTestRunner {
             runAccessModeSmoke()
         } else if CommandLine.arguments.contains("--personality-smoke-test") {
             runPersonalitySmoke()
+        } else if CommandLine.arguments.contains("--model-catalog-smoke-test") {
+            runModelCatalogSmoke()
         } else if CommandLine.arguments.contains("--model-config-smoke-test") {
             runModelConfigSmoke()
         } else if CommandLine.arguments.contains("--reasoning-config-smoke-test") {
@@ -592,6 +594,58 @@ enum SmokeTestRunner {
                 ])
                 exit(1)
             }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runModelCatalogSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            await store.refreshRuntime()
+            await store.refreshModelCatalog()
+
+            let openAIProvider = store.providers.first { $0.id == "openai" }
+            let defaultModel = store.codexModelCatalog.first(where: \.isDefault) ?? store.codexModelCatalog.first
+            let defaultModelID = defaultModel?.id ?? ""
+            let menuTitle = defaultModel.map { store.modelMenuTitle(providerID: "openai", model: $0.id) } ?? ""
+            let ok = store.runtimeSnapshot.executable != nil &&
+                !store.codexModelCatalog.isEmpty &&
+                openAIProvider?.models == store.codexModelCatalog.map(\.id) &&
+                defaultModel?.displayName.isEmpty == false &&
+                defaultModel?.defaultReasoningEffort?.isEmpty == false &&
+                menuTitle.contains(defaultModel?.displayName ?? "") &&
+                menuTitle.contains("推理")
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "status": store.modelCatalogStatusText,
+                "catalogCount": store.codexModelCatalog.count,
+                "providerModelCount": openAIProvider?.models.count ?? 0,
+                "defaultModelID": defaultModelID,
+                "defaultMenuTitle": menuTitle,
+                "modelsPreview": Array(store.codexModelCatalog.prefix(8).map { model in
+                    [
+                        "id": model.id,
+                        "model": model.model,
+                        "displayName": model.displayName,
+                        "defaultReasoningEffort": model.defaultReasoningEffort ?? "",
+                        "supportedReasoningEfforts": model.supportedReasoningEfforts.map(\.effort),
+                        "inputModalities": model.inputModalities,
+                        "supportsPersonality": model.supportsPersonality,
+                        "isDefault": model.isDefault
+                    ] as [String: Any]
+                })
+            ])
+            exit(ok ? 0 : 1)
         }
 
         dispatchMain()

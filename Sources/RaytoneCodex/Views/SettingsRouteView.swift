@@ -318,6 +318,12 @@ struct SettingsRouteView: View {
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.textPrimary)
                     }
+                    SettingsValueRow(title: "模型目录", description: "来自 app-server model/list 的 displayName 和 reasoning 元数据") {
+                        Text(store.codexModelCatalog.isEmpty ? store.modelCatalogStatusText : "\(store.codexModelCatalog.count) 个模型 · \(store.selectedCodexModelMetadata?.defaultReasoningEffort ?? "默认推理")")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                    }
                     SettingsValueRow(title: "Sidecar", description: "仅第三方 Chat Completions 提供方需要") {
                         let sidecarText = store.selectedProvider.usesSidecar ? store.sidecarStatusText : "不需要"
                         statusBadge(sidecarText, ok: store.selectedProvider.usesSidecar ? sidecarText.contains("127.0.0.1") : true)
@@ -439,7 +445,7 @@ struct SettingsRouteView: View {
                     Text(provider.displayName)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
-                    Text(provider.model)
+                    Text(store.modelMenuTitle(providerID: provider.id, model: provider.model))
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -479,15 +485,17 @@ struct SettingsRouteView: View {
                 SettingsValueRow(title: "模型", description: "当前 provider 的默认模型") {
                     Menu {
                         ForEach(provider.models, id: \.self) { model in
-                            Button(model) {
+                            Button {
                                 Task {
                                     await store.saveRuntimeModelSelection(providerID: provider.id, model: model)
                                     providerStatusMessage = store.modelCatalogStatusText
                                 }
+                            } label: {
+                                Text(store.modelMenuTitle(providerID: provider.id, model: model))
                             }
                         }
                     } label: {
-                        menuLabel(provider.model)
+                        menuLabel(store.modelMenuTitle(providerID: provider.id, model: provider.model))
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
