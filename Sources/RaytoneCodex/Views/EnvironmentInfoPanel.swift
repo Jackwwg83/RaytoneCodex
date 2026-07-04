@@ -3,6 +3,7 @@ import SwiftUI
 struct EnvironmentInfoPanel: View {
     @ObservedObject var store: SessionStore
     @Binding var showInspector: Bool
+    @State private var didRefreshEnvironment = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,6 +16,13 @@ struct EnvironmentInfoPanel: View {
                 }
                 .padding(16)
             }
+        }
+        .task {
+            guard !didRefreshEnvironment else { return }
+            didRefreshEnvironment = true
+            await store.refreshWorkspaceBranches()
+            await store.refreshWorkspaceGitDiff()
+            await store.refreshWorkspaceWorktrees()
         }
         .frame(width: Theme.Layout.inspectorWidth)
         .frame(maxHeight: .infinity)
@@ -55,12 +63,12 @@ struct EnvironmentInfoPanel: View {
     private var environmentRows: some View {
         VStack(alignment: .leading, spacing: 4) {
             EnvironmentInfoRow(symbol: "plus.forwardslash.minus", title: "变更", trailing: changesText)
-            EnvironmentInfoRow(symbol: "desktopcomputer", title: "本地", trailing: "⌄")
-            EnvironmentInfoRow(symbol: "arrow.triangle.branch", title: store.selectedProject.branch ?? "master", trailing: "⌄")
+            EnvironmentInfoRow(symbol: "desktopcomputer", title: "本地", trailing: Project.abbreviate(store.workspacePath))
+            EnvironmentInfoRow(symbol: "arrow.triangle.branch", title: branchTitle, trailing: branchStatusText)
             EnvironmentInfoRow(symbol: "cpu", title: store.modelDisplayName, trailing: nil)
             EnvironmentInfoRow(symbol: "shippingbox", title: "Sidecar", trailing: store.sidecarStatusText)
-            EnvironmentInfoRow(symbol: "arrow.up.circle", title: "提交或推送", trailing: nil)
-            EnvironmentInfoRow(symbol: "chevron.left.forwardslash.chevron.right", title: "无法获取拉取请求状态", trailing: nil, secondary: true)
+            EnvironmentInfoRow(symbol: "rectangle.split.3x1", title: "工作树", trailing: worktreeText)
+            EnvironmentInfoRow(symbol: "chevron.left.forwardslash.chevron.right", title: pullRequestStatusText, trailing: nil, secondary: true)
         }
     }
 
@@ -87,13 +95,8 @@ struct EnvironmentInfoPanel: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "来源")
             HStack(spacing: 8) {
-                ForEach(["command", "globe", "folder", "doc.text", "terminal"], id: \.self) { symbol in
-                    Image(systemName: symbol)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 28, height: 28)
-                        .background(Theme.fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                ForEach(sourceChips) { chip in
+                    SourceChipView(chip: chip)
                 }
                 Spacer(minLength: 0)
             }
@@ -101,22 +104,93 @@ struct EnvironmentInfoPanel: View {
     }
 
     private var changesText: String {
-        if store.pendingChanges.isEmpty {
-            return "无"
+        if let diff = store.workspaceGitDiff?.diff, !diff.isEmpty {
+            let parsed = SessionStore.diffSummary(diff)
+            return "\(parsed.files) 个文件 · +\(parsed.additions) −\(parsed.deletions)"
         }
-        return "\(store.pendingChanges.count)"
+
+        let statusChangeCount = Self.gitStatusChangeCount(store.workspaceGitStatusText)
+        if statusChangeCount > 0 {
+            return "Git 状态 \(statusChangeCount) 项"
+        }
+
+        if !store.pendingChanges.isEmpty {
+            return "\(store.pendingChanges.count) 个文件 · +\(store.pendingAdditions) −\(store.pendingDeletions)"
+        }
+
+        if store.runtimeCatalogIsRefreshing {
+            return "读取中"
+        }
+        return "无"
+    }
+
+    private var branchTitle: String {
+        store.selectedProject.branch ?? store.workspaceBranches.first ?? "无分支"
+    }
+
+    private var branchStatusText: String {
+        if store.workspaceBranchStatusText.isEmpty {
+            return "未刷新"
+        }
+        return store.workspaceBranchStatusText
+    }
+
+    private var worktreeText: String {
+        if store.workspaceWorktrees.isEmpty {
+            return "未检测到"
+        }
+        return "\(store.workspaceWorktrees.count) 个"
+    }
+
+    private var pullRequestStatusText: String {
+        if store.workspaceGitDiff?.sha?.isEmpty == false {
+            return "远端差异已读取"
+        }
+        if store.workspaceGitStatusText.isEmpty {
+            return "无法获取拉取请求状态"
+        }
+        return "本地 Git 状态已读取"
     }
 
     private var progressSteps: [ProgressStep] {
         if !store.selectedThread.progressSteps.isEmpty {
             return store.selectedThread.progressSteps
         }
+        if store.isRunning {
+            return [
+                ProgressStep(title: "app-server 正在运行当前 turn", state: .running),
+                ProgressStep(title: "等待 turn/plan/updated 返回 Codex 计划", state: .pending),
+                ProgressStep(title: "完成后刷新 Git 与环境状态", state: .pending)
+            ]
+        }
+        if store.runtimeCatalogIsRefreshing {
+            return [
+                ProgressStep(title: "正在通过 app-server 读取环境状态", state: .running),
+                ProgressStep(title: "同步 Git 分支、差异和工作树", state: .pending)
+            ]
+        }
         return [
-            ProgressStep(title: "重新校准生产访问、token 和现有审计报告状态", state: .done),
-            ProgressStep(title: "验证上传 UI 候选并清理测试数据", state: .running),
-            ProgressStep(title: "继续审计 Composer、Inspector、Settings/错误态等高风险工作流", state: .pending),
-            ProgressStep(title: "把确认的 P0/P1 与排除项写入报告", state: .pending)
+            ProgressStep(title: "app-server 连接就绪", state: .done),
+            ProgressStep(title: "Git 环境状态已同步到面板", state: store.workspaceGitDiff != nil || !store.workspaceGitStatusText.isEmpty ? .done : .pending),
+            ProgressStep(title: "开始运行后显示 Codex 计划更新", state: .pending)
         ]
+    }
+
+    private var sourceChips: [EnvironmentSourceChip] {
+        [
+            EnvironmentSourceChip(symbol: "command", title: "命令", active: !store.commandRuns.isEmpty),
+            EnvironmentSourceChip(symbol: "globe", title: "浏览器", active: store.browserURL != nil),
+            EnvironmentSourceChip(symbol: "folder", title: "文件", active: !store.fileEntries.isEmpty || !store.fileSearchResults.isEmpty),
+            EnvironmentSourceChip(symbol: "doc.text", title: "变更", active: !store.pendingChanges.isEmpty || store.workspaceGitDiff != nil || !store.workspaceGitStatusText.isEmpty),
+            EnvironmentSourceChip(symbol: "terminal", title: "终端", active: !store.terminalRuns.isEmpty)
+        ]
+    }
+
+    private static func gitStatusChangeCount(_ status: String) -> Int {
+        status
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .filter { !$0.hasPrefix("##") }
+            .count
     }
 }
 
@@ -141,12 +215,40 @@ private struct EnvironmentInfoRow: View {
                 Text(trailing)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
         .padding(.horizontal, 10)
         .frame(height: 32)
         .background(Theme.fillHover.opacity(secondary ? 0 : 1))
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+    }
+}
+
+private struct EnvironmentSourceChip: Identifiable {
+    var id: String { title }
+    var symbol: String
+    var title: String
+    var active: Bool
+}
+
+private struct SourceChipView: View {
+    let chip: EnvironmentSourceChip
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: chip.symbol)
+                .font(.system(size: 12, weight: .medium))
+            Text(chip.title)
+                .font(.system(size: 9.5, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(chip.active ? Theme.textPrimary : Theme.textSecondary)
+        .frame(width: 46, height: 42)
+        .background(chip.active ? Theme.fillStrong : Theme.fill)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .help(chip.active ? "\(chip.title) 已连接真实数据" : "\(chip.title) 暂无当前数据")
     }
 }
 

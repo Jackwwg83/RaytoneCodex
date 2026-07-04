@@ -1055,6 +1055,7 @@ public actor CodexAppServerClient {
     private var pending: [CodexAppServerRequestID: CheckedContinuation<JSONValue, Error>] = [:]
     private var nextRequestNumber = 1
     private var didInitialize = false
+    private var isInitializing = false
 
     public init(
         executable: CodexExecutable,
@@ -1108,6 +1109,16 @@ public actor CodexAppServerClient {
         guard !didInitialize else {
             return
         }
+
+        while isInitializing {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            if didInitialize {
+                return
+            }
+        }
+
+        isInitializing = true
+        defer { isInitializing = false }
 
         let params: JSONValue = .object([
             "clientInfo": .object([
@@ -1751,6 +1762,8 @@ public actor CodexAppServerClient {
         stdoutPipe = nil
         stderrPipe = nil
         stdinHandle = nil
+        didInitialize = false
+        isInitializing = false
         eventContinuation.finish()
     }
 
@@ -1868,6 +1881,8 @@ public actor CodexAppServerClient {
         stdoutPipe = nil
         stderrPipe = nil
         stdinHandle = nil
+        didInitialize = false
+        isInitializing = false
     }
 
     private func debugLog(_ message: String) {

@@ -62,6 +62,8 @@ enum SmokeTestRunner {
             runHistorySmoke()
         } else if CommandLine.arguments.contains("--side-chat-smoke-test") {
             runSideChatSmoke()
+        } else if CommandLine.arguments.contains("--environment-smoke-test") {
+            runEnvironmentSmoke()
         } else if CommandLine.arguments.contains("--slash-smoke-test") {
             runSlashSmoke()
         }
@@ -2109,6 +2111,63 @@ enum SmokeTestRunner {
                 "transcriptItemCount": items.count,
                 "userMessages": userMessages,
                 "agentMessages": agentMessages
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runEnvironmentSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            await store.refreshRuntime()
+            await store.refreshWorkspaceBranches()
+            let branchStatus = store.workspaceBranchStatusText
+
+            await store.refreshWorkspaceGitDiff()
+            let gitStatus = store.runtimeCatalogStatusText
+            let gitErrors = store.runtimeCatalogErrors
+            let diffSummary = SessionStore.diffSummary(store.workspaceGitDiff?.diff ?? "")
+            let fallbackGitStatus = store.workspaceGitStatusText
+
+            await store.refreshWorkspaceWorktrees()
+            let worktreeStatus = store.runtimeCatalogStatusText
+            let worktreeErrors = store.runtimeCatalogErrors
+
+            let gitDataAvailable = store.workspaceGitDiff != nil || !fallbackGitStatus.isEmpty
+            let ok = store.runtimeSnapshot.executable != nil &&
+                !branchStatus.hasPrefix("分支读取失败") &&
+                !gitStatus.hasPrefix("Git 差异读取失败") &&
+                !worktreeStatus.hasPrefix("工作树读取失败") &&
+                gitDataAvailable
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "branch": store.selectedProject.branch ?? "",
+                "branchStatus": branchStatus,
+                "branchCount": store.workspaceBranches.count,
+                "gitStatus": gitStatus,
+                "gitErrors": gitErrors,
+                "git": [
+                    "sha": store.workspaceGitDiff?.sha ?? "",
+                    "diffBytes": store.workspaceGitDiff?.diff.utf8.count ?? 0,
+                    "files": diffSummary.files,
+                    "additions": diffSummary.additions,
+                    "deletions": diffSummary.deletions,
+                    "fallbackStatus": fallbackGitStatus
+                ] as [String: Any],
+                "worktreeStatus": worktreeStatus,
+                "worktreeErrors": worktreeErrors,
+                "worktrees": store.workspaceWorktrees
             ])
             exit(ok ? 0 : 1)
         }
