@@ -12,6 +12,8 @@ enum SmokeTestRunner {
             runToolsSmoke()
         } else if CommandLine.arguments.contains("--file-search-smoke-test") {
             runFileSearchSmoke()
+        } else if CommandLine.arguments.contains("--review-smoke-test") {
+            runReviewSmoke()
         } else if CommandLine.arguments.contains("--catalog-smoke-test") {
             runCatalogSmoke()
         } else if CommandLine.arguments.contains("--mention-smoke-test") {
@@ -303,6 +305,112 @@ enum SmokeTestRunner {
                 ])
                 exit(ok ? 0 : 1)
             } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runReviewSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexReviewSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexReviewCodexHome-\(UUID().uuidString)", isDirectory: true)
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                let targetURL = workspaceURL.appendingPathComponent("review_target.swift")
+                try "let before = 1\n".write(to: targetURL, atomically: true, encoding: .utf8)
+                _ = try runProcess(["git", "init"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "review_target.swift"], cwd: workspaceURL)
+                _ = try runProcess([
+                    "git",
+                    "-c", "user.name=Raytone Smoke",
+                    "-c", "user.email=raytone@example.invalid",
+                    "commit",
+                    "-m",
+                    "initial"
+                ], cwd: workspaceURL)
+                try "let before = 1\nlet after = 2\n".write(to: targetURL, atomically: true, encoding: .utf8)
+
+                let reviewPayload = """
+                {"findings":[{"title":"Raytone review smoke finding","body":"Mock reviewer saw the changed file through review/start.","confidence_score":0.9,"priority":1,"code_location":{"absolute_file_path":"\(targetURL.path)","line_range":{"start":2,"end":2}}}],"overall_correctness":"patch is correct","overall_explanation":"Synthetic review smoke completed.","overall_confidence_score":0.8}
+                """
+                mockServer = try startMockResponsesServer(message: reviewPayload)
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "ReviewSmoke"
+                }
+
+                await store.refreshRuntime()
+                await store.runReviewOfCurrentChanges(displayedPrompt: "审查当前变更")
+                await waitForStoreToSettle(store)
+                await store.stopAppServerForTesting()
+
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let notices = store.selectedThread.items.compactMap { item -> Notice? in
+                    if case let .notice(notice) = item.kind { return notice }
+                    return nil
+                }
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
+                let finalReview = agentMessages.joined(separator: "\n\n")
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    !store.isRunning &&
+                    store.selectedThread.appServerThreadID?.isEmpty == false &&
+                    finalReview.contains("Raytone review smoke finding") &&
+                    requestLog.contains("/v1/responses") &&
+                    notices.allSatisfy { notice in
+                        if case .error = notice.level { return false }
+                        return true
+                    }
+
+                mockServer?.stop()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "mockResponsesBaseURL": mockServer?.baseURL ?? "",
+                    "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
+                    "transcriptItemCount": store.selectedThread.items.count,
+                    "agentMessageCount": agentMessages.count,
+                    "noticeCount": notices.count,
+                    "finalReviewPreview": String(finalReview.prefix(1200)),
+                    "mockRequestLogPreview": String(requestLog.prefix(1200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
                 emitJSON([
                     "ok": false,
                     "runtimeSource": "unknown",
@@ -1096,6 +1204,149 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    private struct MockResponsesServer {
+        let process: Process
+        let baseURL: String
+        let requestLogURL: URL
+
+        func stop() {
+            if process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+        }
+    }
+
+    private static func startMockResponsesServer(message: String) throws -> MockResponsesServer {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexMockResponses-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let messageURL = directory.appendingPathComponent("message.txt")
+        let scriptURL = directory.appendingPathComponent("server.py")
+        let portURL = directory.appendingPathComponent("port.txt")
+        let logURL = directory.appendingPathComponent("requests.jsonl")
+        try message.write(to: messageURL, atomically: true, encoding: .utf8)
+        try mockResponsesServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", scriptURL.path, messageURL.path, portURL.path, logURL.path]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+
+        let deadline = Date().addingTimeInterval(5)
+        while !fileManager.fileExists(atPath: portURL.path), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        guard fileManager.fileExists(atPath: portURL.path) else {
+            process.terminate()
+            throw NSError(
+                domain: "RaytoneCodexReviewSmoke",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "mock Responses server did not publish a port"]
+            )
+        }
+
+        let port = try String(contentsOf: portURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return MockResponsesServer(
+            process: process,
+            baseURL: "http://127.0.0.1:\(port)",
+            requestLogURL: logURL
+        )
+    }
+
+    private static var mockResponsesServerScript: String {
+        #"""
+        import json
+        import sys
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from pathlib import Path
+
+        message = Path(sys.argv[1]).read_text(encoding="utf-8")
+        port_file = Path(sys.argv[2])
+        log_file = Path(sys.argv[3])
+
+        def sse_payload():
+            events = [
+                {"type": "response.created", "response": {"id": "resp-raytone-review"}},
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "message",
+                        "role": "assistant",
+                        "id": "msg-raytone-review",
+                        "content": [{"type": "output_text", "text": message}],
+                    },
+                },
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp-raytone-review",
+                        "usage": {
+                            "input_tokens": 0,
+                            "input_tokens_details": None,
+                            "output_tokens": 0,
+                            "output_tokens_details": None,
+                            "total_tokens": 0,
+                        },
+                    },
+                },
+            ]
+            chunks = []
+            for event in events:
+                chunks.append(f"event: {event['type']}\n")
+                chunks.append("data: " + json.dumps(event, separators=(",", ":")) + "\n\n")
+            return "".join(chunks).encode("utf-8")
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("content-length") or "0")
+                body = self.rfile.read(length).decode("utf-8", "replace")
+                with log_file.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"path": self.path, "body": body}) + "\n")
+                payload = sse_payload()
+                self.send_response(200)
+                self.send_header("content-type", "text/event-stream")
+                self.send_header("cache-control", "no-cache")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, format, *args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        port_file.write_text(str(server.server_port), encoding="utf-8")
+        server.serve_forever()
+        """#
+    }
+
+    private static func writeMockCodexConfig(codexHome: URL, baseURL: String) throws {
+        let config = """
+        model = "mock-model"
+        approval_policy = "never"
+        sandbox_mode = "read-only"
+
+        model_provider = "mock_provider"
+
+        [features]
+        shell_snapshot = false
+
+        [model_providers.mock_provider]
+        name = "Mock provider"
+        base_url = "\(baseURL)/v1"
+        wire_api = "responses"
+        request_max_retries = 0
+        stream_max_retries = 0
+        """
+        try config.write(to: codexHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
     }
 
     private static func argument(after flag: String) -> String? {

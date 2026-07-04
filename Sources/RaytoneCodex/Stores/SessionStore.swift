@@ -182,6 +182,19 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func stopAppServerForTesting() async {
+        if let client = appServerClient {
+            await client.stop()
+        }
+        appServerClient = nil
+        appServerEventsTask?.cancel()
+        appServerEventsTask = nil
+        appServerEnvironmentKey = nil
+        activeAppServerTurnID = nil
+        activeDiffTranscriptIDs.removeAll()
+        appServerItemIDs.removeAll()
+    }
+
     func selectThread(_ thread: ChatThread) {
         selectedThreadID = thread.id
         if let project = projects.first(where: { $0.id == thread.projectID }) {
@@ -312,11 +325,7 @@ final class SessionStore: ObservableObject {
             return true
 
         case "/review":
-            let suffix = arguments.isEmpty ? "" : "\n\n补充要求：\(arguments)"
-            await runAgentPrompt(
-                "请审查当前工作区变更，重点找 bug、行为回归、风险和缺失测试。先读取 git status 和 git diff，再按严重程度给出结论。\(suffix)",
-                displayedPrompt: trimmedPrompt
-            )
+            await runReviewOfCurrentChanges(displayedPrompt: trimmedPrompt, instructions: arguments.isEmpty ? nil : arguments)
             return true
 
         case "/init":
@@ -469,6 +478,22 @@ final class SessionStore: ObservableObject {
         }
 
         return "test -x ./test.sh && ./test.sh || (echo '未找到可自动识别的测试命令；请用 /test <命令> 指定。' >&2; exit 2)"
+    }
+
+    private static func reviewFallbackPrompt(instructions: String?) -> String {
+        let trimmedInstructions = instructions?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let suffix = trimmedInstructions.isEmpty ? "" : "\n\n补充要求：\(trimmedInstructions)"
+        return "请审查当前工作区变更，重点找 bug、行为回归、风险和缺失测试。先读取 git status 和 git diff，再按严重程度给出结论。\(suffix)"
+    }
+
+    private static func isStructuredReviewPayload(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"),
+              let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return object["findings"] != nil && object["overall_correctness"] != nil
     }
 
     private func steerRunningTurn(_ trimmedPrompt: String) async {
@@ -1827,6 +1852,84 @@ final class SessionStore: ObservableObject {
         let options = appServerOptions()
         let client = try await ensureAppServerClient()
         let mentions = await pluginMentions(in: trimmedPrompt)
+        let threadID = try await ensureAppServerThread(client: client, options: options)
+
+        let turn = try await client.startTurn(
+            threadID: threadID,
+            prompt: trimmedPrompt,
+            options: options,
+            mentions: mentions
+        )
+        activeAppServerTurnID = turn.id
+        isRunning = turn.status == "inProgress"
+        updateSelectedThread { thread in
+            thread.activeGoal = ActiveGoal(title: trimmedPrompt, startedAt: Date())
+        }
+    }
+
+    func runReviewOfCurrentChanges(displayedPrompt: String = "/review", instructions: String? = nil) async {
+        guard !isRunning else { return }
+
+        isRunning = true
+        let fallbackPrompt = Self.reviewFallbackPrompt(instructions: instructions)
+        updateSelectedThread { thread in
+            thread.model = model
+            thread.sandbox = sandbox
+            thread.approval = approval
+            thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
+        }
+
+        do {
+            let options = appServerOptions()
+            let client = try await ensureAppServerClient()
+            let threadID = try await ensureAppServerThread(client: client, options: options)
+            let target: CodexReviewTarget
+            if let instructions, !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                target = .custom(instructions: fallbackPrompt)
+            } else {
+                target = .uncommittedChanges
+            }
+
+            let review = try await client.startReview(
+                threadID: threadID,
+                target: target,
+                delivery: .inline
+            )
+            activeAppServerTurnID = review.turn.id
+            isRunning = review.turn.status == "inProgress"
+            updateSelectedThread { thread in
+                thread.activeGoal = ActiveGoal(title: "审查当前变更", startedAt: Date())
+            }
+        } catch {
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "review/start 暂不可用，已降级为普通 Codex 审查请求：\(error.localizedDescription)"
+                ))))
+            }
+            do {
+                try await runPromptWithAppServer(fallbackPrompt)
+            } catch {
+                if selectedProvider.usesSidecar {
+                    updateSelectedThread { thread in
+                        thread.items.append(TranscriptItem(kind: .notice(Notice(
+                            level: .error,
+                            text: "多 Provider 运行时不可用：\(error.localizedDescription)"
+                        ))))
+                    }
+                    isRunning = false
+                    await refreshRuntime()
+                } else {
+                    await runPromptWithExec(fallbackPrompt)
+                }
+            }
+        }
+    }
+
+    private func ensureAppServerThread(
+        client: CodexAppServerClient,
+        options: CodexAppServerOptions
+    ) async throws -> String {
         var threadID = selectedThread.appServerThreadID
 
         if threadID == nil {
@@ -1848,18 +1951,7 @@ final class SessionStore: ObservableObject {
         guard let threadID else {
             throw CodexAppServerError.invalidResponse("Missing app-server thread id.")
         }
-
-        let turn = try await client.startTurn(
-            threadID: threadID,
-            prompt: trimmedPrompt,
-            options: options,
-            mentions: mentions
-        )
-        activeAppServerTurnID = turn.id
-        isRunning = turn.status == "inProgress"
-        updateSelectedThread { thread in
-            thread.activeGoal = ActiveGoal(title: trimmedPrompt, startedAt: Date())
-        }
+        return threadID
     }
 
     private func runPromptWithExec(_ trimmedPrompt: String) async {
@@ -2263,9 +2355,16 @@ final class SessionStore: ObservableObject {
         case "userMessage":
             break
         case "agentMessage":
+            let text = object["text"]?.stringValue ?? ""
+            guard !Self.isStructuredReviewPayload(text) else {
+                break
+            }
+            guard !hasAgentMessage(text) else {
+                break
+            }
             upsertTranscriptItem(
                 serverItemID: serverItemID,
-                kind: .agentMessage(object["text"]?.stringValue ?? "")
+                kind: .agentMessage(text)
             )
         case "plan":
             upsertTranscriptItem(
@@ -2293,10 +2392,32 @@ final class SessionStore: ObservableObject {
                     status: status
                 ))
             )
+        case "enteredReviewMode":
+            upsertTranscriptItem(
+                serverItemID: serverItemID,
+                kind: .reasoning(ReasoningBlock(
+                    title: "正在审查",
+                    detail: object["review"]?.stringValue ?? "Codex reviewer 正在审查当前变更。"
+                ))
+            )
+        case "exitedReviewMode":
+            upsertTranscriptItem(
+                serverItemID: serverItemID,
+                kind: .agentMessage(object["review"]?.stringValue ?? "审查完成。")
+            )
         case "fileChange":
             upsertFileChanges(serverItemID: serverItemID, changes: object["changes"]?.arrayValue ?? [])
         default:
             break
+        }
+    }
+
+    private func hasAgentMessage(_ text: String) -> Bool {
+        selectedThread.items.contains { item in
+            if case let .agentMessage(existing) = item.kind {
+                return existing == text
+            }
+            return false
         }
     }
 

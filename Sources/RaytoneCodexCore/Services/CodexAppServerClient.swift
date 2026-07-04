@@ -163,6 +163,53 @@ public struct CodexAppServerTurn: Equatable, Sendable {
     }
 }
 
+public enum CodexReviewDelivery: String, Sendable {
+    case inline
+    case detached
+}
+
+public enum CodexReviewTarget: Equatable, Sendable {
+    case uncommittedChanges
+    case baseBranch(String)
+    case commit(sha: String, title: String?)
+    case custom(instructions: String)
+
+    fileprivate var jsonValue: JSONValue {
+        switch self {
+        case .uncommittedChanges:
+            .object([
+                "type": .string("uncommittedChanges")
+            ])
+        case let .baseBranch(branch):
+            .object([
+                "type": .string("baseBranch"),
+                "branch": .string(branch)
+            ])
+        case let .commit(sha, title):
+            .object([
+                "type": .string("commit"),
+                "sha": .string(sha),
+                "title": title.map(JSONValue.string) ?? .null
+            ])
+        case let .custom(instructions):
+            .object([
+                "type": .string("custom"),
+                "instructions": .string(instructions)
+            ])
+        }
+    }
+}
+
+public struct CodexAppServerReview: Equatable, Sendable {
+    public var reviewThreadID: String
+    public var turn: CodexAppServerTurn
+
+    public init(reviewThreadID: String, turn: CodexAppServerTurn) {
+        self.reviewThreadID = reviewThreadID
+        self.turn = turn
+    }
+}
+
 public struct CodexAppServerModel: Equatable, Sendable {
     public var id: String
     public var displayName: String
@@ -993,6 +1040,30 @@ public actor CodexAppServerClient {
         return CodexAppServerTurn(
             id: turnID,
             status: turn["status"]?.stringValue ?? "inProgress"
+        )
+    }
+
+    public func startReview(
+        threadID: String,
+        target: CodexReviewTarget,
+        delivery: CodexReviewDelivery = .inline
+    ) async throws -> CodexAppServerReview {
+        let result = try await request(method: "review/start", params: .object([
+            "threadId": .string(threadID),
+            "delivery": .string(delivery.rawValue),
+            "target": target.jsonValue
+        ]))
+        guard let turn = result["turn"]?.objectValue,
+              let turnID = turn["id"]?.stringValue else {
+            throw CodexAppServerError.invalidResponse("Missing review/start turn payload.")
+        }
+
+        return CodexAppServerReview(
+            reviewThreadID: result["reviewThreadId"]?.stringValue ?? threadID,
+            turn: CodexAppServerTurn(
+                id: turnID,
+                status: turn["status"]?.stringValue ?? "inProgress"
+            )
         )
     }
 

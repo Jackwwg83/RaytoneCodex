@@ -85,7 +85,7 @@ struct ThreadView: View {
                 )
             }
             if !store.pendingChanges.isEmpty {
-                ChangedFilesBar(store: store, showInspector: $showInspector)
+                ChangedFilesBar(store: store)
             }
             ComposerView(store: store)
         }
@@ -179,7 +179,6 @@ private struct ThinkingRow: View {
 
 private struct ChangedFilesBar: View {
     @ObservedObject var store: SessionStore
-    @Binding var showInspector: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -200,14 +199,12 @@ private struct ChangedFilesBar: View {
             }
             Spacer(minLength: 0)
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    showInspector = true
-                    store.openToolPanel(.files)
-                }
+                Task { await store.runReviewOfCurrentChanges(displayedPrompt: "审查当前变更") }
             } label: {
                 Text("审查")
             }
             .buttonStyle(ChipButtonStyle())
+            .disabled(store.isRunning)
         }
         .padding(.horizontal, 12)
         .frame(height: 38)
