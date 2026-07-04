@@ -542,6 +542,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var defaultPermissions: String?
     public var reasoningEffort: String?
     public var reasoningSummary: String?
+    public var modelVerbosity: String?
     public var serviceTier: String?
     public var memoryGenerateMemories: Bool?
     public var memoryUseMemories: Bool?
@@ -561,6 +562,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         defaultPermissions: String?,
         reasoningEffort: String?,
         reasoningSummary: String?,
+        modelVerbosity: String?,
         serviceTier: String?,
         memoryGenerateMemories: Bool?,
         memoryUseMemories: Bool?,
@@ -579,6 +581,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.defaultPermissions = defaultPermissions
         self.reasoningEffort = reasoningEffort
         self.reasoningSummary = reasoningSummary
+        self.modelVerbosity = modelVerbosity
         self.serviceTier = serviceTier
         self.memoryGenerateMemories = memoryGenerateMemories
         self.memoryUseMemories = memoryUseMemories
@@ -1988,6 +1991,7 @@ public actor CodexAppServerClient {
             defaultPermissions: config?["default_permissions"]?.stringValue ?? config?["defaultPermissions"]?.stringValue,
             reasoningEffort: config?["model_reasoning_effort"]?.stringValue,
             reasoningSummary: config?["model_reasoning_summary"]?.stringValue,
+            modelVerbosity: config?["model_verbosity"]?.stringValue,
             serviceTier: config?["service_tier"]?.stringValue,
             memoryGenerateMemories: memories?["generate_memories"]?.boolValue ?? memories?["generateMemories"]?.boolValue,
             memoryUseMemories: memories?["use_memories"]?.boolValue ?? memories?["useMemories"]?.boolValue,

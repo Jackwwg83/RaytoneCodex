@@ -46,6 +46,8 @@ enum SmokeTestRunner {
             runServiceTierSmoke()
         } else if CommandLine.arguments.contains("--memory-settings-smoke-test") {
             runMemorySettingsSmoke()
+        } else if CommandLine.arguments.contains("--work-mode-smoke-test") {
+            runWorkModeSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -1287,6 +1289,95 @@ enum SmokeTestRunner {
                     "enabled": enabledState,
                     "skipEnabled": skipEnabledState,
                     "skipDisabled": skipDisabledState,
+                    "runtimeCatalogStatusText": store.runtimeCatalogStatusText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runWorkModeSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexWorkModeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+
+                await store.saveRuntimeWorkMode(id: "coding")
+                let codingConfig = store.runtimeConfig
+                let codingText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let codingState: [String: Any] = [
+                    "workModeID": store.runtimeWorkModeID,
+                    "modelVerbosity": codingConfig?.modelVerbosity ?? "",
+                    "configText": codingText
+                ]
+
+                await store.saveRuntimeWorkMode(id: "daily")
+                let dailyConfig = store.runtimeConfig
+                let dailyText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let dailyState: [String: Any] = [
+                    "workModeID": store.runtimeWorkModeID,
+                    "modelVerbosity": dailyConfig?.modelVerbosity ?? "",
+                    "configText": dailyText
+                ]
+
+                await store.stopAppServerForTesting()
+
+                let ok = codingConfig?.modelVerbosity == "high" &&
+                    codingText.contains("model_verbosity = \"high\"") &&
+                    codingState["workModeID"] as? String == "coding" &&
+                    dailyConfig?.modelVerbosity == "low" &&
+                    dailyText.contains("model_verbosity = \"low\"") &&
+                    dailyState["workModeID"] as? String == "daily"
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "coding": codingState,
+                    "daily": dailyState,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText
                 ])
                 exit(ok ? 0 : 1)

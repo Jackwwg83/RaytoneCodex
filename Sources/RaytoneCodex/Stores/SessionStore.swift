@@ -199,6 +199,10 @@ final class SessionStore: ObservableObject {
         return effort != "none" && summary != "none"
     }
 
+    var runtimeWorkModeID: String {
+        Self.workModeID(for: runtimeConfig?.modelVerbosity)
+    }
+
     var runtimeServiceTierLabel: String {
         Self.serviceTierLabel(for: runtimeConfig?.serviceTier)
     }
@@ -823,6 +827,23 @@ final class SessionStore: ObservableObject {
 
     func saveRuntimeAutoReviewEnabled(_ enabled: Bool) async {
         await saveRuntimeApprovalsReviewer(enabled ? .autoReview : .user)
+    }
+
+    func saveRuntimeWorkMode(id: String) async {
+        let verbosity = Self.modelVerbosityValue(forWorkModeID: id)
+        runtimeCatalogStatusText = "正在写入 model_verbosity…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "model_verbosity",
+                value: .string(verbosity)
+            )
+            applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
+            runtimeCatalogStatusText = "model_verbosity 已写入 config.toml：\(verbosity)"
+        } catch {
+            runtimeCatalogStatusText = "工作模式写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
     }
 
     func saveRuntimeServiceTier(label: String) async {
@@ -3410,6 +3431,17 @@ final class SessionStore: ObservableObject {
         case .none: "无"
         case .friendly: "亲和"
         case .pragmatic: "务实"
+        }
+    }
+
+    static func modelVerbosityValue(forWorkModeID id: String) -> String {
+        id == "daily" ? "low" : "high"
+    }
+
+    static func workModeID(for modelVerbosity: String?) -> String {
+        switch modelVerbosity?.lowercased() {
+        case "low": "daily"
+        default: "coding"
         }
     }
 

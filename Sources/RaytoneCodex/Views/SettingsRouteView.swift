@@ -6,7 +6,6 @@ struct SettingsRouteView: View {
     @ObservedObject var store: SessionStore
 
     @State private var search = ""
-    @State private var workMode = "coding"
     @State private var showInMenuBar = true
     @State private var bottomPanel = true
     @State private var preventSleep = true
@@ -799,6 +798,7 @@ struct SettingsRouteView: View {
                     configMetric("默认权限", store.runtimeConfig?.defaultPermissions ?? store.runtimeDefaultPermissionsProfile)
                     configMetric("推理强度", store.runtimeConfig?.reasoningEffort ?? "默认")
                     configMetric("推理摘要", store.runtimeConfig?.reasoningSummary ?? "默认")
+                    configMetric("输出详细度", store.runtimeConfig?.modelVerbosity ?? "默认")
                     configMetric("服务层级", store.runtimeConfig?.serviceTier ?? "默认")
                     configMetric("生成记忆", boolMetric(store.runtimeConfig?.memoryGenerateMemories))
                     configMetric("使用记忆", boolMetric(store.runtimeConfig?.memoryUseMemories))
@@ -1445,8 +1445,11 @@ struct SettingsRouteView: View {
 
     private func modeCard(id: String, symbol: String, title: String, subtitle: String) -> some View {
         Button {
-            workMode = id
+            Task { @MainActor in
+                await store.saveRuntimeWorkMode(id: id)
+            }
         } label: {
+            let selected = store.runtimeWorkModeID == id
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: symbol)
                     .font(.system(size: 22, weight: .medium))
@@ -1461,9 +1464,9 @@ struct SettingsRouteView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: 0)
-                Image(systemName: workMode == id ? "largecircle.fill.circle" : "circle")
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                     .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(workMode == id ? Theme.accent : Theme.textTertiary)
+                    .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
             }
             .foregroundStyle(Theme.textPrimary)
             .padding(16)
@@ -1471,7 +1474,7 @@ struct SettingsRouteView: View {
             .background(Theme.transcript)
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(workMode == id ? Theme.accent : Theme.borderSoft, lineWidth: 1)
+                    .stroke(selected ? Theme.accent : Theme.borderSoft, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
