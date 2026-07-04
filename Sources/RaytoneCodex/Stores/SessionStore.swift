@@ -1645,10 +1645,110 @@ final class SessionStore: ObservableObject {
         await loadFilePanelDirectory(parent)
     }
 
+    func createFileInCurrentPanelDirectory() async {
+        guard let name = promptForFilePanelItemName(
+            title: "新建文件",
+            message: "在当前目录中创建一个空文件。",
+            placeholder: "untitled.txt"
+        ) else { return }
+        await createFileInCurrentPanelDirectory(named: name)
+    }
+
+    func createFileInCurrentPanelDirectory(named name: String) async {
+        guard let path = filePanelChildPath(named: name) else { return }
+
+        filePanelStatusText = "正在创建文件…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeFile(path: path, data: Data())
+            await loadFilePanelDirectory(currentFilePanelDirectoryPath)
+            if let entry = fileEntry(matching: path) {
+                await openFileEntry(entry)
+            } else {
+                filePanelStatusText = "已创建 \(Project.abbreviate(path))"
+            }
+        } catch {
+            filePanelStatusText = "创建失败：\(error.localizedDescription)"
+        }
+    }
+
+    func createDirectoryInCurrentPanelDirectory() async {
+        guard let name = promptForFilePanelItemName(
+            title: "新建文件夹",
+            message: "在当前目录中创建一个文件夹。",
+            placeholder: "New Folder"
+        ) else { return }
+        await createDirectoryInCurrentPanelDirectory(named: name)
+    }
+
+    func createDirectoryInCurrentPanelDirectory(named name: String) async {
+        guard let path = filePanelChildPath(named: name) else { return }
+
+        filePanelStatusText = "正在创建文件夹…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.createDirectory(path: path, recursive: true)
+            await loadFilePanelDirectory(path)
+        } catch {
+            filePanelStatusText = "创建失败：\(error.localizedDescription)"
+        }
+    }
+
+    func duplicatePreviewedFileSystemItem() async {
+        guard let preview = filePreview else {
+            filePanelStatusText = "没有可复制的文件"
+            return
+        }
+
+        let destinationPath = nextFilePanelCopyPath(for: preview.path)
+        filePanelStatusText = "正在复制文件…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.copyFileSystemItem(
+                sourcePath: preview.path,
+                destinationPath: destinationPath,
+                recursive: false
+            )
+            await loadFilePanelDirectory(currentFilePanelDirectoryPath)
+            if let entry = fileEntry(matching: destinationPath) {
+                await openFileEntry(entry)
+            } else {
+                filePanelStatusText = "已复制到 \(Project.abbreviate(destinationPath))"
+            }
+        } catch {
+            filePanelStatusText = "复制失败：\(error.localizedDescription)"
+        }
+    }
+
+    func removePreviewedFileSystemItem(confirm: Bool = true) async {
+        guard let preview = filePreview else {
+            filePanelStatusText = "没有可删除的文件"
+            return
+        }
+        guard !confirm || confirmFilePanelRemoval(path: preview.path) else { return }
+
+        let parentPath = URL(fileURLWithPath: preview.path).deletingLastPathComponent().path
+        filePanelStatusText = "正在删除文件…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.removeFileSystemItem(path: preview.path, recursive: false, force: false)
+            filePreview = nil
+            await loadFilePanelDirectory(parentPath)
+            filePanelStatusText = "已删除 \(Project.abbreviate(preview.path))"
+        } catch {
+            filePanelStatusText = "删除失败：\(error.localizedDescription)"
+        }
+    }
+
     func openFileEntry(_ entry: WorkspaceFileEntry) async {
         if entry.isDirectory {
             await loadFilePanelDirectory(entry.path)
             return
+        }
+
+        let parentPath = URL(fileURLWithPath: entry.path).deletingLastPathComponent().path
+        if !Self.filePanelPathsEqual(parentPath, currentFilePanelDirectoryPath) {
+            await loadFilePanelDirectory(parentPath)
         }
 
         filePanelStatusText = "正在读取文件…"
@@ -1678,6 +1778,101 @@ final class SessionStore: ObservableObject {
             }
             filePanelStatusText = "读取失败：\(error.localizedDescription)"
         }
+    }
+
+    private var currentFilePanelDirectoryPath: String {
+        filePanelPath.isEmpty ? workspacePath : filePanelPath
+    }
+
+    private func fileEntry(matching path: String) -> WorkspaceFileEntry? {
+        let fileName = URL(fileURLWithPath: path).lastPathComponent
+        return fileEntries.first {
+            Self.filePanelPathsEqual($0.path, path) || $0.name == fileName
+        }
+    }
+
+    private static func filePanelPathsEqual(_ lhs: String, _ rhs: String) -> Bool {
+        comparableFilePanelPath(lhs) == comparableFilePanelPath(rhs)
+    }
+
+    private static func comparableFilePanelPath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .path
+            .precomposedStringWithCanonicalMapping
+    }
+
+    private func promptForFilePanelItemName(title: String, message: String, placeholder: String) -> String? {
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.placeholderString = placeholder
+        field.stringValue = placeholder
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.accessoryView = field
+        alert.addButton(withTitle: "创建")
+        alert.addButton(withTitle: "取消")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func filePanelChildPath(named rawName: String) -> String? {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            filePanelStatusText = "名称不能为空"
+            return nil
+        }
+        guard name != "." && name != ".." && !name.contains("/") && !name.contains("\0") else {
+            filePanelStatusText = "名称只能是当前目录下的单个文件名"
+            return nil
+        }
+
+        let url = URL(fileURLWithPath: currentFilePanelDirectoryPath)
+            .appendingPathComponent(name)
+            .standardizedFileURL
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            filePanelStatusText = "已存在：\(name)"
+            return nil
+        }
+        return url.path
+    }
+
+    private func nextFilePanelCopyPath(for path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        let directory = url.deletingLastPathComponent()
+        let extensionName = url.pathExtension
+        let baseName = extensionName.isEmpty
+            ? url.lastPathComponent
+            : String(url.lastPathComponent.dropLast(extensionName.count + 1))
+
+        for index in 1...999 {
+            let suffix = index == 1 ? " 副本" : " 副本 \(index)"
+            let candidateName = extensionName.isEmpty
+                ? "\(baseName)\(suffix)"
+                : "\(baseName)\(suffix).\(extensionName)"
+            let candidateURL = directory.appendingPathComponent(candidateName)
+            if !FileManager.default.fileExists(atPath: candidateURL.path) {
+                return candidateURL.path
+            }
+        }
+
+        let fallbackName = extensionName.isEmpty
+            ? "\(baseName) 副本 \(UUID().uuidString)"
+            : "\(baseName) 副本 \(UUID().uuidString).\(extensionName)"
+        return directory.appendingPathComponent(fallbackName).path
+    }
+
+    private func confirmFilePanelRemoval(path: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "删除文件？"
+        alert.informativeText = "将通过 Codex app-server 删除 \(Project.abbreviate(path))。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @discardableResult

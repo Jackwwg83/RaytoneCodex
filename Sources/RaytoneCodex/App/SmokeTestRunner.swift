@@ -492,14 +492,50 @@ enum SmokeTestRunner {
         if let targetResult {
             await store.openFileEntry(targetResult)
         }
+        let originalPreview = store.filePreview
 
-        let preview = store.filePreview
+        await store.duplicatePreviewedFileSystemItem()
+        let duplicateURL = sourceDirectory.appendingPathComponent("NeedleRuntimeFile 副本.swift")
+        let statusAfterDuplicate = store.filePanelStatusText
+        let duplicateWasCreated = store.filePreview?.fileName == duplicateURL.lastPathComponent &&
+            fileManager.fileExists(atPath: duplicateURL.path)
+        await store.removePreviewedFileSystemItem(confirm: false)
+        let statusAfterRemove = store.filePanelStatusText
+        let duplicateWasRemoved = !fileManager.fileExists(atPath: duplicateURL.path)
+
+        await store.createFileInCurrentPanelDirectory(named: "CreatedByAppServer.txt")
+        let statusAfterCreateFile = store.filePanelStatusText
+        let createdFileURL = sourceDirectory.appendingPathComponent("CreatedByAppServer.txt")
+        let createdFileExists = fileManager.fileExists(atPath: createdFileURL.path)
+
+        await store.createDirectoryInCurrentPanelDirectory(named: "CreatedFolder")
+        let statusAfterCreateFolder = store.filePanelStatusText
+        let createdFolderURL = sourceDirectory.appendingPathComponent("CreatedFolder", isDirectory: true)
+        var createdFolderIsDirectory: ObjCBool = false
+        let createdFolderExists = fileManager.fileExists(
+            atPath: createdFolderURL.path,
+            isDirectory: &createdFolderIsDirectory
+        )
+
+        await store.loadFilePanelDirectory(sourceDirectory.path)
+        if let createdEntry = store.fileEntries.first(where: { $0.name == createdFileURL.lastPathComponent }) {
+            await store.openFileEntry(createdEntry)
+        }
+        let mutationPreview = store.filePreview
+
         let ok = store.runtimeSnapshot.executable != nil &&
             targetResult != nil &&
-            preview?.path == targetURL.path &&
-            preview?.text.contains("fuzzy-file-search-runtime-proof") == true &&
-            preview?.byteCount == targetText.utf8.count &&
-            preview?.modifiedAt != nil &&
+            originalPreview?.path == targetURL.path &&
+            originalPreview?.text.contains("fuzzy-file-search-runtime-proof") == true &&
+            originalPreview?.byteCount == targetText.utf8.count &&
+            originalPreview?.modifiedAt != nil &&
+            duplicateWasCreated &&
+            duplicateWasRemoved &&
+            createdFileExists &&
+            createdFolderExists &&
+            createdFolderIsDirectory.boolValue &&
+            mutationPreview?.path == createdFileURL.path &&
+            mutationPreview?.byteCount == 0 &&
             watchedStatus.contains("已监听") &&
             watchedResult?.name == "WatchedRuntimeFile.txt"
 
@@ -512,12 +548,35 @@ enum SmokeTestRunner {
             ] as [String: Any]
         }
         let previewPayload: [String: Any] = [
-            "path": preview?.path ?? "",
-            "fileName": preview?.fileName ?? "",
-            "textPreview": String((preview?.text ?? "").prefix(200)),
-            "byteCount": preview?.byteCount ?? 0,
-            "metadataSummary": preview?.metadataSummary ?? "",
-            "isTruncated": preview?.isTruncated ?? false
+            "path": mutationPreview?.path ?? "",
+            "fileName": mutationPreview?.fileName ?? "",
+            "textPreview": String((mutationPreview?.text ?? "").prefix(200)),
+            "byteCount": mutationPreview?.byteCount ?? 0,
+            "metadataSummary": mutationPreview?.metadataSummary ?? "",
+            "isTruncated": mutationPreview?.isTruncated ?? false
+        ]
+        let originalPreviewPayload: [String: Any] = [
+            "path": targetURL.path,
+            "fileName": targetURL.lastPathComponent,
+            "matched": targetResult != nil,
+            "textWasRead": originalPreview?.text.contains("fuzzy-file-search-runtime-proof") == true,
+            "byteCountWasRead": originalPreview?.byteCount == targetText.utf8.count,
+            "metadataWasRead": originalPreview?.modifiedAt != nil
+        ]
+        let mutationsPayload: [String: Any] = [
+            "createdFile": createdFileURL.path,
+            "createdFileExists": createdFileExists,
+            "createdFolder": createdFolderURL.path,
+            "createdFolderExists": createdFolderExists,
+            "createdFolderIsDirectory": createdFolderIsDirectory.boolValue,
+            "duplicatePath": duplicateURL.path,
+            "duplicateWasCreated": duplicateWasCreated,
+            "duplicateWasRemoved": duplicateWasRemoved,
+            "statusAfterDuplicate": statusAfterDuplicate,
+            "statusAfterRemove": statusAfterRemove,
+            "statusAfterCreateFile": statusAfterCreateFile,
+            "statusAfterCreateFolder": statusAfterCreateFolder,
+            "status": store.filePanelStatusText
         ]
 
         return [
@@ -535,6 +594,8 @@ enum SmokeTestRunner {
             "searchStatus": store.fileSearchStatusText,
             "resultCount": store.fileSearchResults.count,
             "results": resultsPayload,
+            "originalPreview": originalPreviewPayload,
+            "fileMutations": mutationsPayload,
             "openedPreview": previewPayload
         ]
     }

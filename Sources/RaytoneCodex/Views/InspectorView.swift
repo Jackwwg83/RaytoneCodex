@@ -162,6 +162,7 @@ private struct FilesToolPanel: View {
                 .buttonStyle(GhostIconButtonStyle())
                 .help("返回工具")
             } trailing: {
+                fileActionsMenu
                 Button {
                     Task { await store.loadFilePanelDirectory() }
                 } label: {
@@ -322,6 +323,43 @@ private struct FilesToolPanel: View {
         .frame(maxHeight: .infinity)
         .background(Theme.panel)
         .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+
+    private var fileActionsMenu: some View {
+        Menu {
+            Button {
+                Task { await store.createFileInCurrentPanelDirectory() }
+            } label: {
+                Label("新建文件", systemImage: "doc.badge.plus")
+            }
+
+            Button {
+                Task { await store.createDirectoryInCurrentPanelDirectory() }
+            } label: {
+                Label("新建文件夹", systemImage: "folder.badge.plus")
+            }
+
+            Divider()
+
+            Button {
+                Task { await store.duplicatePreviewedFileSystemItem() }
+            } label: {
+                Label("复制当前预览", systemImage: "doc.on.doc")
+            }
+            .disabled(store.filePreview == nil)
+
+            Button(role: .destructive) {
+                Task { await store.removePreviewedFileSystemItem() }
+            } label: {
+                Label("删除当前预览", systemImage: "trash")
+            }
+            .disabled(store.filePreview == nil)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 13, weight: .medium))
+        }
+        .buttonStyle(GhostIconButtonStyle())
+        .help("文件操作")
     }
 
     private var isShowingSearch: Bool {

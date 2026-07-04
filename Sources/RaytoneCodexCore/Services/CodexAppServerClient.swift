@@ -2175,6 +2175,36 @@ public actor CodexAppServerClient {
         return data
     }
 
+    public func writeFile(path: String, data: Data) async throws {
+        _ = try await request(method: "fs/writeFile", params: .object([
+            "path": .string(path),
+            "dataBase64": .string(data.base64EncodedString())
+        ]))
+    }
+
+    public func createDirectory(path: String, recursive: Bool = true) async throws {
+        _ = try await request(method: "fs/createDirectory", params: .object([
+            "path": .string(path),
+            "recursive": .bool(recursive)
+        ]))
+    }
+
+    public func removeFileSystemItem(path: String, recursive: Bool = true, force: Bool = true) async throws {
+        _ = try await request(method: "fs/remove", params: .object([
+            "path": .string(path),
+            "recursive": .bool(recursive),
+            "force": .bool(force)
+        ]))
+    }
+
+    public func copyFileSystemItem(sourcePath: String, destinationPath: String, recursive: Bool = true) async throws {
+        _ = try await request(method: "fs/copy", params: .object([
+            "sourcePath": .string(sourcePath),
+            "destinationPath": .string(destinationPath),
+            "recursive": .bool(recursive)
+        ]))
+    }
+
     public func execCommand(
         _ command: [String],
         cwd: URL? = nil,
