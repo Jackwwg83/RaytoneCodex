@@ -1206,6 +1206,10 @@ enum SmokeTestRunner {
                 fputs("plugin-read-smoke: readRuntimePluginDetail\n", stderr)
                 await store.readRuntimePluginDetail(plugin)
                 let detail = store.runtimePluginDetail
+                fputs("plugin-read-smoke: usePluginInComposer\n", stderr)
+                let trialPrepared = await store.usePluginInComposer(plugin)
+                let trialPrompt = store.prompt
+                let trialMentionPath = store.lastMentionInputPreview.first?["path"] ?? ""
                 let ok = store.runtimeSnapshot.executable != nil &&
                     plugin.installed &&
                     plugin.enabled &&
@@ -1214,7 +1218,13 @@ enum SmokeTestRunner {
                     detail?.skills.contains(where: { $0.name == "\(pluginName):thread-summarizer" && !$0.enabled }) == true &&
                     detail?.mcpServers.contains("demo") == true &&
                     detail?.hooks.contains(where: { $0.eventName == "preToolUse" }) == true &&
-                    store.runtimePluginDetailStatusText.hasPrefix("plugin/read")
+                    store.runtimePluginDetailStatusText.hasPrefix("plugin/read") &&
+                    trialPrepared &&
+                    trialPrompt.contains("@\(pluginName)") &&
+                    trialPrompt.contains("技能：") &&
+                    trialPrompt.contains("MCP：demo") &&
+                    trialPrompt.contains("钩子：preToolUse") &&
+                    trialMentionPath == plugin.mentionPath
 
                 await store.stopAppServerForTesting()
                 emitJSON([
@@ -1233,6 +1243,9 @@ enum SmokeTestRunner {
                     ] as [String: Any],
                     "detailStatus": store.runtimePluginDetailStatusText,
                     "description": detail?.description ?? "",
+                    "trialPrepared": trialPrepared,
+                    "trialPrompt": trialPrompt,
+                    "trialMentions": store.lastMentionInputPreview,
                     "skills": detail?.skills.map { skill in
                         [
                             "name": skill.name,

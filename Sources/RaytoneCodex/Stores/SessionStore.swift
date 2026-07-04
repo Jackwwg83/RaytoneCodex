@@ -3344,15 +3344,60 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func usePluginInComposer(_ plugin: CodexRuntimePlugin) {
-        prompt = "@\(plugin.name) "
-        lastMentionInputPreview = [
-            [
-                "name": plugin.displayName,
-                "path": plugin.mentionPath
-            ]
-        ]
+    @discardableResult
+    func usePluginInComposer(_ plugin: CodexRuntimePlugin) async -> Bool {
+        runtimeCatalogStatusText = "正在读取 \(plugin.displayName) 的 plugin/read…"
+        runtimePluginDetailStatusText = runtimeCatalogStatusText
+        runtimeCatalogErrors = []
+
+        var detail: CodexRuntimePluginDetail?
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            detail = try await client.readPlugin(plugin)
+            runtimePluginDetail = detail
+            if let detail {
+                runtimePluginDetailStatusText = "plugin/read：已准备 @\(plugin.name) · \(detail.skills.count) 个技能 · \(detail.mcpServers.count) 个 MCP"
+                runtimeCatalogStatusText = runtimePluginDetailStatusText
+            }
+        } catch {
+            runtimePluginDetailStatusText = "plugin/read 失败，已准备基础 @提及：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimePluginDetailStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        prompt = Self.pluginTrialPrompt(for: plugin, detail: detail)
+        _ = await previewPluginMentions(for: prompt)
         route = .thread
+        return detail != nil
+    }
+
+    private static func pluginTrialPrompt(for plugin: CodexRuntimePlugin, detail: CodexRuntimePluginDetail?) -> String {
+        let activePlugin = detail?.plugin ?? plugin
+        var lines = [
+            "@\(activePlugin.name) 请用中文说明你能在当前项目里做什么，并给出一个最小可执行示例。",
+            "插件摘要：\(detail?.description ?? activePlugin.summary)"
+        ]
+
+        if let detail {
+            let skills = detail.skills.prefix(4).map { "\($0.displayName)（\($0.enabled ? "启用" : "停用")）" }
+            let apps = detail.apps.prefix(4).map { "\($0.name)（\($0.needsAuth ? "需要授权" : "可用")）" }
+            if !skills.isEmpty {
+                lines.append("技能：\(skills.joined(separator: "、"))")
+            }
+            if !detail.mcpServers.isEmpty {
+                lines.append("MCP：\(detail.mcpServers.prefix(4).joined(separator: "、"))")
+            }
+            if !detail.hooks.isEmpty {
+                let hooks = detail.hooks.prefix(4).map { "\($0.eventName):\($0.key)" }
+                lines.append("钩子：\(hooks.joined(separator: "、"))")
+            }
+            if !apps.isEmpty {
+                lines.append("App：\(apps.joined(separator: "、"))")
+            }
+        }
+
+        lines.append("如果需要安装、授权或启用 MCP，请先明确下一步和验证方法。")
+        return lines.joined(separator: "\n")
     }
 
     func prepareAutomationTemplate(title: String, prompt templatePrompt: String) {

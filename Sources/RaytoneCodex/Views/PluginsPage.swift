@@ -235,7 +235,7 @@ struct PluginsPage: View {
 
                 Button("在对话中试用") {
                     if let plugin = store.runtimePlugins.first(where: { $0.installed && $0.enabled }) {
-                        store.usePluginInComposer(plugin)
+                        Task { await store.usePluginInComposer(plugin) }
                     } else {
                         store.route = .thread
                     }
