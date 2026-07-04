@@ -30,6 +30,8 @@ enum SmokeTestRunner {
             runAccessModeSmoke()
         } else if CommandLine.arguments.contains("--personality-smoke-test") {
             runPersonalitySmoke()
+        } else if CommandLine.arguments.contains("--model-config-smoke-test") {
+            runModelConfigSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -582,6 +584,85 @@ enum SmokeTestRunner {
                     "runtimeSource": runtime.executable?.source.rawValue ?? "none",
                     "runtimePath": runtime.executable?.url.path ?? "",
                     "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runModelConfigSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let selectedModel = argument(after: "--model") ?? "gpt-5.1-codex"
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexModelConfigSmoke-\(UUID().uuidString)", isDirectory: true)
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                await store.saveRuntimeModelSelection(providerID: "openai", model: selectedModel)
+                let config = store.runtimeConfig
+                await store.stopAppServerForTesting()
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let ok = store.selectedProviderID == "openai" &&
+                    store.model == selectedModel &&
+                    config?.model == selectedModel &&
+                    config?.modelProvider == "openai" &&
+                    configText.contains("model = \"\(selectedModel)\"") &&
+                    configText.contains("model_provider = \"openai\"")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "selectedProviderID": store.selectedProviderID,
+                    "storeModel": store.model,
+                    "modelDisplayName": store.modelDisplayName,
+                    "configModel": config?.model ?? "",
+                    "configModelProvider": config?.modelProvider ?? "",
+                    "modelCatalogStatusText": store.modelCatalogStatusText,
+                    "runtimeCatalogStatusText": store.runtimeCatalogStatusText,
+                    "configText": configText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
                     "codexHome": codexHome.path,
                     "error": error.localizedDescription

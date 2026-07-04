@@ -481,7 +481,10 @@ struct SettingsRouteView: View {
                     Menu {
                         ForEach(provider.models, id: \.self) { model in
                             Button(model) {
-                                store.chooseProviderModel(providerID: provider.id, model: model)
+                                Task {
+                                    await store.saveRuntimeModelSelection(providerID: provider.id, model: model)
+                                    providerStatusMessage = store.modelCatalogStatusText
+                                }
                             }
                         }
                     } label: {

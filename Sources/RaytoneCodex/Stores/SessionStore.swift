@@ -1890,11 +1890,56 @@ final class SessionStore: ObservableObject {
     }
 
     func chooseProviderModel(providerID: String, model: String) {
-        guard let index = providers.firstIndex(where: { $0.id == providerID }) else { return }
-        providers[index].model = model
-        selectedProviderID = providerID
-        self.model = providers[index].usesSidecar ? model : model
+        guard applyProviderModelSelection(providerID: providerID, model: model) != nil else { return }
         Task { await resetAppServerForProviderChange() }
+    }
+
+    @discardableResult
+    private func applyProviderModelSelection(
+        providerID: String,
+        model selectedModel: String
+    ) -> RaytoneProviderConfiguration? {
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else { return nil }
+        providers[index].model = selectedModel
+        selectedProviderID = providerID
+        model = selectedModel
+        updateSelectedThread { thread in
+            thread.model = selectedModel
+        }
+        return providers[index]
+    }
+
+    func saveRuntimeModelSelection(providerID: String, model selectedModel: String) async {
+        guard let provider = applyProviderModelSelection(providerID: providerID, model: selectedModel) else {
+            modelCatalogStatusText = "未找到 provider：\(providerID)"
+            return
+        }
+
+        await resetAppServerForProviderChange()
+
+        guard provider.usesSidecar == false else {
+            modelCatalogStatusText = "\(provider.displayName) 将通过 sidecar 会话使用 \(selectedModel)"
+            runtimeCatalogStatusText = "第三方 provider 使用独立 CODEX_HOME，不写入全局 Codex config.toml"
+            return
+        }
+
+        modelCatalogStatusText = "正在写入 model/model_provider…"
+        runtimeCatalogStatusText = "正在写入 model/model_provider…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.batchWriteConfig(edits: [
+                CodexConfigWriteEdit(keyPath: "model", value: .string(selectedModel)),
+                CodexConfigWriteEdit(keyPath: "model_provider", value: .string(provider.id))
+            ])
+            let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
+            runtimeConfig = config
+            modelCatalogStatusText = "model/model_provider 已写入 config.toml"
+            runtimeCatalogStatusText = "Codex 默认模型已更新为 \(selectedModel)"
+        } catch {
+            modelCatalogStatusText = "模型写入失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = "模型写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
     }
 
     func saveProviderAPIKey(_ key: String, providerID: String? = nil) throws {
