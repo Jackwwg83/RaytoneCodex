@@ -340,6 +340,17 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    static var startupScreenTerminalPositionOverride: String? {
+        switch startupScreenIdentifier {
+        case "terminal", "terminal-panel":
+            "右侧"
+        case "terminal-bottom", "bottom-terminal":
+            "底部"
+        default:
+            nil
+        }
+    }
+
     var runtimeDesktopSettingsSummary: String {
         [
             "菜单栏 \(desktopShowInMenuBar ? "开" : "关")",
@@ -374,7 +385,7 @@ final class SessionStore: ObservableObject {
             desktopShowBottomPanel = false
         }
         desktopPreventSleepWhileRunning = settings.preventSleepWhileRunning ?? true
-        desktopTerminalPosition = settings.terminalPosition ?? "底部"
+        desktopTerminalPosition = Self.startupScreenTerminalPositionOverride ?? settings.terminalPosition ?? "底部"
         desktopAppearance = settings.appearance ?? "跟随系统"
         desktopOpenTarget = settings.openTarget ?? "iTerm2"
         desktopLanguage = settings.language ?? "自动检测"

@@ -11,8 +11,8 @@ struct ContentView: View {
             } else {
                 HStack(spacing: 0) {
                     SidebarView(store: store)
-                    routeContent
-                    if store.route == .thread, store.showInspector {
+                    centerContent
+                    if store.route == .thread, store.showInspector, !usesBottomTerminalPanel {
                         InspectorView(store: store, showInspector: $store.showInspector)
                     }
                 }
@@ -22,6 +22,25 @@ struct ContentView: View {
         .onAppear {
             store.installSampleWorkspaceIfNeeded()
         }
+    }
+
+    @ViewBuilder
+    private var centerContent: some View {
+        if usesBottomTerminalPanel {
+            VStack(spacing: 0) {
+                routeContent
+                BottomTerminalToolPanel(store: store, showInspector: $store.showInspector)
+            }
+        } else {
+            routeContent
+        }
+    }
+
+    private var usesBottomTerminalPanel: Bool {
+        store.route == .thread &&
+            store.showInspector &&
+            store.toolPanel == .terminal &&
+            store.desktopTerminalPosition == "底部"
     }
 
     @ViewBuilder

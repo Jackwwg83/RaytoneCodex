@@ -378,6 +378,15 @@ extension SessionStore {
             selectActiveDemoThreadForSmoke()
             route = .thread
             showInspector = true
+            desktopTerminalPosition = "右侧"
+            openToolPanel(.terminal)
+            terminalCommand = "pwd && ls Package.swift Sources script"
+            Task { await runTerminalCommand() }
+        case "terminal-bottom", "bottom-terminal":
+            selectActiveDemoThreadForSmoke()
+            route = .thread
+            showInspector = true
+            desktopTerminalPosition = "底部"
             openToolPanel(.terminal)
             terminalCommand = "pwd && ls Package.swift Sources script"
             Task { await runTerminalCommand() }

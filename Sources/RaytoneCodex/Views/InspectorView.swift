@@ -452,6 +452,121 @@ private struct TerminalToolPanel: View {
     }
 }
 
+struct BottomTerminalToolPanel: View {
+    @ObservedObject var store: SessionStore
+    @Binding var showInspector: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button {
+                    store.toolPanel = .launcher
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("返回工具")
+
+                Image(systemName: "terminal")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Text("终端")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(Project.abbreviate(store.workspacePath))
+                    .font(Theme.mono(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    Task { @MainActor in
+                        await store.saveRuntimeTerminalPosition("右侧")
+                    }
+                } label: {
+                    Image(systemName: "sidebar.trailing")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("移到右侧")
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("关闭终端")
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 40)
+            .background(.bar)
+            .overlay(alignment: .top) { Hairline() }
+            .overlay(alignment: .bottom) { Hairline() }
+
+            HStack(spacing: 8) {
+                TextField("输入 shell 命令", text: $store.terminalCommand)
+                    .textFieldStyle(.plain)
+                    .font(Theme.mono(12))
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                    .onSubmit {
+                        Task { await store.runTerminalCommand() }
+                    }
+                Button {
+                    Task { await store.runTerminalCommand() }
+                } label: {
+                    Image(systemName: store.terminalIsRunning ? "hourglass" : "play.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 30))
+                .disabled(store.terminalIsRunning)
+                .help("运行")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .overlay(alignment: .bottom) { Hairline() }
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(store.terminalRuns) { run in
+                            TerminalRunView(run: run)
+                                .id(run.id)
+                        }
+                        if store.terminalRuns.isEmpty {
+                            HStack(spacing: 8) {
+                                Image(systemName: "terminal")
+                                    .font(.system(size: 18, weight: .regular))
+                                    .foregroundStyle(Theme.textTertiary)
+                                Text("等待命令")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 96)
+                        }
+                    }
+                    .padding(12)
+                }
+                .onChange(of: store.terminalRuns.last?.id) { _, id in
+                    if let id {
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) }
+                    }
+                }
+            }
+        }
+        .frame(height: 260)
+        .frame(maxWidth: .infinity)
+        .background(Theme.panel)
+    }
+}
+
 private struct TerminalRunView: View {
     let run: TerminalCommandRecord
 
