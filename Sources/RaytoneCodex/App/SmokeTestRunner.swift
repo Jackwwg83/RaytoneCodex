@@ -1304,6 +1304,16 @@ enum SmokeTestRunner {
                     "configText": skipDisabledText
                 ]
 
+                await store.refreshRuntimeCatalog(forceReloadSkills: true)
+                let chronicleState: [String: Any] = [
+                    "available": store.chronicleRuntimeAvailable,
+                    "status": store.chronicleRuntimeStatusText,
+                    "detail": store.chronicleRuntimeDetailText,
+                    "source": store.chronicleRuntimeSourceText,
+                    "skillCount": store.runtimeSkills.count,
+                    "mcpServerCount": store.runtimeMCPServers.count
+                ]
+
                 await store.stopAppServerForTesting()
 
                 let ok = disabledConfig?.memoryGenerateMemories == false &&
@@ -1318,7 +1328,9 @@ enum SmokeTestRunner {
                     skipEnabledConfig?.memoryDisableOnExternalContext == true &&
                     skipEnabledText.contains("disable_on_external_context = true") &&
                     skipDisabledConfig?.memoryDisableOnExternalContext == false &&
-                    skipDisabledText.contains("disable_on_external_context = false")
+                    skipDisabledText.contains("disable_on_external_context = false") &&
+                    !store.chronicleRuntimeStatusText.isEmpty &&
+                    !store.chronicleRuntimeDetailText.isEmpty
 
                 emitJSON([
                     "ok": ok,
@@ -1332,6 +1344,7 @@ enum SmokeTestRunner {
                     "enabled": enabledState,
                     "skipEnabled": skipEnabledState,
                     "skipDisabled": skipDisabledState,
+                    "chronicleRuntime": chronicleState,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText
                 ])
                 exit(ok ? 0 : 1)

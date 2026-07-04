@@ -6,7 +6,6 @@ struct SettingsRouteView: View {
     @ObservedObject var store: SessionStore
 
     @State private var search = ""
-    @State private var chronicleEnabled = true
     @State private var providerAPIKeyDraft = ""
     @State private var providerStatusMessage = "未测试"
     @State private var instructionsStatus = ""
@@ -158,8 +157,10 @@ struct SettingsRouteView: View {
                 await store.refreshIntegrationRuntime()
             case .worktrees:
                 await store.refreshWorkspaceWorktrees()
-            case .configuration, .personalization:
+            case .configuration:
                 await store.refreshRuntimeConfiguration()
+            case .personalization:
+                await store.refreshRuntimeCatalog()
             default:
                 await store.refreshRuntimeCatalog()
             }
@@ -981,15 +982,19 @@ struct SettingsRouteView: View {
                 SettingsCard {
                     SettingsToggleRow(title: "启用记忆", description: "从聊天中生成新记忆，并将其带入新聊天", isOn: memoryEnabledBinding)
                     VStack(alignment: .leading, spacing: 6) {
-                        SettingsToggleRow(title: "Chronicle 研究预览", description: "通过屏幕上下文增强记忆。了解更多", isOn: $chronicleEnabled)
-                        HStack(spacing: 6) {
-                            Text("状态：")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(Theme.textSecondary)
-                            Text("运行中")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(Theme.success)
+                        SettingsValueRow(title: "Chronicle 研究预览", description: "通过 app-server 的 skills/list / mcpServerStatus/list 检测屏幕上下文能力") {
+                            HStack(spacing: 8) {
+                                statusBadge(store.chronicleRuntimeStatusText, ok: store.chronicleRuntimeAvailable)
+                                Button("刷新") {
+                                    Task { await store.refreshRuntimeCatalog(forceReloadSkills: true) }
+                                }
+                                .buttonStyle(ChipButtonStyle())
+                            }
                         }
+                        Text(store.chronicleRuntimeDetailText)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(2)
                         .padding(.leading, 2)
                     }
                     SettingsToggleRow(title: "跳过工具辅助对话", description: "请勿从使用了 MCP 工具或网页搜索的对话中生成记忆", isOn: skipToolChatsBinding)

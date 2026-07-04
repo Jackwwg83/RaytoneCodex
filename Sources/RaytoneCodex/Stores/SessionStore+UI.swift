@@ -245,6 +245,50 @@ extension SessionStore {
             : "正在读取工作区文件"
     }
 
+    var chronicleRuntimeAvailable: Bool {
+        if let server = chronicleMCPServer {
+            return server.authStatus != "notLoggedIn" && server.authStatus != "unsupported"
+        }
+        return chronicleSkill?.enabled == true
+    }
+
+    var chronicleRuntimeStatusText: String {
+        if let server = chronicleMCPServer {
+            switch server.authStatus {
+            case "notLoggedIn":
+                return "未登录"
+            case "unsupported":
+                return "不可用"
+            default:
+                return "已连接"
+            }
+        }
+        if let skill = chronicleSkill {
+            return skill.enabled ? "技能已启用" : "技能已停用"
+        }
+        if runtimeSkills.isEmpty && runtimeMCPServers.isEmpty {
+            return "未读取"
+        }
+        return "未检测到"
+    }
+
+    var chronicleRuntimeDetailText: String {
+        if let server = chronicleMCPServer {
+            return "mcpServerStatus/list：\(server.title) · \(server.authStatus)"
+        }
+        if let skill = chronicleSkill {
+            return "skills/list：\(skill.displayName) · \(skill.scope)"
+        }
+        if runtimeSkills.isEmpty && runtimeMCPServers.isEmpty {
+            return "等待读取 skills/list 和 mcpServerStatus/list"
+        }
+        return "当前 app-server catalog 没有返回 Chronicle 技能或 MCP 服务"
+    }
+
+    var chronicleRuntimeSourceText: String {
+        chronicleMCPServer == nil ? "skills/list" : "mcpServerStatus/list"
+    }
+
     func openConnectionsSettings() {
         route = .settings
         settingsPane = .connections
@@ -452,5 +496,23 @@ extension SessionStore {
             return normalizedTokens.contains { haystack.contains($0) } ? app.name : nil
         }
         return Array(Set(connectedMCPServers + connectedApps)).sorted()
+    }
+
+    private var chronicleSkill: CodexRuntimeSkill? {
+        runtimeSkills.first { skill in
+            let haystack = [skill.name, skill.displayName, skill.path]
+                .joined(separator: " ")
+                .lowercased()
+            return haystack.contains("chronicle")
+        }
+    }
+
+    private var chronicleMCPServer: CodexRuntimeMCPServer? {
+        runtimeMCPServers.first { server in
+            let haystack = [server.name, server.title]
+                .joined(separator: " ")
+                .lowercased()
+            return haystack.contains("chronicle")
+        }
     }
 }
