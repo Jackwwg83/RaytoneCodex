@@ -669,7 +669,7 @@ run_ui_smoke() {
 
 run_browser_snapshot_smoke() {
   local snapshot_path="$SCREENSHOT_DIR/raytonecodex-browser-webview-snapshot.png"
-  local snapshot_size old_ui_screen old_ui_smoke_screenshot
+  local snapshot_size window_screenshot window_screenshot_size old_ui_screen old_ui_smoke_screenshot
 
   mkdir -p "$SCREENSHOT_DIR"
   rm -f "$snapshot_path"
@@ -677,6 +677,8 @@ run_browser_snapshot_smoke() {
   old_ui_smoke_screenshot="$UI_SMOKE_SCREENSHOT"
   UI_SCREEN="browser"
   UI_SMOKE_SCREENSHOT="$SCREENSHOT_DIR/raytonecodex-browser-snapshot-window.png"
+  window_screenshot="$UI_SMOKE_SCREENSHOT"
+  rm -f "$window_screenshot"
   export RAYTONE_CODEX_BROWSER_SNAPSHOT_SMOKE=1
   export RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH="$snapshot_path"
   export RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE=1
@@ -697,6 +699,16 @@ run_browser_snapshot_smoke() {
   unset RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH
   unset RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE
 
+  if [[ ! -f "$window_screenshot" ]]; then
+    echo "Browser window screenshot was not created: $window_screenshot" >&2
+    return 1
+  fi
+  window_screenshot_size="$(/usr/bin/stat -f '%z' "$window_screenshot")"
+  if [[ "$window_screenshot_size" -lt 20000 ]]; then
+    echo "Browser window screenshot is unexpectedly small: $window_screenshot_size bytes." >&2
+    return 1
+  fi
+
   if [[ ! -f "$snapshot_path" ]]; then
     echo "Browser WebView snapshot was not created: $snapshot_path" >&2
     return 1
@@ -710,6 +722,8 @@ run_browser_snapshot_smoke() {
   printf '{\n'
   printf '  "ok": true,\n'
   printf '  "screen": "browser-snapshot",\n'
+  printf '  "windowScreenshot": "%s",\n' "$(json_escape "$window_screenshot")"
+  printf '  "windowScreenshotBytes": %s,\n' "$window_screenshot_size"
   printf '  "webviewSnapshot": "%s",\n' "$(json_escape "$snapshot_path")"
   printf '  "webviewSnapshotBytes": %s\n' "$snapshot_size"
   printf '}\n'

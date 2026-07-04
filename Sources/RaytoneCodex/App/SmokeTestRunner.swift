@@ -2947,11 +2947,13 @@ enum SmokeTestRunner {
 
             emitJSON([
                 "ok": ok,
+                "scope": "snapshot-request-only",
                 "workspacePath": workspacePath,
                 "browserURL": store.browserURL?.path ?? "",
                 "status": store.browserScreenshotStatusText,
                 "snapshotRequestID": request?.id.uuidString ?? "",
-                "snapshotOutput": request?.outputURL.path ?? ""
+                "snapshotOutput": request?.outputURL.path ?? "",
+                "snapshotFileExists": request.map { FileManager.default.fileExists(atPath: $0.outputURL.path) } ?? false
             ])
             exit(ok ? 0 : 1)
         }
