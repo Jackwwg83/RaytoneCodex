@@ -203,6 +203,16 @@ final class SessionStore: ObservableObject {
         Self.serviceTierLabel(for: runtimeConfig?.serviceTier)
     }
 
+    var runtimeMemoryEnabled: Bool {
+        let generate = runtimeConfig?.memoryGenerateMemories ?? true
+        let use = runtimeConfig?.memoryUseMemories ?? true
+        return generate && use
+    }
+
+    var runtimeSkipToolAssistedChats: Bool {
+        runtimeConfig?.memoryDisableOnExternalContext ?? false
+    }
+
     private func applyRuntimeConfig(_ config: CodexRuntimeConfig?, fallbackDefaultPermissions: String? = nil) {
         runtimeConfig = config
         applyRuntimeDefaultPermissionsProfile(
@@ -828,6 +838,38 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "service_tier 已写入 config.toml：\(serviceTier)"
         } catch {
             runtimeCatalogStatusText = "service_tier 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func saveRuntimeMemoryEnabled(_ enabled: Bool) async {
+        runtimeCatalogStatusText = "正在写入 memories.generate_memories/use_memories…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.batchWriteConfig(edits: [
+                CodexConfigWriteEdit(keyPath: "memories.generate_memories", value: .bool(enabled)),
+                CodexConfigWriteEdit(keyPath: "memories.use_memories", value: .bool(enabled))
+            ])
+            applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
+            runtimeCatalogStatusText = enabled ? "Codex 记忆已开启" : "Codex 记忆已关闭"
+        } catch {
+            runtimeCatalogStatusText = "记忆设置写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func saveRuntimeSkipToolAssistedChats(_ enabled: Bool) async {
+        runtimeCatalogStatusText = "正在写入 memories.disable_on_external_context…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "memories.disable_on_external_context",
+                value: .bool(enabled)
+            )
+            applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
+            runtimeCatalogStatusText = enabled ? "工具辅助对话将跳过记忆生成" : "工具辅助对话可生成记忆"
+        } catch {
+            runtimeCatalogStatusText = "记忆跳过规则写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
     }

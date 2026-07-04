@@ -543,6 +543,9 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var reasoningEffort: String?
     public var reasoningSummary: String?
     public var serviceTier: String?
+    public var memoryGenerateMemories: Bool?
+    public var memoryUseMemories: Bool?
+    public var memoryDisableOnExternalContext: Bool?
     public var instructions: String?
     public var developerInstructions: String?
     public var desktopKeys: [String]
@@ -559,6 +562,9 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         reasoningEffort: String?,
         reasoningSummary: String?,
         serviceTier: String?,
+        memoryGenerateMemories: Bool?,
+        memoryUseMemories: Bool?,
+        memoryDisableOnExternalContext: Bool?,
         instructions: String?,
         developerInstructions: String?,
         desktopKeys: [String],
@@ -574,6 +580,9 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.reasoningEffort = reasoningEffort
         self.reasoningSummary = reasoningSummary
         self.serviceTier = serviceTier
+        self.memoryGenerateMemories = memoryGenerateMemories
+        self.memoryUseMemories = memoryUseMemories
+        self.memoryDisableOnExternalContext = memoryDisableOnExternalContext
         self.instructions = instructions
         self.developerInstructions = developerInstructions
         self.desktopKeys = desktopKeys
@@ -1967,6 +1976,7 @@ public actor CodexAppServerClient {
 
     private static func runtimeConfig(from result: JSONValue) -> CodexRuntimeConfig {
         let config = result["config"]
+        let memories = config?["memories"]
         let desktopKeys = config?["desktop"]?.objectValue?.keys.sorted() ?? []
         let originKeys = result["origins"]?.objectValue?.keys.sorted() ?? []
         return CodexRuntimeConfig(
@@ -1979,6 +1989,9 @@ public actor CodexAppServerClient {
             reasoningEffort: config?["model_reasoning_effort"]?.stringValue,
             reasoningSummary: config?["model_reasoning_summary"]?.stringValue,
             serviceTier: config?["service_tier"]?.stringValue,
+            memoryGenerateMemories: memories?["generate_memories"]?.boolValue ?? memories?["generateMemories"]?.boolValue,
+            memoryUseMemories: memories?["use_memories"]?.boolValue ?? memories?["useMemories"]?.boolValue,
+            memoryDisableOnExternalContext: memories?["disable_on_external_context"]?.boolValue ?? memories?["disableOnExternalContext"]?.boolValue,
             instructions: config?["instructions"]?.stringValue,
             developerInstructions: config?["developer_instructions"]?.stringValue,
             desktopKeys: desktopKeys,

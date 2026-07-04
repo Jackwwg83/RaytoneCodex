@@ -12,9 +12,7 @@ struct SettingsRouteView: View {
     @State private var preventSleep = true
     @State private var terminalPosition = "底部"
     @State private var appearance = "跟随系统"
-    @State private var memoryEnabled = true
     @State private var chronicleEnabled = true
-    @State private var skipToolChats = false
     @State private var providerAPIKeyDraft = ""
     @State private var providerStatusMessage = "未测试"
     @State private var instructionsStatus = ""
@@ -52,6 +50,28 @@ struct SettingsRouteView: View {
             set: { enabled in
                 Task { @MainActor in
                     await store.saveRuntimeAutoReviewEnabled(enabled)
+                }
+            }
+        )
+    }
+
+    private var memoryEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { store.runtimeMemoryEnabled },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimeMemoryEnabled(enabled)
+                }
+            }
+        )
+    }
+
+    private var skipToolChatsBinding: Binding<Bool> {
+        Binding(
+            get: { store.runtimeSkipToolAssistedChats },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimeSkipToolAssistedChats(enabled)
                 }
             }
         )
@@ -780,6 +800,9 @@ struct SettingsRouteView: View {
                     configMetric("推理强度", store.runtimeConfig?.reasoningEffort ?? "默认")
                     configMetric("推理摘要", store.runtimeConfig?.reasoningSummary ?? "默认")
                     configMetric("服务层级", store.runtimeConfig?.serviceTier ?? "默认")
+                    configMetric("生成记忆", boolMetric(store.runtimeConfig?.memoryGenerateMemories))
+                    configMetric("使用记忆", boolMetric(store.runtimeConfig?.memoryUseMemories))
+                    configMetric("外部上下文跳过记忆", boolMetric(store.runtimeConfig?.memoryDisableOnExternalContext))
                     configMetric("配置层", "\(store.runtimeConfig?.layerCount ?? 0)")
                     configMetric("desktop 键", store.runtimeConfig?.desktopKeys.joined(separator: "、") ?? "无")
                 }
@@ -863,7 +886,7 @@ struct SettingsRouteView: View {
 
             SettingsSection(title: "记忆（实验性）", description: "设置 Codex 如何收集、保留和整合记忆。了解更多") {
                 SettingsCard {
-                    SettingsToggleRow(title: "启用记忆", description: "从聊天中生成新记忆，并将其带入新聊天", isOn: $memoryEnabled)
+                    SettingsToggleRow(title: "启用记忆", description: "从聊天中生成新记忆，并将其带入新聊天", isOn: memoryEnabledBinding)
                     VStack(alignment: .leading, spacing: 6) {
                         SettingsToggleRow(title: "Chronicle 研究预览", description: "通过屏幕上下文增强记忆。了解更多", isOn: $chronicleEnabled)
                         HStack(spacing: 6) {
@@ -876,7 +899,7 @@ struct SettingsRouteView: View {
                         }
                         .padding(.leading, 2)
                     }
-                    SettingsToggleRow(title: "跳过工具辅助对话", description: "请勿从使用了 MCP 工具或网页搜索的对话中生成记忆", isOn: $skipToolChats)
+                    SettingsToggleRow(title: "跳过工具辅助对话", description: "请勿从使用了 MCP 工具或网页搜索的对话中生成记忆", isOn: skipToolChatsBinding)
                     SettingsValueRow(title: "重置记忆", description: "删除所有 Codex 记忆") {
                         Button("重置") {
                             confirmResetMemory()
@@ -1566,6 +1589,11 @@ struct SettingsRouteView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+    }
+
+    private func boolMetric(_ value: Bool?) -> String {
+        guard let value else { return "默认" }
+        return value ? "开启" : "关闭"
     }
 
     private func menuLabel(_ title: String) -> some View {
