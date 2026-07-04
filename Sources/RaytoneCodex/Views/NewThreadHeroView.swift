@@ -186,7 +186,7 @@ struct NewThreadHeroView: View {
 
     private var micButton: some View {
         Button {
-            store.startVoiceInput()
+            Task { await store.startVoiceInput() }
         } label: {
             Image(systemName: "mic")
                 .font(.system(size: 13))
@@ -194,7 +194,7 @@ struct NewThreadHeroView: View {
                 .frame(width: 30, height: 30)
         }
         .buttonStyle(.plain)
-        .help("语音输入")
+        .help(store.voiceInputStatusText)
     }
 
     private var sendButton: some View {

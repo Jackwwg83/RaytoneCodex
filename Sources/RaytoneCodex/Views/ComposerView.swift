@@ -158,7 +158,7 @@ struct ComposerView: View {
 
     private var micButton: some View {
         Button {
-            store.startVoiceInput()
+            Task { await store.startVoiceInput() }
         } label: {
             Image(systemName: "mic")
                 .font(.system(size: 13))
@@ -167,7 +167,7 @@ struct ComposerView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("语音输入")
+        .help(store.voiceInputStatusText)
     }
 
     private var sendButton: some View {

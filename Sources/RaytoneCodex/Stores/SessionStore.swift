@@ -75,6 +75,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimeRequirements: CodexRuntimeConfigRequirements?
     @Published var runtimeRemoteControlStatus: CodexRuntimeRemoteControlStatus?
     @Published var runtimeRemoteControlPairing: CodexRemoteControlPairing?
+    @Published var runtimeRealtimeVoices: CodexRealtimeVoices?
+    @Published var voiceInputStatusText = "麦克风"
     @Published var runtimeApps: [CodexRuntimeAppInfo] = []
     @Published var runtimePermissionProfiles: [CodexRuntimePermissionProfile] = []
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
@@ -1420,15 +1422,32 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func startVoiceInput() {
+    func startVoiceInput() async {
+        await refreshRealtimeVoicesForVoiceInput()
+
         let didStart = NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
-        guard !didStart else { return }
+        guard !didStart else {
+            voiceInputStatusText = "已请求系统听写 · Codex realtime \(runtimeRealtimeVoicesSummary)"
+            return
+        }
 
         updateSelectedThread { thread in
             thread.items.append(TranscriptItem(kind: .notice(Notice(
                 level: .info,
-                text: "系统没有接受听写命令。请确认 macOS 已启用听写，或把焦点放到输入框后再点麦克风。"
+                text: "系统没有接受听写命令。Codex realtime 已读取 \(runtimeRealtimeVoicesSummary)。请确认 macOS 已启用听写，或把焦点放到输入框后再点麦克风。"
             ))))
+        }
+    }
+
+    func refreshRealtimeVoicesForVoiceInput() async {
+        voiceInputStatusText = "正在读取 Codex realtime voices…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let voices = try await client.listRealtimeVoices()
+            runtimeRealtimeVoices = voices
+            voiceInputStatusText = "Codex realtime：v1 \(voices.v1.count) 个 · v2 \(voices.v2.count) 个 · 默认 \(voices.defaultV2)"
+        } catch {
+            voiceInputStatusText = "Codex realtime voices 读取失败：\(error.localizedDescription)"
         }
     }
 

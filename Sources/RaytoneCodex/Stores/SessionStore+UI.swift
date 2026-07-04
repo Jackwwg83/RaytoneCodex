@@ -293,6 +293,14 @@ extension SessionStore {
         chronicleMCPServer == nil ? "skills/list" : "mcpServerStatus/list"
     }
 
+    var runtimeRealtimeVoicesSummary: String {
+        guard let voices = runtimeRealtimeVoices else {
+            return "voices 未读取"
+        }
+        let defaultVoice = voices.defaultV2.isEmpty ? voices.defaultV1 : voices.defaultV2
+        return "v1 \(voices.v1.count) 个 · v2 \(voices.v2.count) 个 · 默认 \(defaultVoice.isEmpty ? "未返回" : defaultVoice)"
+    }
+
     func openConnectionsSettings() {
         route = .settings
         settingsPane = .connections

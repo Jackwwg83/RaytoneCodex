@@ -44,6 +44,8 @@ enum SmokeTestRunner {
             runIntegrationPagesSmoke()
         } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
             runRemoteControlSmoke()
+        } else if CommandLine.arguments.contains("--realtime-voices-smoke-test") {
+            runRealtimeVoicesSmoke()
         } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
             runAccessModeSmoke()
         } else if CommandLine.arguments.contains("--personality-smoke-test") {
@@ -4317,6 +4319,40 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runRealtimeVoicesSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            fputs("realtime-voices-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("realtime-voices-smoke: thread/realtime/listVoices\n", stderr)
+            await store.refreshRealtimeVoicesForVoiceInput()
+
+            let voices = store.runtimeRealtimeVoices
+            let ok = store.runtimeSnapshot.executable != nil &&
+                voices != nil &&
+                voices?.v1.isEmpty == false &&
+                voices?.v2.isEmpty == false
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "voiceInputStatusText": store.voiceInputStatusText,
+                "voices": realtimeVoicesPayload(voices)
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
     private static func runSlashSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -5068,6 +5104,17 @@ enum SmokeTestRunner {
             "serverName": status?.serverName ?? "",
             "installationID": status?.installationID ?? "",
             "environmentID": status?.environmentID ?? ""
+        ]
+    }
+
+    private static func realtimeVoicesPayload(_ voices: CodexRealtimeVoices?) -> [String: Any] {
+        [
+            "v1": voices?.v1 ?? [],
+            "v2": voices?.v2 ?? [],
+            "defaultV1": voices?.defaultV1 ?? "",
+            "defaultV2": voices?.defaultV2 ?? "",
+            "v1Count": voices?.v1.count ?? 0,
+            "v2Count": voices?.v2.count ?? 0
         ]
     }
 

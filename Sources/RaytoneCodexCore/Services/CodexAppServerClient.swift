@@ -1196,6 +1196,20 @@ public struct CodexRemoteControlPairing: Equatable, Sendable {
     }
 }
 
+public struct CodexRealtimeVoices: Equatable, Sendable {
+    public var v1: [String]
+    public var v2: [String]
+    public var defaultV1: String
+    public var defaultV2: String
+
+    public init(v1: [String], v2: [String], defaultV1: String, defaultV2: String) {
+        self.v1 = v1
+        self.v2 = v2
+        self.defaultV1 = defaultV1
+        self.defaultV2 = defaultV2
+    }
+}
+
 public struct CodexRuntimeAppCatalog: Equatable, Sendable {
     public var apps: [CodexRuntimeAppInfo]
     public var nextCursor: String?
@@ -2095,6 +2109,11 @@ public actor CodexAppServerClient {
             environmentID: result["environmentId"]?.stringValue ?? "",
             expiresAt: result["expiresAt"]?.intValue ?? 0
         )
+    }
+
+    public func listRealtimeVoices() async throws -> CodexRealtimeVoices {
+        let result = try await request(method: "thread/realtime/listVoices", params: .object([:]))
+        return Self.realtimeVoices(from: result["voices"] ?? result)
     }
 
     public func resetMemory() async throws {
@@ -3137,6 +3156,15 @@ public actor CodexAppServerClient {
             serverName: result?["serverName"]?.stringValue ?? "",
             installationID: result?["installationId"]?.stringValue ?? "",
             environmentID: result?["environmentId"]?.stringValue
+        )
+    }
+
+    public static func realtimeVoices(from result: JSONValue?) -> CodexRealtimeVoices {
+        CodexRealtimeVoices(
+            v1: result?["v1"]?.stringList ?? [],
+            v2: result?["v2"]?.stringList ?? [],
+            defaultV1: result?["defaultV1"]?.stringValue ?? "",
+            defaultV2: result?["defaultV2"]?.stringValue ?? ""
         )
     }
 
