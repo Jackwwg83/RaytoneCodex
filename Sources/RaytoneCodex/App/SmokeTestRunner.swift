@@ -4865,6 +4865,7 @@ enum SmokeTestRunner {
                 "runtimeVersion": store.runtimeSnapshot.version ?? "",
                 "workspacePath": workspacePath,
                 "voiceInputStatusText": store.voiceInputStatusText,
+                "voicesUpdatedAt": store.runtimeRealtimeVoicesUpdatedAt?.timeIntervalSince1970 ?? 0,
                 "voices": realtimeVoicesPayload(voices)
             ])
             exit(ok ? 0 : 1)

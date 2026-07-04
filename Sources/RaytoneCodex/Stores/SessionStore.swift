@@ -79,6 +79,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeRemoteControlClients: [CodexRemoteControlClient] = []
     @Published var runtimeRemoteControlClientsNextCursor: String?
     @Published var runtimeRealtimeVoices: CodexRealtimeVoices?
+    @Published var runtimeRealtimeVoicesUpdatedAt: Date?
     @Published var voiceInputStatusText = "麦克风"
     @Published var runtimeApps: [CodexRuntimeAppInfo] = []
     @Published var runtimePermissionProfiles: [CodexRuntimePermissionProfile] = []
@@ -1475,6 +1476,7 @@ final class SessionStore: ObservableObject {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             let voices = try await client.listRealtimeVoices()
             runtimeRealtimeVoices = voices
+            runtimeRealtimeVoicesUpdatedAt = Date()
             voiceInputStatusText = "Codex realtime：v1 \(voices.v1.count) 个 · v2 \(voices.v2.count) 个 · 默认 \(voices.defaultV2)"
         } catch {
             voiceInputStatusText = "Codex realtime voices 读取失败：\(error.localizedDescription)"

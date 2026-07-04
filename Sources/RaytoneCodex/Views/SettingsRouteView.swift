@@ -167,6 +167,7 @@ struct SettingsRouteView: View {
                 await store.refreshRuntimeConfiguration()
             case .personalization:
                 await store.refreshRuntimeCatalog()
+                await store.refreshRealtimeVoicesForVoiceInput()
             default:
                 await store.refreshRuntimeCatalog()
             }
@@ -1207,6 +1208,8 @@ struct SettingsRouteView: View {
                 }
             }
 
+            realtimeVoiceSection
+
             SettingsSection(title: "记忆（实验性）", description: "设置 Codex 如何收集、保留和整合记忆。了解更多") {
                 SettingsCard {
                     SettingsToggleRow(title: "启用记忆", description: "从聊天中生成新记忆，并将其带入新聊天", isOn: memoryEnabledBinding)
@@ -1235,6 +1238,37 @@ struct SettingsRouteView: View {
                             .foregroundStyle(Theme.danger)
                             .buttonStyle(.plain)
                     }
+                }
+            }
+        }
+    }
+
+    private var realtimeVoiceSection: some View {
+        SettingsSection(title: "实时语音", description: "麦克风按钮会先读取 Codex app-server 的 thread/realtime/listVoices，再请求 macOS 系统听写。") {
+            SettingsCard {
+                SettingsValueRow(title: "语音目录", description: store.voiceInputStatusText) {
+                    HStack(spacing: 8) {
+                        statusBadge(store.runtimeRealtimeVoices == nil ? "未读取" : "已读取", ok: store.runtimeRealtimeVoices != nil)
+                        Button("刷新") {
+                            Task { await store.refreshRealtimeVoicesForVoiceInput() }
+                        }
+                        .buttonStyle(ChipButtonStyle())
+                    }
+                }
+                if let voices = store.runtimeRealtimeVoices {
+                    metricRow("默认 v1", voices.defaultV1.isEmpty ? "未返回" : voices.defaultV1)
+                    metricRow("默认 v2", voices.defaultV2.isEmpty ? "未返回" : voices.defaultV2)
+                    metricRow("v1 语音", voiceListPreview(voices.v1))
+                    metricRow("v2 语音", voiceListPreview(voices.v2))
+                    metricRow("来源", "thread/realtime/listVoices")
+                    if let updatedAt = store.runtimeRealtimeVoicesUpdatedAt {
+                        metricRow("刷新时间", updatedAt.formatted(date: .omitted, time: .standard))
+                    }
+                } else {
+                    Text("尚未读取实时语音目录。点击刷新会通过当前捆绑的 codex app-server 获取真实 voice catalog。")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
@@ -2346,6 +2380,15 @@ struct SettingsRouteView: View {
             return preview + "\n… 已截断 \(lines.count - 160) 行"
         }
         return preview
+    }
+
+    private func voiceListPreview(_ voices: [String]) -> String {
+        guard !voices.isEmpty else { return "未返回" }
+        let shown = voices.prefix(8).joined(separator: "、")
+        if voices.count > 8 {
+            return "\(shown) 等 \(voices.count) 个"
+        }
+        return shown
     }
 
     private func configMetric(_ label: String, _ value: String) -> some View {
