@@ -125,6 +125,8 @@ final class SessionStore: ObservableObject {
     private var appServerEnvironmentKey: String?
     private var filePanelWatchID: String?
     private var filePanelWatchedPath: String?
+    private var activeTerminalRunID: UUID?
+    private var activeTerminalProcessID: String?
     private var activeProxySession: RaytoneProxySession?
     private var preventSleepAssertionID: IOPMAssertionID?
     var appServerEnvironmentOverridesForTesting: [String: String] = [:]
@@ -471,6 +473,7 @@ final class SessionStore: ObservableObject {
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
         appServerItemIDs.removeAll()
+        resetActiveTerminal()
         resetFilePanelWatch()
         await proxyService.stop()
         activeProxySession = nil
@@ -1735,38 +1738,70 @@ final class SessionStore: ObservableObject {
 
     func runTerminalCommand() async {
         let command = terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty, !terminalIsRunning else { return }
+        if terminalIsRunning {
+            guard !command.isEmpty else { return }
+            await writeTerminalInput(command + "\n")
+            return
+        }
+        guard !command.isEmpty else { return }
 
         terminalIsRunning = true
         let recordID = UUID()
-        terminalRuns.append(TerminalCommandRecord(id: recordID, command: command))
+        let processID = "raytone-terminal-\(UUID().uuidString)"
+        activeTerminalRunID = recordID
+        activeTerminalProcessID = processID
+        terminalRuns.append(TerminalCommandRecord(id: recordID, command: command, processID: processID))
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            let result = try await client.execCommand(
+            let result = try await client.execCommandStreaming(
                 ["/bin/zsh", "-lc", command],
+                processID: processID,
                 cwd: URL(fileURLWithPath: workspacePath),
                 sandbox: sandbox
             )
             let output = [result.stdout, result.stderr]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n")
-            updateTerminalRun(
-                id: recordID,
-                output: output.isEmpty ? "命令无输出" : output,
-                exitCode: result.exitCode,
-                status: result.exitCode == 0 ? .succeeded : .failed
-            )
+            completeTerminalRun(id: recordID, finalOutput: output, exitCode: result.exitCode)
         } catch {
-            updateTerminalRun(
-                id: recordID,
-                output: error.localizedDescription,
-                exitCode: nil,
-                status: .failed
-            )
+            failTerminalRun(id: recordID, errorText: error.localizedDescription)
         }
 
-        terminalIsRunning = false
+        if activeTerminalRunID == recordID {
+            resetActiveTerminal()
+        }
+    }
+
+    func stopTerminalCommand() async {
+        guard terminalIsRunning,
+              let processID = activeTerminalProcessID,
+              let client = appServerClient else {
+            return
+        }
+
+        do {
+            try await client.terminateCommand(processID: processID)
+        } catch {
+            if let runID = activeTerminalRunID {
+                appendTerminalRunOutput(id: runID, text: "\n终止失败：\(error.localizedDescription)\n")
+            }
+        }
+    }
+
+    private func writeTerminalInput(_ input: String) async {
+        guard let processID = activeTerminalProcessID,
+              let client = appServerClient else {
+            return
+        }
+
+        do {
+            try await client.writeCommandInput(processID: processID, data: Data(input.utf8))
+        } catch {
+            if let runID = activeTerminalRunID {
+                appendTerminalRunOutput(id: runID, text: "\n写入 stdin 失败：\(error.localizedDescription)\n")
+            }
+        }
     }
 
     func openBrowserAddress(_ address: String) {
@@ -2915,6 +2950,36 @@ final class SessionStore: ObservableObject {
         terminalRuns[index].status = status
     }
 
+    private func appendTerminalRunOutput(id: UUID, text: String) {
+        guard let index = terminalRuns.firstIndex(where: { $0.id == id }) else { return }
+        terminalRuns[index].output.append(text)
+    }
+
+    private func completeTerminalRun(id: UUID, finalOutput: String, exitCode: Int32) {
+        guard let index = terminalRuns.firstIndex(where: { $0.id == id }) else { return }
+        if !finalOutput.isEmpty {
+            if !terminalRuns[index].output.isEmpty {
+                terminalRuns[index].output.append("\n")
+            }
+            terminalRuns[index].output.append(finalOutput)
+        } else if terminalRuns[index].output.isEmpty {
+            terminalRuns[index].output = "命令无输出"
+        }
+        terminalRuns[index].exitCode = exitCode
+        terminalRuns[index].status = exitCode == 0 ? .succeeded : .failed
+    }
+
+    private func failTerminalRun(id: UUID, errorText: String) {
+        guard let index = terminalRuns.firstIndex(where: { $0.id == id }) else { return }
+        if terminalRuns[index].output.isEmpty {
+            terminalRuns[index].output = errorText
+        } else {
+            terminalRuns[index].output.append("\n\(errorText)")
+        }
+        terminalRuns[index].exitCode = nil
+        terminalRuns[index].status = .failed
+    }
+
     func selectProvider(_ providerID: String) {
         guard providers.contains(where: { $0.id == providerID }) else { return }
         selectedProviderID = providerID
@@ -3335,6 +3400,7 @@ final class SessionStore: ObservableObject {
             appServerEventsTask = nil
             appServerItemIDs.removeAll()
             activeDiffTranscriptIDs.removeAll()
+            resetActiveTerminal()
             resetFilePanelWatch()
         }
         appServerEnvironmentKey = environmentKey
@@ -3420,6 +3486,7 @@ final class SessionStore: ObservableObject {
         appServerEnvironmentKey = nil
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
+        resetActiveTerminal()
         resetFilePanelWatch()
         await proxyService.stop()
         activeProxySession = nil
@@ -3430,6 +3497,12 @@ final class SessionStore: ObservableObject {
     private func resetFilePanelWatch() {
         filePanelWatchID = nil
         filePanelWatchedPath = nil
+    }
+
+    private func resetActiveTerminal() {
+        terminalIsRunning = false
+        activeTerminalRunID = nil
+        activeTerminalProcessID = nil
     }
 
     private func resolveRaytoneProxyExecutableURL() -> URL? {
@@ -3650,6 +3723,8 @@ final class SessionStore: ObservableObject {
             Task { await refreshAccountUsageRuntime() }
         case "fs/changed":
             handleFileSystemChanged(params)
+        case "command/exec/outputDelta":
+            handleTerminalOutputDelta(params)
         case "item/agentMessage/delta":
             appendAgentDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
@@ -3674,6 +3749,21 @@ final class SessionStore: ObservableObject {
             .joined(separator: "、") ?? "工作区文件"
         filePanelStatusText = "检测到变化：\(changedPaths)"
         Task { await loadFilePanelDirectory(watchedPath, updateWatch: false) }
+    }
+
+    private func handleTerminalOutputDelta(_ params: JSONValue?) {
+        guard let processID = params?["processId"]?.stringValue,
+              let deltaBase64 = params?["deltaBase64"]?.stringValue,
+              let data = Data(base64Encoded: deltaBase64) else {
+            return
+        }
+
+        let stream = params?["stream"]?.stringValue ?? "stdout"
+        let output = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        let cappedSuffix = params?["capReached"]?.boolValue == true ? "\n[\(stream) 输出已截断]\n" : ""
+        if let runID = terminalRuns.first(where: { $0.processID == processID })?.id {
+            appendTerminalRunOutput(id: runID, text: output + cappedSuffix)
+        }
     }
 
     private func handleThreadSettingsUpdated(_ params: JSONValue?) {

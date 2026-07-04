@@ -222,19 +222,22 @@ struct TerminalCommandRecord: Identifiable, Equatable {
     var output: String
     var exitCode: Int32?
     var status: Status
+    var processID: String?
 
     init(
         id: UUID = UUID(),
         command: String,
         output: String = "",
         exitCode: Int32? = nil,
-        status: Status = .running
+        status: Status = .running,
+        processID: String? = nil
     ) {
         self.id = id
         self.command = command
         self.output = output
         self.exitCode = exitCode
         self.status = status
+        self.processID = processID
     }
 }
 

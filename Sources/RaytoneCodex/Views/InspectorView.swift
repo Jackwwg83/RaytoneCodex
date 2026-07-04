@@ -398,7 +398,7 @@ private struct TerminalToolPanel: View {
                     .truncationMode(.middle)
 
                 HStack(spacing: 8) {
-                    TextField("输入 shell 命令", text: $store.terminalCommand)
+                    TextField(store.terminalIsRunning ? "发送 stdin" : "输入 shell 命令", text: $store.terminalCommand)
                         .textFieldStyle(.plain)
                         .font(Theme.mono(12))
                         .padding(.horizontal, 10)
@@ -409,14 +409,19 @@ private struct TerminalToolPanel: View {
                             Task { await store.runTerminalCommand() }
                         }
                     Button {
-                        Task { await store.runTerminalCommand() }
+                        Task {
+                            if store.terminalIsRunning {
+                                await store.stopTerminalCommand()
+                            } else {
+                                await store.runTerminalCommand()
+                            }
+                        }
                     } label: {
-                        Image(systemName: store.terminalIsRunning ? "hourglass" : "play.fill")
+                        Image(systemName: store.terminalIsRunning ? "stop.fill" : "play.fill")
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .buttonStyle(GhostIconButtonStyle(size: 30))
-                    .disabled(store.terminalIsRunning)
-                    .help("运行")
+                    .help(store.terminalIsRunning ? "停止" : "运行")
                 }
             }
             .padding(12)
@@ -514,7 +519,7 @@ struct BottomTerminalToolPanel: View {
             .overlay(alignment: .bottom) { Hairline() }
 
             HStack(spacing: 8) {
-                TextField("输入 shell 命令", text: $store.terminalCommand)
+                TextField(store.terminalIsRunning ? "发送 stdin" : "输入 shell 命令", text: $store.terminalCommand)
                     .textFieldStyle(.plain)
                     .font(Theme.mono(12))
                     .padding(.horizontal, 10)
@@ -525,14 +530,19 @@ struct BottomTerminalToolPanel: View {
                         Task { await store.runTerminalCommand() }
                     }
                 Button {
-                    Task { await store.runTerminalCommand() }
+                    Task {
+                        if store.terminalIsRunning {
+                            await store.stopTerminalCommand()
+                        } else {
+                            await store.runTerminalCommand()
+                        }
+                    }
                 } label: {
-                    Image(systemName: store.terminalIsRunning ? "hourglass" : "play.fill")
+                    Image(systemName: store.terminalIsRunning ? "stop.fill" : "play.fill")
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .buttonStyle(GhostIconButtonStyle(size: 30))
-                .disabled(store.terminalIsRunning)
-                .help("运行")
+                .help(store.terminalIsRunning ? "停止" : "运行")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)

@@ -10,6 +10,8 @@ enum SmokeTestRunner {
             runSessionSmoke()
         } else if CommandLine.arguments.contains("--tools-smoke-test") {
             runToolsSmoke()
+        } else if CommandLine.arguments.contains("--terminal-stream-smoke-test") {
+            runTerminalStreamSmoke()
         } else if CommandLine.arguments.contains("--file-search-smoke-test") {
             runFileSearchSmoke()
         } else if CommandLine.arguments.contains("--local-image-input-smoke-test") {
@@ -298,6 +300,107 @@ enum SmokeTestRunner {
                 "terminalOutput": lastRun?.output ?? ""
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runTerminalStreamSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexTerminalStreamSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexTerminalStreamCodexHome-\(UUID().uuidString)", isDirectory: true)
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.sandbox = .dangerFullAccess
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                await store.refreshRuntime()
+
+                store.terminalCommand = "printf 'ready\\n'; read line; printf 'got:%s\\n' \"$line\""
+                let stdinTask = Task { @MainActor in
+                    await store.runTerminalCommand()
+                }
+                let readyDeadline = Date().addingTimeInterval(8)
+                while Date() < readyDeadline,
+                      store.terminalRuns.last?.output.contains("ready") != true {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let streamedBeforeInput = store.terminalIsRunning &&
+                    store.terminalRuns.last?.output.contains("ready") == true
+
+                store.terminalCommand = "raytone-stdin-smoke"
+                await store.runTerminalCommand()
+                _ = await stdinTask.value
+                let stdinRun = store.terminalRuns.last
+
+                store.terminalCommand = "printf 'sleeping\\n'; sleep 20; printf 'done\\n'"
+                let terminateTask = Task { @MainActor in
+                    await store.runTerminalCommand()
+                }
+                let sleepingDeadline = Date().addingTimeInterval(8)
+                while Date() < sleepingDeadline,
+                      store.terminalRuns.last?.output.contains("sleeping") != true {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let streamedBeforeTerminate = store.terminalIsRunning &&
+                    store.terminalRuns.last?.output.contains("sleeping") == true
+                await store.stopTerminalCommand()
+                _ = await terminateTask.value
+                let terminatedRun = store.terminalRuns.last
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    streamedBeforeInput &&
+                    stdinRun?.output.contains("got:raytone-stdin-smoke") == true &&
+                    stdinRun?.status == .succeeded &&
+                    streamedBeforeTerminate &&
+                    terminatedRun?.output.contains("sleeping") == true &&
+                    terminatedRun?.output.contains("done") != true &&
+                    store.terminalIsRunning == false
+
+                let stdinOutput = stdinRun?.output ?? ""
+                let terminatedOutput = terminatedRun?.output ?? ""
+                await store.stopAppServerForTesting()
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "streamedBeforeInput": streamedBeforeInput,
+                    "stdinExitCode": Int(stdinRun?.exitCode ?? -999),
+                    "stdinStatus": terminalStatusName(stdinRun?.status),
+                    "stdinOutput": stdinOutput,
+                    "streamedBeforeTerminate": streamedBeforeTerminate,
+                    "terminatedExitCode": Int(terminatedRun?.exitCode ?? -999),
+                    "terminatedStatus": terminalStatusName(terminatedRun?.status),
+                    "terminatedOutput": terminatedOutput
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
@@ -2018,6 +2121,19 @@ enum SmokeTestRunner {
             "applicationBundleIdentifier": request?.applicationBundleIdentifier ?? "",
             "applicationName": request?.applicationName ?? ""
         ]
+    }
+
+    private static func terminalStatusName(_ status: TerminalCommandRecord.Status?) -> String {
+        switch status {
+        case .running:
+            "running"
+        case .succeeded:
+            "succeeded"
+        case .failed:
+            "failed"
+        case nil:
+            "missing"
+        }
     }
 
     private static func runGoalSmoke() {

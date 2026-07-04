@@ -1904,6 +1904,79 @@ public actor CodexAppServerClient {
         )
     }
 
+    public func execCommandStreaming(
+        _ command: [String],
+        processID: String,
+        cwd: URL? = nil,
+        sandbox: CodexSandboxMode? = nil,
+        tty: Bool = false,
+        rows: Int = 30,
+        cols: Int = 100
+    ) async throws -> CodexCommandExecResult {
+        var params: [String: JSONValue] = [
+            "command": .array(command.map(JSONValue.string)),
+            "processId": .string(processID),
+            "streamStdin": .bool(true),
+            "streamStdoutStderr": .bool(true),
+            "disableTimeout": .bool(true)
+        ]
+        if let cwd {
+            params["cwd"] = .string(cwd.path)
+        }
+        if let sandbox {
+            params["sandboxPolicy"] = sandbox.appServerSandboxPolicy
+        }
+        if tty {
+            params["tty"] = .bool(true)
+            params["size"] = .object([
+                "rows": .number(Double(rows)),
+                "cols": .number(Double(cols))
+            ])
+        }
+
+        let result = try await request(method: "command/exec", params: .object(params))
+        guard let exitCode = result["exitCode"]?.intValue else {
+            throw CodexAppServerError.invalidResponse("Missing command/exec exitCode.")
+        }
+
+        return CodexCommandExecResult(
+            stdout: result["stdout"]?.stringValue ?? "",
+            stderr: result["stderr"]?.stringValue ?? "",
+            exitCode: Int32(exitCode)
+        )
+    }
+
+    public func writeCommandInput(
+        processID: String,
+        data: Data,
+        closeStdin: Bool = false
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "processId": .string(processID),
+            "closeStdin": .bool(closeStdin)
+        ]
+        if !data.isEmpty {
+            params["deltaBase64"] = .string(data.base64EncodedString())
+        }
+        _ = try await request(method: "command/exec/write", params: .object(params))
+    }
+
+    public func terminateCommand(processID: String) async throws {
+        _ = try await request(method: "command/exec/terminate", params: .object([
+            "processId": .string(processID)
+        ]))
+    }
+
+    public func resizeCommand(processID: String, rows: Int, cols: Int) async throws {
+        _ = try await request(method: "command/exec/resize", params: .object([
+            "processId": .string(processID),
+            "size": .object([
+                "rows": .number(Double(rows)),
+                "cols": .number(Double(cols))
+            ])
+        ]))
+    }
+
     public func respondApproval(
         requestID: CodexAppServerRequestID,
         decision: CodexAppServerApprovalDecision
