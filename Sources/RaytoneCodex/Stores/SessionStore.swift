@@ -18,6 +18,7 @@ final class SessionStore: ObservableObject {
     @Published var sandbox: CodexSandboxMode = .dangerFullAccess
     @Published var approval: CodexApprovalPolicy = .onRequest
     @Published var approvalsReviewer: CodexApprovalsReviewer = .user
+    @Published var personality: CodexPersonality = .friendly
     @Published var route: Route = .thread
     @Published var accessMode: AccessMode = .full
     @Published var accessModePopoverPresented = false
@@ -107,7 +108,8 @@ final class SessionStore: ObservableObject {
             model: "",
             sandbox: .dangerFullAccess,
             approval: .onRequest,
-            approvalsReviewer: .user
+            approvalsReviewer: .user,
+            personality: .friendly
         )
         let demoThread = SampleData.demoThread(projectID: primaryProject.id)
         let debugThread = SampleData.debugThread(projectID: primaryProject.id)
@@ -119,6 +121,7 @@ final class SessionStore: ObservableObject {
         self.sandbox = localThread.sandbox
         self.approval = localThread.approval
         self.approvalsReviewer = localThread.approvalsReviewer
+        self.personality = localThread.personality
         self.projects = [primaryProject, secondary.project]
         self.threads = [localThread, demoThread, debugThread] + secondary.threads
         self.selectedThreadID = localThread.id
@@ -207,6 +210,7 @@ final class SessionStore: ObservableObject {
         sandbox = thread.sandbox
         approval = thread.approval
         approvalsReviewer = thread.approvalsReviewer
+        personality = thread.personality
         accessMode = Self.accessMode(
             for: thread.approval,
             sandbox: thread.sandbox,
@@ -266,6 +270,7 @@ final class SessionStore: ObservableObject {
             thread.sandbox = sandbox
             thread.approval = approval
             thread.approvalsReviewer = approvalsReviewer
+            thread.personality = personality
             thread.items.append(TranscriptItem(kind: .userMessage(userMessage)))
         }
 
@@ -367,6 +372,7 @@ final class SessionStore: ObservableObject {
             thread.sandbox = sandbox
             thread.approval = approval
             thread.approvalsReviewer = approvalsReviewer
+            thread.personality = personality
             thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
             thread.items.append(TranscriptItem(kind: .notice(Notice(level: .warning, text: text))))
         }
@@ -386,6 +392,7 @@ final class SessionStore: ObservableObject {
             thread.sandbox = sandbox
             thread.approval = approval
             thread.approvalsReviewer = approvalsReviewer
+            thread.personality = personality
             thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
             thread.items.append(TranscriptItem(
                 id: transcriptID,
@@ -700,6 +707,28 @@ final class SessionStore: ObservableObject {
             runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
         } catch {
             runtimeCatalogStatusText = "approvals_reviewer 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func saveRuntimePersonality(_ newPersonality: CodexPersonality) async {
+        personality = newPersonality
+        updateSelectedThread { thread in
+            thread.personality = newPersonality
+        }
+
+        guard let threadID = selectedThread.appServerThreadID else {
+            runtimeCatalogStatusText = "个性已更新，将用于新对话和下一轮 Codex 请求"
+            return
+        }
+
+        runtimeCatalogStatusText = "正在调用 thread/settings/update…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.updateThreadPersonality(threadID: threadID, personality: newPersonality)
+            runtimeCatalogStatusText = "thread/settings/update：个性已提交"
+        } catch {
+            runtimeCatalogStatusText = "个性更新失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
     }
@@ -1309,6 +1338,7 @@ final class SessionStore: ObservableObject {
                     sandbox: sandbox,
                     approval: approval,
                     approvalsReviewer: approvalsReviewer,
+                    personality: personality,
                     appServerThreadID: summary.id,
                     appServerSessionID: nil,
                     updatedAt: updatedAt
@@ -1740,6 +1770,7 @@ final class SessionStore: ObservableObject {
             thread.sandbox = sandbox
             thread.approval = approval
             thread.approvalsReviewer = approvalsReviewer
+            thread.personality = personality
         }
         route = .thread
         toolPanel = .launcher
@@ -1921,6 +1952,7 @@ final class SessionStore: ObservableObject {
             thread.sandbox = sandbox
             thread.approval = approval
             thread.approvalsReviewer = approvalsReviewer
+            thread.personality = personality
             thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
         }
 
@@ -2204,7 +2236,8 @@ final class SessionStore: ObservableObject {
             model: optionModel,
             sandbox: sandbox,
             approvalPolicy: approval,
-            approvalsReviewer: approvalsReviewer
+            approvalsReviewer: approvalsReviewer,
+            personality: personality
         )
     }
 
@@ -2293,6 +2326,8 @@ final class SessionStore: ObservableObject {
             if let diff = params?["diff"]?.stringValue {
                 upsertDiffFileChanges(diff)
             }
+        case "thread/settings/updated":
+            handleThreadSettingsUpdated(params)
         case "item/started", "item/completed":
             if let item = params?["item"] {
                 upsertAppServerItem(item)
@@ -2313,6 +2348,24 @@ final class SessionStore: ObservableObject {
             appendCommandOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         default:
             break
+        }
+    }
+
+    private func handleThreadSettingsUpdated(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue,
+              let settings = params?["threadSettings"] else {
+            return
+        }
+
+        if let rawPersonality = settings["personality"]?.stringValue,
+           let updatedPersonality = CodexPersonality(rawValue: rawPersonality) {
+            if selectedThread.appServerThreadID == threadID {
+                personality = updatedPersonality
+            }
+            updateThread(appServerThreadID: threadID) { thread in
+                thread.personality = updatedPersonality
+            }
+            runtimeCatalogStatusText = "thread/settings/updated：个性 \(Self.personalityName(updatedPersonality))"
         }
     }
 
@@ -2583,6 +2636,14 @@ final class SessionStore: ObservableObject {
 
     private func updateSelectedThread(_ update: (inout ChatThread) -> Void) {
         guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }) else {
+            return
+        }
+        update(&threads[index])
+        threads[index].updatedAt = Date()
+    }
+
+    private func updateThread(appServerThreadID: String, _ update: (inout ChatThread) -> Void) {
+        guard let index = threads.firstIndex(where: { $0.appServerThreadID == appServerThreadID }) else {
             return
         }
         update(&threads[index])
@@ -3057,6 +3118,14 @@ final class SessionStore: ObservableObject {
         switch reviewer {
         case .user: "用户"
         case .autoReview: "自动审查"
+        }
+    }
+
+    static func personalityName(_ personality: CodexPersonality) -> String {
+        switch personality {
+        case .none: "无"
+        case .friendly: "亲和"
+        case .pragmatic: "务实"
         }
     }
 

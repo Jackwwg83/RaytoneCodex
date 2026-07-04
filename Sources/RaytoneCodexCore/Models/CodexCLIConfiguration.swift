@@ -91,6 +91,23 @@ public enum CodexApprovalsReviewer: String, CaseIterable, Equatable, Sendable {
     }
 }
 
+public enum CodexPersonality: String, CaseIterable, Equatable, Sendable {
+    case none
+    case friendly
+    case pragmatic
+
+    public var displayName: String {
+        switch self {
+        case .none:
+            "None"
+        case .friendly:
+            "Friendly"
+        case .pragmatic:
+            "Pragmatic"
+        }
+    }
+}
+
 public struct CodexCLIResult: Equatable, Sendable {
     public var exitCode: Int32
     public var stdout: String

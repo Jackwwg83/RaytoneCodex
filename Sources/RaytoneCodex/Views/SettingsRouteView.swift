@@ -15,7 +15,6 @@ struct SettingsRouteView: View {
     @State private var preventSleep = true
     @State private var terminalPosition = "底部"
     @State private var appearance = "跟随系统"
-    @State private var personality = "亲和"
     @State private var memoryEnabled = true
     @State private var chronicleEnabled = true
     @State private var skipToolChats = false
@@ -775,7 +774,7 @@ struct SettingsRouteView: View {
 
             SettingsCard {
                 SettingsValueRow(title: "个性", description: "选择 Codex 回复的默认语气") {
-                    menuValue(personality, values: ["亲和", "直接", "严谨", "轻松"])
+                    personalityMenu
                 }
             }
 
@@ -1452,6 +1451,25 @@ struct SettingsRouteView: View {
             }
         } label: {
             menuLabel(SessionStore.approvalsReviewerName(store.approvalsReviewer))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private var personalityMenu: some View {
+        Menu {
+            ForEach(CodexPersonality.allCases, id: \.self) { value in
+                Button {
+                    Task { await store.saveRuntimePersonality(value) }
+                } label: {
+                    Label(
+                        SessionStore.personalityName(value),
+                        systemImage: value == store.personality ? "checkmark" : "circle"
+                    )
+                }
+            }
+        } label: {
+            menuLabel(SessionStore.personalityName(store.personality))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

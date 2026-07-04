@@ -840,19 +840,22 @@ public struct CodexAppServerOptions: Equatable, Sendable {
     public var sandbox: CodexSandboxMode
     public var approvalPolicy: CodexApprovalPolicy
     public var approvalsReviewer: CodexApprovalsReviewer
+    public var personality: CodexPersonality?
 
     public init(
         workspaceURL: URL,
         model: String? = nil,
         sandbox: CodexSandboxMode = .workspaceWrite,
         approvalPolicy: CodexApprovalPolicy = .onRequest,
-        approvalsReviewer: CodexApprovalsReviewer = .user
+        approvalsReviewer: CodexApprovalsReviewer = .user,
+        personality: CodexPersonality? = nil
     ) {
         self.workspaceURL = workspaceURL
         self.model = model
         self.sandbox = sandbox
         self.approvalPolicy = approvalPolicy
         self.approvalsReviewer = approvalsReviewer
+        self.personality = personality
     }
 }
 
@@ -1013,6 +1016,9 @@ public actor CodexAppServerClient {
         if let model = options.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             params["model"] = .string(model)
         }
+        if let personality = options.personality {
+            params["personality"] = .string(personality.rawValue)
+        }
 
         let result = try await request(method: "thread/start", params: .object(params))
         guard let thread = result["thread"]?.objectValue else {
@@ -1051,6 +1057,9 @@ public actor CodexAppServerClient {
         ]
         if let model = options.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             params["model"] = .string(model)
+        }
+        if let personality = options.personality {
+            params["personality"] = .string(personality.rawValue)
         }
 
         let result = try await request(method: "turn/start", params: .object(params))
@@ -1314,6 +1323,13 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func updateThreadPersonality(threadID: String, personality: CodexPersonality) async throws {
+        _ = try await request(method: "thread/settings/update", params: .object([
+            "threadId": .string(threadID),
+            "personality": .string(personality.rawValue)
+        ]))
+    }
+
     public func resumeThread(id threadID: String, options: CodexAppServerOptions) async throws -> CodexAppServerThread {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
@@ -1324,6 +1340,9 @@ public actor CodexAppServerClient {
         ]
         if let model = options.model {
             params["model"] = .string(model)
+        }
+        if let personality = options.personality {
+            params["personality"] = .string(personality.rawValue)
         }
 
         let result = try await request(method: "thread/resume", params: .object(params))
@@ -1365,6 +1384,9 @@ public actor CodexAppServerClient {
         ]
         if let model = options.model {
             params["model"] = .string(model)
+        }
+        if let personality = options.personality {
+            params["personality"] = .string(personality.rawValue)
         }
 
         let result = try await request(method: "thread/fork", params: .object(params))

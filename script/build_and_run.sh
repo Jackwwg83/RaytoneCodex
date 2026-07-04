@@ -1423,6 +1423,14 @@ case "$MODE" in
       --access-mode-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --personality-smoke|personality-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --personality-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --ui-smoke|ui-smoke)
     run_ui_smoke
     ;;

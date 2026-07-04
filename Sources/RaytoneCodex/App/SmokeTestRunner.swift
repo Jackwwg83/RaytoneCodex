@@ -28,6 +28,8 @@ enum SmokeTestRunner {
             runIntegrationPagesSmoke()
         } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
             runAccessModeSmoke()
+        } else if CommandLine.arguments.contains("--personality-smoke-test") {
+            runPersonalitySmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -684,6 +686,107 @@ enum SmokeTestRunner {
                     "configApprovalsReviewer": config.approvalsReviewer ?? "",
                     "configSandboxMode": config.sandboxMode ?? "",
                     "configText": configText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runPersonalitySmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task {
+            let service = CodexCLIService()
+            let runtime = await service.inspectRuntime()
+            guard let executable = runtime.executable else {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "none",
+                    "runtimePath": "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "error": "Codex runtime executable was not found"
+                ])
+                exit(1)
+            }
+
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexPersonalitySmoke-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                let client = CodexAppServerClient(
+                    executable: executable,
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    environmentOverrides: [
+                        "CODEX_HOME": codexHome.path
+                    ]
+                )
+                try await client.initialize()
+                let serverThread = try await client.startThread(options: CodexAppServerOptions(
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    sandbox: .workspaceWrite,
+                    approvalPolicy: .onRequest,
+                    approvalsReviewer: .user,
+                    personality: .friendly
+                ))
+
+                let eventTask = Task { () -> [String: String] in
+                    for await event in client.events {
+                        guard case let .notification(method, params) = event,
+                              method == "thread/settings/updated",
+                              params?["threadId"]?.stringValue == serverThread.id else {
+                            continue
+                        }
+                        return [
+                            "method": method,
+                            "threadId": params?["threadId"]?.stringValue ?? "",
+                            "personality": params?["threadSettings"]?["personality"]?.stringValue ?? "",
+                            "model": params?["threadSettings"]?["model"]?.stringValue ?? "",
+                            "approvalPolicy": params?["threadSettings"]?["approvalPolicy"]?.stringValue ?? "",
+                            "approvalsReviewer": params?["threadSettings"]?["approvalsReviewer"]?.stringValue ?? ""
+                        ]
+                    }
+                    return [:]
+                }
+
+                try await client.updateThreadPersonality(threadID: serverThread.id, personality: .pragmatic)
+                let notification = await withTaskGroup(of: [String: String].self) { group in
+                    group.addTask { await eventTask.value }
+                    group.addTask {
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        return [:]
+                    }
+                    let first = await group.next() ?? [:]
+                    group.cancelAll()
+                    return first
+                }
+                eventTask.cancel()
+                await client.stop()
+
+                let ok = notification["personality"] == CodexPersonality.pragmatic.rawValue
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "threadID": serverThread.id,
+                    "requestedInitialPersonality": CodexPersonality.friendly.rawValue,
+                    "requestedUpdatedPersonality": CodexPersonality.pragmatic.rawValue,
+                    "notification": notification
                 ])
                 exit(ok ? 0 : 1)
             } catch {

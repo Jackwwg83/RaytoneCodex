@@ -17,7 +17,8 @@ extension SessionStore {
             model: model,
             sandbox: .dangerFullAccess,
             approval: approval,
-            approvalsReviewer: approvalsReviewer
+            approvalsReviewer: approvalsReviewer,
+            personality: personality
         )
         threads.insert(thread, at: 0)
         selectThread(thread)
@@ -47,6 +48,7 @@ extension SessionStore {
             sandbox: selectedThread.sandbox,
             approval: selectedThread.approval,
             approvalsReviewer: selectedThread.approvalsReviewer,
+            personality: selectedThread.personality,
             activeGoal: nil,
             progressSteps: selectedThread.progressSteps,
             appServerThreadID: nil,

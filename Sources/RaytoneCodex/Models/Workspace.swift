@@ -38,6 +38,7 @@ struct ChatThread: Identifiable, Equatable {
     var sandbox: CodexSandboxMode
     var approval: CodexApprovalPolicy
     var approvalsReviewer: CodexApprovalsReviewer
+    var personality: CodexPersonality
     var activeGoal: ActiveGoal?
     var progressSteps: [ProgressStep]
     var appServerThreadID: String?
@@ -53,6 +54,7 @@ struct ChatThread: Identifiable, Equatable {
         sandbox: CodexSandboxMode = .workspaceWrite,
         approval: CodexApprovalPolicy = .onRequest,
         approvalsReviewer: CodexApprovalsReviewer = .user,
+        personality: CodexPersonality = .friendly,
         activeGoal: ActiveGoal? = nil,
         progressSteps: [ProgressStep] = [],
         appServerThreadID: String? = nil,
@@ -67,6 +69,7 @@ struct ChatThread: Identifiable, Equatable {
         self.sandbox = sandbox
         self.approval = approval
         self.approvalsReviewer = approvalsReviewer
+        self.personality = personality
         self.activeGoal = activeGoal
         self.progressSteps = progressSteps
         self.appServerThreadID = appServerThreadID
