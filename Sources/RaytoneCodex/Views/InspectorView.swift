@@ -1,0 +1,624 @@
+import SwiftUI
+
+/// The right-hand tools panel: a launcher grid (文件 / 侧边聊天 / 浏览器 / 终端)
+/// and a 推荐 file list — matching the Codex desktop side panel.
+struct InspectorView: View {
+    @ObservedObject var store: SessionStore
+    @Binding var showInspector: Bool
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 10),
+        GridItem(.flexible(), spacing: 10)
+    ]
+
+    var body: some View {
+        switch store.toolPanel {
+        case .browser:
+            BrowserPanelView(store: store, showInspector: $showInspector)
+        case .files:
+            FilesToolPanel(store: store, showInspector: $showInspector)
+        case .terminal:
+            TerminalToolPanel(store: store, showInspector: $showInspector)
+        case .sideChat:
+            SideChatToolPanel(store: store, showInspector: $showInspector)
+        case .launcher:
+            if store.selectedThread.items.isEmpty {
+                launcher
+            } else {
+                EnvironmentInfoPanel(store: store, showInspector: $showInspector)
+            }
+        }
+    }
+
+    private var launcher: some View {
+        VStack(spacing: 0) {
+            header
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ToolCard(icon: "folder", title: "文件", subtitle: "浏览项目文件", shortcut: "⌘P") {
+                            store.openToolPanel(.files)
+                        }
+                        ToolCard(icon: "plus.bubble", title: "侧边聊天", subtitle: "发起侧边对话", shortcut: nil) {
+                            store.openToolPanel(.sideChat)
+                        }
+                        ToolCard(icon: "globe", title: "浏览器", subtitle: "打开网站", shortcut: "⌘T") {
+                            store.openToolPanel(.browser)
+                        }
+                        ToolCard(icon: "terminal", title: "终端", subtitle: "启动交互式 shell", shortcut: "⌃`") {
+                            store.openToolPanel(.terminal)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionLabel(text: "推荐")
+                        ForEach(recommendedFiles, id: \.self) { path in
+                            RecommendedRow(path: path) {
+                                store.openRecommendedFile(path)
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: Theme.Layout.inspectorWidth)
+        .frame(maxHeight: .infinity)
+        .background(Theme.panel)
+        .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+
+    private var header: some View {
+        HStack {
+            Button {
+                store.chooseFilesForPrompt()
+            } label: {
+                Image(systemName: "plus").font(.system(size: 14, weight: .medium))
+            }
+            .buttonStyle(GhostIconButtonStyle())
+            .help("添加文件")
+
+            Spacer()
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
+            } label: {
+                Image(systemName: "sidebar.trailing").font(.system(size: 14, weight: .medium))
+            }
+            .buttonStyle(GhostIconButtonStyle())
+            .help("关闭面板")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: Theme.Layout.headerHeight)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+
+    private var recommendedFiles: [String] {
+        let changed = store.pendingChanges.map(\.path)
+        if changed.isEmpty {
+            return [
+                "Package.swift",
+                "Sources/RaytoneCodex/Views/ContentView.swift",
+                "docs/codex-screens-spec.md"
+            ]
+        }
+        return Array(changed.prefix(5))
+    }
+}
+
+private struct ToolCard: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    let shortcut: String?
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(.primary)
+                    .frame(height: 24)
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                if let shortcut {
+                    Text(shortcut)
+                        .font(Theme.mono(10))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .padding(.horizontal, 10)
+            .background(hovering ? Theme.fillStrong : Theme.fill)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct FilesToolPanel: View {
+    @ObservedObject var store: SessionStore
+    @Binding var showInspector: Bool
+    @State private var didRequestInitialLoad = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            toolHeader(title: "文件", leadingSymbol: "folder") {
+                Button {
+                    store.toolPanel = .launcher
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("返回工具")
+            } trailing: {
+                Button {
+                    Task { await store.loadFilePanelDirectory() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("刷新")
+                Button {
+                    store.revealSelectedFileInFinder()
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("在 Finder 中显示")
+                closeButton
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 7) {
+                    Button {
+                        Task { await store.openParentDirectoryInFilePanel() }
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 26))
+                    .help("上一级")
+
+                    Text(Project.abbreviate(store.filePanelPath.isEmpty ? store.workspacePath : store.filePanelPath))
+                        .font(Theme.mono(11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                }
+                Text(store.filePanelStatusText)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(12)
+            .background(Theme.panel)
+            .overlay(alignment: .bottom) { Hairline() }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(store.fileEntries) { entry in
+                        Button {
+                            Task { await store.openFileEntry(entry) }
+                        } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: entry.symbol)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(entry.isDirectory ? Theme.info : Theme.textSecondary)
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(entry.name)
+                                        .font(.system(size: 12.5, weight: .medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1)
+                                    Text(entry.subtitle)
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if let preview = store.filePreview {
+                        Divider()
+                            .padding(.vertical, 8)
+                        HStack {
+                            Image(systemName: "doc.text")
+                                .font(.system(size: 12, weight: .medium))
+                            Text(preview.fileName)
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            if preview.isTruncated {
+                                Text("已截断")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundStyle(Theme.warning)
+                            }
+                        }
+                        .foregroundStyle(Theme.textSecondary)
+
+                        ScrollView([.horizontal, .vertical]) {
+                            Text(preview.text)
+                                .font(Theme.mono(11))
+                                .foregroundStyle(Theme.textPrimary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                        }
+                        .frame(minHeight: 180, maxHeight: 280)
+                        .background(Theme.fillSubtle)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                                .stroke(Theme.borderSoft, lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                    }
+                }
+                .padding(12)
+            }
+        }
+        .task {
+            guard !didRequestInitialLoad else { return }
+            didRequestInitialLoad = true
+            if store.fileEntries.isEmpty {
+                await store.loadFilePanelDirectory()
+            }
+        }
+        .frame(width: Theme.Layout.inspectorWidth)
+        .frame(maxHeight: .infinity)
+        .background(Theme.panel)
+        .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+
+    private var closeButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
+        } label: {
+            Image(systemName: "sidebar.trailing")
+                .font(.system(size: 14, weight: .medium))
+        }
+        .buttonStyle(GhostIconButtonStyle())
+        .help("关闭面板")
+    }
+}
+
+private struct TerminalToolPanel: View {
+    @ObservedObject var store: SessionStore
+    @Binding var showInspector: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            toolHeader(title: "终端", leadingSymbol: "terminal") {
+                Button {
+                    store.toolPanel = .launcher
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("返回工具")
+            } trailing: {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
+                } label: {
+                    Image(systemName: "sidebar.trailing")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("关闭面板")
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(Project.abbreviate(store.workspacePath))
+                    .font(Theme.mono(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                HStack(spacing: 8) {
+                    TextField("输入 shell 命令", text: $store.terminalCommand)
+                        .textFieldStyle(.plain)
+                        .font(Theme.mono(12))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Theme.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                        .onSubmit {
+                            Task { await store.runTerminalCommand() }
+                        }
+                    Button {
+                        Task { await store.runTerminalCommand() }
+                    } label: {
+                        Image(systemName: store.terminalIsRunning ? "hourglass" : "play.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 30))
+                    .disabled(store.terminalIsRunning)
+                    .help("运行")
+                }
+            }
+            .padding(12)
+            .overlay(alignment: .bottom) { Hairline() }
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(store.terminalRuns) { run in
+                            TerminalRunView(run: run)
+                                .id(run.id)
+                        }
+                        if store.terminalRuns.isEmpty {
+                            VStack(spacing: 9) {
+                                Image(systemName: "terminal")
+                                    .font(.system(size: 30, weight: .regular))
+                                    .foregroundStyle(Theme.textTertiary)
+                                Text("等待命令")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 220)
+                        }
+                    }
+                    .padding(12)
+                }
+                .onChange(of: store.terminalRuns.last?.id) { _, id in
+                    if let id {
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .bottom) }
+                    }
+                }
+            }
+        }
+        .frame(width: Theme.Layout.inspectorWidth)
+        .frame(maxHeight: .infinity)
+        .background(Theme.panel)
+        .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+}
+
+private struct TerminalRunView: View {
+    let run: TerminalCommandRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                statusIcon
+                Text(run.command)
+                    .font(Theme.mono(11.5, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+                if let exitCode = run.exitCode {
+                    Text("退出 \(exitCode)")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(exitCode == 0 ? Theme.success : Theme.danger)
+                }
+            }
+            if !run.output.isEmpty {
+                Text(run.output)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch run.status {
+        case .running:
+            ProgressView().controlSize(.small).scaleEffect(0.62).frame(width: 14, height: 14)
+        case .succeeded:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Theme.success)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(Theme.danger)
+        }
+    }
+}
+
+private struct SideChatToolPanel: View {
+    @ObservedObject var store: SessionStore
+    @Binding var showInspector: Bool
+    @State private var draft = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            toolHeader(title: "侧边聊天", leadingSymbol: "plus.bubble") {
+                Button {
+                    store.toolPanel = .launcher
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("返回工具")
+            } trailing: {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
+                } label: {
+                    Image(systemName: "sidebar.trailing")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("关闭面板")
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(store.selectedThread.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+
+                TextEditor(text: $draft)
+                    .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 120)
+                    .padding(8)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+
+                HStack {
+                    Spacer(minLength: 0)
+                    Button {
+                        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !message.isEmpty else { return }
+                        draft = ""
+                        store.prompt = message
+                        Task { await store.runPrompt() }
+                    } label: {
+                        Label(store.isRunning ? "继续发送" : "发送", systemImage: "arrow.up")
+                    }
+                    .buttonStyle(ChipButtonStyle(tint: Theme.textPrimary, prominent: true))
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(14)
+
+            Spacer(minLength: 0)
+        }
+        .frame(width: Theme.Layout.inspectorWidth)
+        .frame(maxHeight: .infinity)
+        .background(Theme.panel)
+        .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+}
+
+private func toolHeader<Leading: View, Trailing: View>(
+    title: String,
+    leadingSymbol: String,
+    @ViewBuilder leading: () -> Leading,
+    @ViewBuilder trailing: () -> Trailing
+) -> some View {
+    HStack(spacing: 8) {
+        leading()
+        Image(systemName: leadingSymbol)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
+        Text(title)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Theme.textPrimary)
+        Spacer(minLength: 0)
+        trailing()
+    }
+    .padding(.horizontal, 12)
+    .frame(height: Theme.Layout.headerHeight)
+    .background(.bar)
+    .overlay(alignment: .bottom) { Hairline() }
+}
+
+private struct ToolPlaceholderPanel: View {
+    let title: String
+    let symbol: String
+    let message: String
+    @ObservedObject var store: SessionStore
+    @Binding var showInspector: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button {
+                    store.toolPanel = .launcher
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("返回工具")
+
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 0)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
+                } label: {
+                    Image(systemName: "sidebar.trailing")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("关闭面板")
+            }
+            .padding(.horizontal, 12)
+            .frame(height: Theme.Layout.headerHeight)
+            .background(.bar)
+            .overlay(alignment: .bottom) { Hairline() }
+
+            VStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 34, weight: .regular))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(message)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: Theme.Layout.inspectorWidth)
+        .frame(maxHeight: .infinity)
+        .background(Theme.panel)
+        .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+}
+
+private struct RecommendedRow: View {
+    let path: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text((path as NSString).lastPathComponent)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    Text("文档")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(hovering ? Theme.fill : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}

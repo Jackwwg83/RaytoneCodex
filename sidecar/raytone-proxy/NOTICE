@@ -1,0 +1,20 @@
+Raytone Proxy contains files adapted from cc-switch.
+
+Source project: https://github.com/farion1231/cc-switch
+Source version in this workspace: third_party/cc-switch-main, package version 3.16.2
+License: MIT
+Copyright: Copyright (c) 2025 Jason Young
+
+Vendored files:
+- src/proxy/providers/transform_codex_chat.rs
+- src/proxy/providers/streaming_codex_chat.rs
+- src/proxy/providers/codex_chat_common.rs
+- src/proxy/providers/codex_chat_history.rs
+- src/proxy/providers/codex.rs (gate and Codex Chat reasoning inference subset)
+- src/proxy/error.rs
+- src/proxy/json_canonical.rs
+- src/proxy/sse.rs
+
+Local changes are limited to crate/module wiring, local Provider struct
+compatibility, and the axum/reqwest sidecar shell.
+

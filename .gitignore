@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+dist/
+DerivedData/
+sidecar/raytone-proxy/target/
+third_party/
+screenshots/
+
+.DS_Store
+*.xcuserstate
+*.xcuserdata/

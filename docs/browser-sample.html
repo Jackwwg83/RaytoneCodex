@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RaytoneCodex 本地示例</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: Canvas;
+      color: CanvasText;
+    }
+    main {
+      width: min(560px, calc(100vw - 48px));
+      border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 18px 50px color-mix(in srgb, CanvasText 12%, transparent);
+    }
+    p {
+      color: color-mix(in srgb, CanvasText 64%, transparent);
+      line-height: 1.55;
+    }
+    code {
+      font-family: "SF Mono", Menlo, monospace;
+      font-size: 12px;
+      padding: 2px 5px;
+      border-radius: 6px;
+      background: color-mix(in srgb, CanvasText 7%, transparent);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>内置浏览器真实渲染</h1>
+    <p>这是 RaytoneCodex 的本地 HTML 验收页，由右侧工具面板中的 WKWebView 加载。</p>
+    <p>当前页面来自仓库文件 <code>docs/browser-sample.html</code>，用于证明浏览器面板不是静态占位。</p>
+  </main>
+</body>
+</html>

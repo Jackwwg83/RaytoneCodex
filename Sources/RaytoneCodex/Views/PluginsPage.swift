@@ -1,0 +1,448 @@
+import RaytoneCodexCore
+import SwiftUI
+
+struct PluginsPage: View {
+    @ObservedObject var store: SessionStore
+    @State private var selectedTab: PluginTab = .plugins
+    @State private var search = ""
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 14),
+        GridItem(.flexible(), spacing: 14)
+    ]
+
+    private var filteredPlugins: [CodexRuntimePlugin] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return store.runtimePlugins }
+        return store.runtimePlugins.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query) ||
+                $0.name.localizedCaseInsensitiveContains(query) ||
+                $0.summary.localizedCaseInsensitiveContains(query) ||
+                $0.marketplaceDisplayName.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var filteredSkills: [CodexRuntimeSkill] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return store.runtimeSkills }
+        return store.runtimeSkills.filter {
+            $0.displayName.localizedCaseInsensitiveContains(query) ||
+                $0.name.localizedCaseInsensitiveContains(query) ||
+                $0.summary.localizedCaseInsensitiveContains(query) ||
+                $0.scope.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            ScrollView {
+                VStack(spacing: 22) {
+                    Text("让 Codex 按你的方式工作")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(.top, 30)
+
+                    searchRow
+
+                    if selectedTab == .plugins {
+                        featuredBanner
+                        runtimeStatusCard
+                        pluginGrid
+                    } else {
+                        runtimeStatusCard
+                        skillsList
+                    }
+                }
+                .frame(maxWidth: 860)
+                .padding(.horizontal, 30)
+                .padding(.bottom, 40)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .task {
+            await store.refreshRuntimeCatalog()
+        }
+        .frame(minWidth: 620)
+        .background(Theme.transcript)
+    }
+
+    private var header: some View {
+        HStack(alignment: .bottom, spacing: 18) {
+            HStack(spacing: 18) {
+                tabButton(.plugins)
+                tabButton(.skills)
+            }
+            Spacer(minLength: 0)
+            Button("管理") {
+                store.route = .settings
+                store.settingsPane = .mcpServers
+            }
+                .buttonStyle(ChipButtonStyle())
+            Menu {
+                Button("打开插件目录") {
+                    store.revealCodexHomeSubfolder("plugins")
+                }
+                Button("打开技能目录") {
+                    store.revealCodexHomeSubfolder("skills")
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text("创建")
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .buttonStyle(ChipButtonStyle(prominent: true))
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            Button {} label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .buttonStyle(GhostIconButtonStyle())
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 36)
+        .frame(height: 88, alignment: .bottom)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+
+    private func tabButton(_ tab: PluginTab) -> some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            VStack(spacing: 8) {
+                Text(tab.title)
+                    .font(.system(size: 13.5, weight: selectedTab == tab ? .semibold : .medium))
+                    .foregroundStyle(selectedTab == tab ? Theme.textPrimary : Theme.textSecondary)
+                Capsule()
+                    .fill(selectedTab == tab ? Theme.textPrimary : Color.clear)
+                    .frame(width: 28, height: 2)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var searchRow: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                TextField(selectedTab == .plugins ? "搜索插件" : "搜索技能", text: $search)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 11)
+            .frame(height: 38)
+            .background(Theme.fill)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+
+            filterMenu("Built by OpenAI")
+            filterMenu("全部")
+        }
+    }
+
+    private func filterMenu(_ title: String) -> some View {
+        Menu {
+            Button(title) {}
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 12.5, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 11)
+            .frame(height: 38)
+            .background(Theme.fill)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    private var featuredBanner: some View {
+        ZStack(alignment: .trailing) {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [Theme.accent.opacity(0.34), Theme.fillStrong, Theme.accent.opacity(0.16)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+
+            VStack(spacing: 14) {
+                HStack(spacing: 10) {
+                    Image(systemName: "puzzlepiece.extension")
+                        .font(.system(size: 20, weight: .semibold))
+                    Text(featuredPromptText)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(2)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundStyle(Theme.textPrimary)
+                .padding(16)
+                .frame(width: 360)
+                .background(Theme.transcript)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                .shadow(color: Theme.border.opacity(0.28), radius: 16, x: 0, y: 8)
+
+                Button("在对话中试用") {
+                    if let plugin = store.runtimePlugins.first(where: { $0.installed && $0.enabled }) {
+                        store.usePluginInComposer(plugin)
+                    } else {
+                        store.route = .thread
+                    }
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+
+            VStack(spacing: 7) {
+                ForEach(0..<5, id: \.self) { index in
+                    Circle()
+                        .fill(index == 0 ? Theme.textPrimary : Theme.textPrimary.opacity(0.25))
+                        .frame(width: index == 0 ? 7 : 6, height: index == 0 ? 7 : 6)
+                }
+            }
+            .padding(.trailing, 18)
+        }
+        .frame(height: 210)
+    }
+
+    private var featuredPromptText: String {
+        if let plugin = store.runtimePlugins.first(where: { $0.installed && $0.enabled }) ?? store.runtimePlugins.first {
+            return "\(plugin.displayName) · \(plugin.summary)"
+        }
+        return "从 Codex app-server 读取插件后，可直接在对话中使用 @提及"
+    }
+
+    private var runtimeStatusCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: store.runtimeCatalogIsRefreshing ? "arrow.triangle.2.circlepath" : "checkmark.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(store.runtimeCatalogErrors.isEmpty ? Theme.success : Theme.warning)
+                Text(store.runtimeCatalogStatusText)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 0)
+                Button("刷新") {
+                    Task { await store.refreshRuntimeCatalog(forceReloadSkills: true) }
+                }
+                .buttonStyle(ChipButtonStyle())
+            }
+
+            ForEach(store.runtimeCatalogErrors.prefix(3), id: \.self) { error in
+                Text(error)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private var pluginGrid: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("插件")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            if filteredPlugins.isEmpty {
+                emptyRuntimeCard(
+                    symbol: "puzzlepiece.extension",
+                    title: "app-server 暂未返回插件",
+                    detail: "已调用 plugin/list；如果上方有错误，会显示真实失败原因。"
+                )
+            } else {
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(filteredPlugins) { plugin in
+                        RuntimePluginRow(plugin: plugin) {
+                            Task { await store.togglePluginInstallation(plugin) }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var skillsList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("技能")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            if filteredSkills.isEmpty {
+                emptyRuntimeCard(
+                    symbol: "sparkles",
+                    title: "app-server 暂未返回技能",
+                    detail: "已调用 skills/list；本地 skill 目录为空或读取失败时会显示在上方状态中。"
+                )
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(filteredSkills) { skill in
+                        RuntimeSkillRow(skill: skill) {
+                            Task { await store.toggleSkill(skill) }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func emptyRuntimeCard(symbol: String, title: String, detail: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.system(size: 32, weight: .light))
+                .foregroundStyle(Theme.textSecondary)
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+            Text(detail)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, minHeight: 260)
+        .background(Theme.fillSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+}
+
+private enum PluginTab {
+    case plugins
+    case skills
+
+    var title: String {
+        switch self {
+        case .plugins: "插件"
+        case .skills: "技能"
+        }
+    }
+}
+
+private struct RuntimePluginRow: View {
+    let plugin: CodexRuntimePlugin
+    var toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: 34, height: 34)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(plugin.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(plugin.summary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                Text("\(plugin.marketplaceDisplayName) · \(plugin.installed ? "已安装" : "未安装") · \(plugin.enabled ? "启用" : "停用")")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(action: toggle) {
+                Image(systemName: plugin.installed ? "minus" : "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(plugin.installed ? Theme.textSecondary : Theme.textPrimary)
+                    .frame(width: 24, height: 24)
+                    .background(plugin.installed ? Theme.fill : Theme.fillStrong)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(plugin.installPolicy == "NOT_AVAILABLE")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 72)
+        .background(Theme.transcript)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private var symbol: String {
+        switch plugin.sourceType {
+        case "remote": "cloud"
+        case "git": "arrow.triangle.branch"
+        case "local": "shippingbox"
+        default: "puzzlepiece.extension"
+        }
+    }
+}
+
+private struct RuntimeSkillRow: View {
+    let skill: CodexRuntimeSkill
+    var toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: skill.enabled ? "sparkles" : "sparkle")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(skill.enabled ? Theme.accent : Theme.textSecondary)
+                .frame(width: 34, height: 34)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(skill.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(skill.summary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(2)
+                Text("\(scopeName(skill.scope)) · \(skill.enabled ? "启用" : "停用") · \(Project.abbreviate(skill.path))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(skill.enabled ? "停用" : "启用", action: toggle)
+                .buttonStyle(ChipButtonStyle(prominent: !skill.enabled))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Theme.transcript)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private func scopeName(_ scope: String) -> String {
+        switch scope {
+        case "user": "用户"
+        case "repo": "仓库"
+        case "system": "系统"
+        case "admin": "管理员"
+        default: scope
+        }
+    }
+}
