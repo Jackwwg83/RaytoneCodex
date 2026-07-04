@@ -199,6 +199,10 @@ final class SessionStore: ObservableObject {
         return effort != "none" && summary != "none"
     }
 
+    var runtimeServiceTierLabel: String {
+        Self.serviceTierLabel(for: runtimeConfig?.serviceTier)
+    }
+
     private func applyRuntimeConfig(_ config: CodexRuntimeConfig?, fallbackDefaultPermissions: String? = nil) {
         runtimeConfig = config
         applyRuntimeDefaultPermissionsProfile(
@@ -809,6 +813,23 @@ final class SessionStore: ObservableObject {
 
     func saveRuntimeAutoReviewEnabled(_ enabled: Bool) async {
         await saveRuntimeApprovalsReviewer(enabled ? .autoReview : .user)
+    }
+
+    func saveRuntimeServiceTier(label: String) async {
+        let serviceTier = Self.serviceTierConfigValue(for: label)
+        runtimeCatalogStatusText = "正在写入 service_tier…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "service_tier",
+                value: .string(serviceTier)
+            )
+            applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
+            runtimeCatalogStatusText = "service_tier 已写入 config.toml：\(serviceTier)"
+        } catch {
+            runtimeCatalogStatusText = "service_tier 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
     }
 
     func saveRuntimePersonality(_ newPersonality: CodexPersonality) async {
@@ -3347,6 +3368,24 @@ final class SessionStore: ObservableObject {
         case .none: "无"
         case .friendly: "亲和"
         case .pragmatic: "务实"
+        }
+    }
+
+    static func serviceTierConfigValue(for label: String) -> String {
+        switch label {
+        case "更快": "fast"
+        case "更稳": "flex"
+        default: "default"
+        }
+    }
+
+    static func serviceTierLabel(for value: String?) -> String {
+        switch value?.lowercased() {
+        case "fast", "priority": "更快"
+        case "flex": "更稳"
+        case "default": "标准"
+        case let value? where !value.isEmpty: value
+        default: "标准"
         }
     }
 

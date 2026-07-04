@@ -42,6 +42,8 @@ enum SmokeTestRunner {
             runDefaultPermissionsSmoke()
         } else if CommandLine.arguments.contains("--auto-review-smoke-test") {
             runAutoReviewSmoke()
+        } else if CommandLine.arguments.contains("--service-tier-smoke-test") {
+            runServiceTierSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -1077,6 +1079,94 @@ enum SmokeTestRunner {
                     "configPath": configURL.path,
                     "enabled": enabledState,
                     "disabled": disabledState,
+                    "runtimeCatalogStatusText": store.runtimeCatalogStatusText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runServiceTierSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexServiceTierSmoke-\(UUID().uuidString)", isDirectory: true)
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                var states: [[String: Any]] = []
+                var ok = true
+
+                for (label, expectedConfigValue, acceptedReadValues) in [
+                    ("标准", "default", ["default"]),
+                    ("更快", "fast", ["fast", "priority"]),
+                    ("更稳", "flex", ["flex"])
+                ] {
+                    await store.saveRuntimeServiceTier(label: label)
+                    let config = store.runtimeConfig
+                    let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                    let readValue = config?.serviceTier ?? ""
+                    let state: [String: Any] = [
+                        "label": label,
+                        "expectedConfigValue": expectedConfigValue,
+                        "readServiceTier": readValue,
+                        "uiLabel": store.runtimeServiceTierLabel,
+                        "configText": configText
+                    ]
+                    states.append(state)
+                    ok = ok &&
+                        acceptedReadValues.contains(readValue) &&
+                        store.runtimeServiceTierLabel == label &&
+                        configText.contains("service_tier = \"\(expectedConfigValue)\"")
+                }
+
+                await store.stopAppServerForTesting()
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "states": states,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText
                 ])
                 exit(ok ? 0 : 1)

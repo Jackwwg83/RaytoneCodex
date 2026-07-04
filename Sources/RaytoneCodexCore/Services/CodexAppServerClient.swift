@@ -542,6 +542,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var defaultPermissions: String?
     public var reasoningEffort: String?
     public var reasoningSummary: String?
+    public var serviceTier: String?
     public var instructions: String?
     public var developerInstructions: String?
     public var desktopKeys: [String]
@@ -557,6 +558,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         defaultPermissions: String?,
         reasoningEffort: String?,
         reasoningSummary: String?,
+        serviceTier: String?,
         instructions: String?,
         developerInstructions: String?,
         desktopKeys: [String],
@@ -571,6 +573,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.defaultPermissions = defaultPermissions
         self.reasoningEffort = reasoningEffort
         self.reasoningSummary = reasoningSummary
+        self.serviceTier = serviceTier
         self.instructions = instructions
         self.developerInstructions = developerInstructions
         self.desktopKeys = desktopKeys
@@ -1975,6 +1978,7 @@ public actor CodexAppServerClient {
             defaultPermissions: config?["default_permissions"]?.stringValue ?? config?["defaultPermissions"]?.stringValue,
             reasoningEffort: config?["model_reasoning_effort"]?.stringValue,
             reasoningSummary: config?["model_reasoning_summary"]?.stringValue,
+            serviceTier: config?["service_tier"]?.stringValue,
             instructions: config?["instructions"]?.stringValue,
             developerInstructions: config?["developer_instructions"]?.stringValue,
             desktopKeys: desktopKeys,

@@ -263,7 +263,9 @@ struct SettingsRouteView: View {
                         segmented(values: ["底部", "右侧"], selection: $terminalPosition)
                     }
                     SettingsToggleRow(title: "运行时防止系统休眠", description: "在 Codex 运行对话时，让电脑保持唤醒状态", isOn: $preventSleep)
-                    SettingsValueRow(title: "速度", description: nil) { menuValue("标准", values: ["标准", "更快", "更稳"]) }
+                    SettingsValueRow(title: "速度", description: "写入 Codex 的 service_tier，用于新一轮模型请求") {
+                        serviceTierMenu
+                    }
                 }
             }
         }
@@ -777,6 +779,7 @@ struct SettingsRouteView: View {
                     configMetric("默认权限", store.runtimeConfig?.defaultPermissions ?? store.runtimeDefaultPermissionsProfile)
                     configMetric("推理强度", store.runtimeConfig?.reasoningEffort ?? "默认")
                     configMetric("推理摘要", store.runtimeConfig?.reasoningSummary ?? "默认")
+                    configMetric("服务层级", store.runtimeConfig?.serviceTier ?? "默认")
                     configMetric("配置层", "\(store.runtimeConfig?.layerCount ?? 0)")
                     configMetric("desktop 键", store.runtimeConfig?.desktopKeys.joined(separator: "、") ?? "无")
                 }
@@ -1504,6 +1507,28 @@ struct SettingsRouteView: View {
             }
         } label: {
             menuLabel(SessionStore.approvalsReviewerName(store.approvalsReviewer))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private var serviceTierMenu: some View {
+        let values = ["标准", "更快", "更稳"]
+        return Menu {
+            ForEach(values, id: \.self) { value in
+                Button {
+                    Task { @MainActor in
+                        await store.saveRuntimeServiceTier(label: value)
+                    }
+                } label: {
+                    Label(
+                        value,
+                        systemImage: value == store.runtimeServiceTierLabel ? "checkmark" : "circle"
+                    )
+                }
+            }
+        } label: {
+            menuLabel(store.runtimeServiceTierLabel)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
