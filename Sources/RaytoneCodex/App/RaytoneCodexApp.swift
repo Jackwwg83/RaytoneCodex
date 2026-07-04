@@ -13,6 +13,7 @@ struct RaytoneCodexApp: App {
         WindowGroup("Raytone Codex", id: "main") {
             ContentView(store: sessionStore)
                 .frame(minWidth: 1220, minHeight: 760)
+                .preferredColorScheme(sessionStore.preferredColorScheme)
                 .task {
                     await sessionStore.refreshRuntime()
                     await sessionStore.refreshRuntimeThreads()
@@ -27,6 +28,7 @@ struct RaytoneCodexApp: App {
         Settings {
             SettingsView(store: sessionStore)
                 .frame(width: 520)
+                .preferredColorScheme(sessionStore.preferredColorScheme)
         }
     }
 }

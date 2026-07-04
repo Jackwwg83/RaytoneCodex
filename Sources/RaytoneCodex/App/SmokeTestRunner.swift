@@ -1699,8 +1699,12 @@ enum SmokeTestRunner {
             await store.saveRuntimePreventSleepWhileRunning(false)
             await store.saveRuntimeTerminalPosition("右侧")
             await store.saveRuntimeAppearance("深色")
+            let darkSchemeName = store.preferredColorSchemeName
             await store.saveRuntimeOpenTarget("Finder")
             await store.saveRuntimeLanguage("简体中文")
+            await store.saveRuntimeAppearance("跟随系统")
+            let systemSchemeName = store.preferredColorSchemeName
+            await store.saveRuntimeAppearance("深色")
 
             let config = store.runtimeConfig
             let desktop = config?.desktopSettings
@@ -1715,6 +1719,7 @@ enum SmokeTestRunner {
                 desktop?.openTarget == "Finder" &&
                 desktop?.language == "简体中文" &&
                 config?.desktopKeys.contains("raytone") == true
+            let appearanceMappingOk = darkSchemeName == "dark" && systemSchemeName == "system"
             let configTextOk = configText.contains("[desktop.raytone]") &&
                 configText.contains("show_in_menu_bar = false") &&
                 configText.contains("show_bottom_panel = false") &&
@@ -1723,7 +1728,7 @@ enum SmokeTestRunner {
                 configText.contains("appearance = \"深色\"") &&
                 configText.contains("open_target = \"Finder\"") &&
                 configText.contains("language = \"简体中文\"")
-            let ok = desktopValuesOk && configTextOk
+            let ok = desktopValuesOk && configTextOk && appearanceMappingOk
             let desktopPayload: [String: Any] = [
                 "showInMenuBar": desktop?.showInMenuBar.map { $0 as Any } ?? NSNull(),
                 "showBottomPanel": desktop?.showBottomPanel.map { $0 as Any } ?? NSNull(),
@@ -1743,6 +1748,10 @@ enum SmokeTestRunner {
                 "configPath": configURL.path,
                 "desktopKeys": config?.desktopKeys ?? [],
                 "desktop": desktopPayload,
+                "appearanceMapping": [
+                    "dark": darkSchemeName,
+                    "system": systemSchemeName
+                ],
                 "configText": configText,
                 "runtimeCatalogStatusText": store.runtimeCatalogStatusText
             ]
