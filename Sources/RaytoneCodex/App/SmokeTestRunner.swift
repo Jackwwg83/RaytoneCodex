@@ -22,6 +22,8 @@ enum SmokeTestRunner {
             runCatalogSmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
             runAccountAuthSmoke()
+        } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
+            runAccountAPIKeySmoke()
         } else if CommandLine.arguments.contains("--mention-smoke-test") {
             runMentionSmoke()
         } else if CommandLine.arguments.contains("--runtime-pages-smoke-test") {
@@ -3274,6 +3276,90 @@ enum SmokeTestRunner {
                 "activeLoginAfterCancel": store.activeAccountLogin?.loginID ?? ""
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAccountAPIKeySmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAPIKeySmoke-\(UUID().uuidString)", isDirectory: true)
+            let apiKey = "sk-raytone-test-\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+
+                let store = SessionStore()
+                store.workspacePath = workspacePath
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHome.path
+                ]
+
+                fputs("account-api-key-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+
+                fputs("account-api-key-smoke: loginRuntimeAccountWithAPIKey\n", stderr)
+                let loginOK = await store.loginRuntimeAccountWithAPIKey(apiKey)
+                let loginStatus = store.runtimeCatalogStatusText
+                let loginErrors = store.runtimeCatalogErrors
+                let accountKind = store.runtimeAccount?.kind ?? ""
+
+                let authURL = codexHome.appendingPathComponent("auth.json")
+                let authExistsAfterLogin = FileManager.default.fileExists(atPath: authURL.path)
+                let authObject = authExistsAfterLogin
+                    ? ((try? JSONSerialization.jsonObject(with: Data(contentsOf: authURL))) as? [String: Any] ?? [:])
+                    : [:]
+                let authKeys = Array(authObject.keys).sorted()
+                let authHasAPIKey = authObject.keys.contains { key in
+                    key.localizedCaseInsensitiveContains("api") || key.localizedCaseInsensitiveContains("openai")
+                }
+
+                fputs("account-api-key-smoke: logoutRuntimeAccount\n", stderr)
+                await store.logoutRuntimeAccount()
+                let logoutStatus = store.runtimeCatalogStatusText
+                let logoutErrors = store.runtimeCatalogErrors
+                let authExistsAfterLogout = FileManager.default.fileExists(atPath: authURL.path)
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    loginOK &&
+                    accountKind == "apiKey" &&
+                    authExistsAfterLogin &&
+                    authHasAPIKey &&
+                    !loginStatus.hasPrefix("API Key 登录失败") &&
+                    !logoutStatus.hasPrefix("退出登录失败")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "accountKindAfterLogin": accountKind,
+                    "loginStatus": loginStatus,
+                    "loginErrors": loginErrors,
+                    "authFileExistedAfterLogin": authExistsAfterLogin,
+                    "authFileKeys": authKeys,
+                    "authFileHadAPIKeyField": authHasAPIKey,
+                    "logoutStatus": logoutStatus,
+                    "logoutErrors": logoutErrors,
+                    "authFileExistedAfterLogout": authExistsAfterLogout
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()

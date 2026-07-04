@@ -2172,6 +2172,34 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    @discardableResult
+    func loginRuntimeAccountWithAPIKey(_ apiKey: String) async -> Bool {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty else {
+            runtimeCatalogStatusText = "请输入 OpenAI API Key"
+            return false
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 account/login/start(apiKey) 登录…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.loginWithOpenAIAPIKey(trimmedKey)
+            activeAccountLogin = nil
+            await refreshAccountUsageRuntime()
+            runtimeCatalogStatusText = "account/login/start(apiKey)：已登录"
+            runtimeCatalogIsRefreshing = false
+            return true
+        } catch {
+            runtimeCatalogStatusText = "API Key 登录失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return false
+        }
+    }
+
     func cancelAccountLogin() async {
         guard let loginID = activeAccountLogin?.loginID else {
             runtimeCatalogStatusText = "没有正在进行的账户登录"

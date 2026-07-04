@@ -6,6 +6,8 @@ struct SettingsRouteView: View {
     @ObservedObject var store: SessionStore
 
     @State private var search = ""
+    @State private var accountAPIKeyDraft = ""
+    @State private var showAccountAPIKeyLogin = false
     @State private var providerAPIKeyDraft = ""
     @State private var providerBaseURLDraft = ""
     @State private var providerModelDraft = ""
@@ -561,6 +563,47 @@ struct SettingsRouteView: View {
                     Task { await store.startAccountChatGPTLogin() }
                 }
                 .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                Button("API Key") {
+                    showAccountAPIKeyLogin = true
+                }
+                .buttonStyle(ChipButtonStyle())
+                .popover(isPresented: $showAccountAPIKeyLogin, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("使用 OpenAI API Key 登录")
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text("API Key 会由 Codex app-server 保存到当前 CODEX_HOME，不写入 RaytoneCodex 设置。")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        SecureField("sk-...", text: $accountAPIKeyDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12.5))
+                        HStack {
+                            Spacer(minLength: 0)
+                            Button("取消") {
+                                accountAPIKeyDraft = ""
+                                showAccountAPIKeyLogin = false
+                            }
+                            .buttonStyle(ChipButtonStyle())
+                            Button("登录") {
+                                let key = accountAPIKeyDraft
+                                Task { @MainActor in
+                                    let ok = await store.loginRuntimeAccountWithAPIKey(key)
+                                    if ok {
+                                        accountAPIKeyDraft = ""
+                                        showAccountAPIKeyLogin = false
+                                    }
+                                }
+                            }
+                            .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                            .disabled(accountAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+                    .padding(14)
+                    .frame(width: 330)
+                    .background(Theme.panel)
+                }
             } else {
                 Button("退出登录") {
                     Task { await store.logoutRuntimeAccount() }
