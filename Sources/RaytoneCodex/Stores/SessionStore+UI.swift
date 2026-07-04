@@ -16,7 +16,8 @@ extension SessionStore {
             items: [],
             model: model,
             sandbox: .dangerFullAccess,
-            approval: approval
+            approval: approval,
+            approvalsReviewer: approvalsReviewer
         )
         threads.insert(thread, at: 0)
         selectThread(thread)
@@ -45,6 +46,7 @@ extension SessionStore {
             model: selectedThread.model,
             sandbox: selectedThread.sandbox,
             approval: selectedThread.approval,
+            approvalsReviewer: selectedThread.approvalsReviewer,
             activeGoal: nil,
             progressSteps: selectedThread.progressSteps,
             appServerThreadID: nil,
@@ -262,6 +264,7 @@ extension SessionStore {
             settingsPane = .configuration
             approval = .onRequest
             sandbox = .readOnly
+            approvalsReviewer = .user
             accessMode = .ask
         case "settings-personalization":
             route = .settings

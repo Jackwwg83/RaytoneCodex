@@ -26,6 +26,8 @@ enum SmokeTestRunner {
             runAutomationHookSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
+        } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
+            runAccessModeSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -569,6 +571,118 @@ enum SmokeTestRunner {
                     "approvalPolicy": config.approvalPolicy ?? "",
                     "sandboxMode": config.sandboxMode ?? "",
                     "memoryReset": true,
+                    "configText": configText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAccessModeSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task {
+            let service = CodexCLIService()
+            let runtime = await service.inspectRuntime()
+            guard let executable = runtime.executable else {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "none",
+                    "runtimePath": "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "error": "Codex runtime executable was not found"
+                ])
+                exit(1)
+            }
+
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAccessModeSmoke-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+
+                let uiMapping = await MainActor.run { () -> [String: String] in
+                    let store = SessionStore()
+                    store.workspacePath = workspacePath
+                    store.chooseAccessMode(.autoReview)
+                    return [
+                        "accessMode": store.accessMode.shortTitle,
+                        "approvalPolicy": store.approval.appServerValue,
+                        "approvalsReviewer": store.approvalsReviewer.rawValue,
+                        "sandbox": store.sandbox.rawValue
+                    ]
+                }
+
+                let client = CodexAppServerClient(
+                    executable: executable,
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    environmentOverrides: [
+                        "CODEX_HOME": codexHome.path
+                    ]
+                )
+                try await client.initialize()
+                let options = CodexAppServerOptions(
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    sandbox: .workspaceWrite,
+                    approvalPolicy: .onFailure,
+                    approvalsReviewer: .autoReview
+                )
+                let serverThread = try await client.startThread(options: options)
+                try await client.writeConfigValue(
+                    keyPath: "approval_policy",
+                    value: .string(CodexApprovalPolicy.onFailure.appServerValue)
+                )
+                try await client.writeConfigValue(
+                    keyPath: "approvals_reviewer",
+                    value: .string(CodexApprovalsReviewer.autoReview.rawValue)
+                )
+                try await client.writeConfigValue(
+                    keyPath: "sandbox_mode",
+                    value: .string(CodexSandboxMode.workspaceWrite.rawValue)
+                )
+                let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
+                await client.stop()
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let ok = uiMapping["approvalPolicy"] == "on-failure" &&
+                    uiMapping["approvalsReviewer"] == "auto_review" &&
+                    uiMapping["sandbox"] == "workspace-write" &&
+                    serverThread.approvalPolicy == "on-failure" &&
+                    serverThread.approvalsReviewer == .autoReview &&
+                    config.approvalPolicy == "on-failure" &&
+                    config.approvalsReviewer == "auto_review" &&
+                    config.sandboxMode == "workspace-write" &&
+                    configText.contains("approvals_reviewer")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "uiMapping": uiMapping,
+                    "threadID": serverThread.id,
+                    "threadApprovalPolicy": serverThread.approvalPolicy ?? "",
+                    "threadApprovalsReviewer": serverThread.approvalsReviewer?.rawValue ?? "",
+                    "threadSandbox": serverThread.sandboxSummary ?? "",
+                    "configApprovalPolicy": config.approvalPolicy ?? "",
+                    "configApprovalsReviewer": config.approvalsReviewer ?? "",
+                    "configSandboxMode": config.sandboxMode ?? "",
                     "configText": configText
                 ])
                 exit(ok ? 0 : 1)

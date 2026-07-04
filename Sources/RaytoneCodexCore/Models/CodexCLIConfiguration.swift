@@ -60,6 +60,7 @@ public enum CodexSandboxMode: String, CaseIterable, Equatable, Sendable {
 public enum CodexApprovalPolicy: String, CaseIterable, Equatable, Sendable {
     case never
     case onRequest = "on-request"
+    case onFailure = "on-failure"
     case untrusted
 
     public var displayName: String {
@@ -68,8 +69,24 @@ public enum CodexApprovalPolicy: String, CaseIterable, Equatable, Sendable {
             "Never"
         case .onRequest:
             "On request"
+        case .onFailure:
+            "On failure"
         case .untrusted:
             "Untrusted"
+        }
+    }
+}
+
+public enum CodexApprovalsReviewer: String, CaseIterable, Equatable, Sendable {
+    case user
+    case autoReview = "auto_review"
+
+    public var displayName: String {
+        switch self {
+        case .user:
+            "User"
+        case .autoReview:
+            "Auto review"
         }
     }
 }

@@ -144,12 +144,26 @@ public struct CodexAppServerThread: Equatable, Sendable {
     public var sessionID: String
     public var preview: String
     public var cliVersion: String?
+    public var approvalPolicy: String?
+    public var approvalsReviewer: CodexApprovalsReviewer?
+    public var sandboxSummary: String?
 
-    public init(id: String, sessionID: String, preview: String, cliVersion: String? = nil) {
+    public init(
+        id: String,
+        sessionID: String,
+        preview: String,
+        cliVersion: String? = nil,
+        approvalPolicy: String? = nil,
+        approvalsReviewer: CodexApprovalsReviewer? = nil,
+        sandboxSummary: String? = nil
+    ) {
         self.id = id
         self.sessionID = sessionID
         self.preview = preview
         self.cliVersion = cliVersion
+        self.approvalPolicy = approvalPolicy
+        self.approvalsReviewer = approvalsReviewer
+        self.sandboxSummary = sandboxSummary
     }
 }
 
@@ -825,17 +839,20 @@ public struct CodexAppServerOptions: Equatable, Sendable {
     public var model: String?
     public var sandbox: CodexSandboxMode
     public var approvalPolicy: CodexApprovalPolicy
+    public var approvalsReviewer: CodexApprovalsReviewer
 
     public init(
         workspaceURL: URL,
         model: String? = nil,
         sandbox: CodexSandboxMode = .workspaceWrite,
-        approvalPolicy: CodexApprovalPolicy = .onRequest
+        approvalPolicy: CodexApprovalPolicy = .onRequest,
+        approvalsReviewer: CodexApprovalsReviewer = .user
     ) {
         self.workspaceURL = workspaceURL
         self.model = model
         self.sandbox = sandbox
         self.approvalPolicy = approvalPolicy
+        self.approvalsReviewer = approvalsReviewer
     }
 }
 
@@ -988,6 +1005,7 @@ public actor CodexAppServerClient {
         var params: [String: JSONValue] = [
             "cwd": .string(options.workspaceURL.path),
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
+            "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
             "sandbox": .string(options.sandbox.rawValue),
             "serviceName": .string("RaytoneCodex"),
             "sessionStartSource": .string("startup")
@@ -1010,7 +1028,10 @@ public actor CodexAppServerClient {
             id: threadID,
             sessionID: sessionID,
             preview: thread["preview"]?.stringValue ?? "",
-            cliVersion: thread["cliVersion"]?.stringValue
+            cliVersion: thread["cliVersion"]?.stringValue,
+            approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
+            approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
+            sandboxSummary: Self.stringDescription(from: result["sandbox"])
         )
     }
 
@@ -1025,6 +1046,7 @@ public actor CodexAppServerClient {
             "input": Self.userInputItems(prompt: prompt, mentions: mentions),
             "cwd": .string(options.workspaceURL.path),
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
+            "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
             "sandboxPolicy": options.sandbox.appServerSandboxPolicy
         ]
         if let model = options.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
@@ -1297,6 +1319,7 @@ public actor CodexAppServerClient {
             "threadId": .string(threadID),
             "cwd": .string(options.workspaceURL.path),
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
+            "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
             "sandbox": .string(options.sandbox.rawValue)
         ]
         if let model = options.model {
@@ -1311,7 +1334,10 @@ public actor CodexAppServerClient {
             id: thread["id"]?.stringValue ?? threadID,
             sessionID: thread["sessionId"]?.stringValue ?? "",
             preview: thread["preview"]?.stringValue ?? "",
-            cliVersion: thread["cliVersion"]?.stringValue
+            cliVersion: thread["cliVersion"]?.stringValue,
+            approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
+            approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
+            sandboxSummary: Self.stringDescription(from: result["sandbox"])
         )
     }
 
@@ -1333,6 +1359,7 @@ public actor CodexAppServerClient {
             "threadId": .string(threadID),
             "cwd": .string(options.workspaceURL.path),
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
+            "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
             "sandbox": .string(options.sandbox.rawValue),
             "ephemeral": .bool(false)
         ]
@@ -1348,7 +1375,10 @@ public actor CodexAppServerClient {
             id: thread["id"]?.stringValue ?? threadID,
             sessionID: thread["sessionId"]?.stringValue ?? "",
             preview: thread["preview"]?.stringValue ?? "",
-            cliVersion: result["model"]?.stringValue
+            cliVersion: result["model"]?.stringValue,
+            approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
+            approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
+            sandboxSummary: Self.stringDescription(from: result["sandbox"])
         )
     }
 
@@ -1643,6 +1673,43 @@ public actor CodexAppServerClient {
     private func debugLog(_ message: String) {
         guard debugEnabled else { return }
         fputs("app-server-client: \(message)\n", stderr)
+    }
+
+    private static func approvalsReviewer(from value: JSONValue?) -> CodexApprovalsReviewer? {
+        guard let rawValue = value?.stringValue else {
+            return nil
+        }
+        if rawValue == "guardian_subagent" {
+            return .autoReview
+        }
+        return CodexApprovalsReviewer(rawValue: rawValue)
+    }
+
+    private static func stringDescription(from value: JSONValue?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        switch value {
+        case let .string(text):
+            return text
+        case let .number(number):
+            return number.rounded() == number ? String(Int(number)) : String(number)
+        case let .bool(flag):
+            return flag ? "true" : "false"
+        case .null:
+            return nil
+        case let .array(values):
+            return values.compactMap { stringDescription(from: $0) }.joined(separator: ", ")
+        case let .object(object):
+            if let type = object["type"]?.stringValue {
+                return type
+            } else if object["granular"]?.objectValue != nil {
+                return "granular"
+            } else {
+                return object.keys.sorted().joined(separator: ",")
+            }
+        }
     }
 
     private static func pluginCatalog(from result: JSONValue) -> CodexRuntimePluginCatalog {
@@ -2091,8 +2158,10 @@ public extension CodexApprovalPolicy {
             "never"
         case .onRequest:
             "on-request"
-        case .untrusted:
+        case .onFailure:
             "on-failure"
+        case .untrusted:
+            "untrusted"
         }
     }
 }

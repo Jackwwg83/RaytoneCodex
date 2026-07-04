@@ -734,6 +734,9 @@ struct SettingsRouteView: View {
                 SettingsValueRow(title: "批准策略", description: "选择 Codex 何时请求批准") {
                     approvalMenu
                 }
+                SettingsValueRow(title: "审批路由", description: "选择由你审批，还是交给 Codex 自动审查风险") {
+                    approvalsReviewerMenu
+                }
                 SettingsValueRow(title: "沙盒设置", description: "选择 Codex 的命令执行权限") {
                     sandboxMenu
                 }
@@ -1430,6 +1433,25 @@ struct SettingsRouteView: View {
             }
         } label: {
             menuLabel(ComposerView.sandboxName(store.sandbox))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private var approvalsReviewerMenu: some View {
+        Menu {
+            ForEach(CodexApprovalsReviewer.allCases, id: \.self) { reviewer in
+                Button {
+                    Task { await store.saveRuntimeApprovalsReviewer(reviewer) }
+                } label: {
+                    Label(
+                        SessionStore.approvalsReviewerName(reviewer),
+                        systemImage: reviewer == store.approvalsReviewer ? "checkmark" : "circle"
+                    )
+                }
+            }
+        } label: {
+            menuLabel(SessionStore.approvalsReviewerName(store.approvalsReviewer))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

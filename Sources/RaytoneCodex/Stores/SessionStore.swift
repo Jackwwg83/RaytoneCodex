@@ -17,6 +17,7 @@ final class SessionStore: ObservableObject {
     @Published var workspacePath: String
     @Published var sandbox: CodexSandboxMode = .dangerFullAccess
     @Published var approval: CodexApprovalPolicy = .onRequest
+    @Published var approvalsReviewer: CodexApprovalsReviewer = .user
     @Published var route: Route = .thread
     @Published var accessMode: AccessMode = .full
     @Published var accessModePopoverPresented = false
@@ -105,7 +106,8 @@ final class SessionStore: ObservableObject {
             items: [],
             model: "",
             sandbox: .dangerFullAccess,
-            approval: .onRequest
+            approval: .onRequest,
+            approvalsReviewer: .user
         )
         let demoThread = SampleData.demoThread(projectID: primaryProject.id)
         let debugThread = SampleData.debugThread(projectID: primaryProject.id)
@@ -116,6 +118,7 @@ final class SessionStore: ObservableObject {
         self.model = localThread.model
         self.sandbox = localThread.sandbox
         self.approval = localThread.approval
+        self.approvalsReviewer = localThread.approvalsReviewer
         self.projects = [primaryProject, secondary.project]
         self.threads = [localThread, demoThread, debugThread] + secondary.threads
         self.selectedThreadID = localThread.id
@@ -203,7 +206,12 @@ final class SessionStore: ObservableObject {
         model = thread.model
         sandbox = thread.sandbox
         approval = thread.approval
-        accessMode = Self.accessMode(for: thread.approval, sandbox: thread.sandbox)
+        approvalsReviewer = thread.approvalsReviewer
+        accessMode = Self.accessMode(
+            for: thread.approval,
+            sandbox: thread.sandbox,
+            approvalsReviewer: thread.approvalsReviewer
+        )
         toolPanel = .launcher
         route = .thread
         if thread.appServerThreadID != nil, thread.items.isEmpty {
@@ -257,6 +265,7 @@ final class SessionStore: ObservableObject {
             thread.model = model
             thread.sandbox = sandbox
             thread.approval = approval
+            thread.approvalsReviewer = approvalsReviewer
             thread.items.append(TranscriptItem(kind: .userMessage(userMessage)))
         }
 
@@ -357,6 +366,7 @@ final class SessionStore: ObservableObject {
             thread.model = model
             thread.sandbox = sandbox
             thread.approval = approval
+            thread.approvalsReviewer = approvalsReviewer
             thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
             thread.items.append(TranscriptItem(kind: .notice(Notice(level: .warning, text: text))))
         }
@@ -375,6 +385,7 @@ final class SessionStore: ObservableObject {
             thread.model = model
             thread.sandbox = sandbox
             thread.approval = approval
+            thread.approvalsReviewer = approvalsReviewer
             thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
             thread.items.append(TranscriptItem(
                 id: transcriptID,
@@ -609,18 +620,27 @@ final class SessionStore: ObservableObject {
         case .ask:
             approval = .onRequest
             sandbox = .workspaceWrite
+            approvalsReviewer = .user
         case .autoReview:
-            approval = .untrusted
+            approval = .onFailure
             sandbox = .workspaceWrite
+            approvalsReviewer = .autoReview
         case .full:
             approval = .never
             sandbox = .dangerFullAccess
+            approvalsReviewer = .user
+        }
+
+        updateSelectedThread { thread in
+            thread.approval = approval
+            thread.sandbox = sandbox
+            thread.approvalsReviewer = approvalsReviewer
         }
     }
 
     func saveRuntimeApprovalPolicy(_ policy: CodexApprovalPolicy) async {
         approval = policy
-        accessMode = Self.accessMode(for: approval, sandbox: sandbox)
+        accessMode = Self.accessMode(for: approval, sandbox: sandbox, approvalsReviewer: approvalsReviewer)
         updateSelectedThread { thread in
             thread.approval = policy
         }
@@ -642,7 +662,7 @@ final class SessionStore: ObservableObject {
 
     func saveRuntimeSandboxMode(_ mode: CodexSandboxMode) async {
         sandbox = mode
-        accessMode = Self.accessMode(for: approval, sandbox: sandbox)
+        accessMode = Self.accessMode(for: approval, sandbox: sandbox, approvalsReviewer: approvalsReviewer)
         updateSelectedThread { thread in
             thread.sandbox = mode
         }
@@ -658,6 +678,28 @@ final class SessionStore: ObservableObject {
             runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
         } catch {
             runtimeCatalogStatusText = "sandbox_mode 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func saveRuntimeApprovalsReviewer(_ reviewer: CodexApprovalsReviewer) async {
+        approvalsReviewer = reviewer
+        accessMode = Self.accessMode(for: approval, sandbox: sandbox, approvalsReviewer: approvalsReviewer)
+        updateSelectedThread { thread in
+            thread.approvalsReviewer = reviewer
+        }
+
+        runtimeCatalogStatusText = "正在写入 approvals_reviewer…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "approvals_reviewer",
+                value: .string(reviewer.rawValue)
+            )
+            runtimeCatalogStatusText = "approvals_reviewer 已写入 config.toml"
+            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+        } catch {
+            runtimeCatalogStatusText = "approvals_reviewer 写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
     }
@@ -1266,6 +1308,7 @@ final class SessionStore: ObservableObject {
                     model: model,
                     sandbox: sandbox,
                     approval: approval,
+                    approvalsReviewer: approvalsReviewer,
                     appServerThreadID: summary.id,
                     appServerSessionID: nil,
                     updatedAt: updatedAt
@@ -1696,6 +1739,7 @@ final class SessionStore: ObservableObject {
             thread.model = model
             thread.sandbox = sandbox
             thread.approval = approval
+            thread.approvalsReviewer = approvalsReviewer
         }
         route = .thread
         toolPanel = .launcher
@@ -1876,6 +1920,7 @@ final class SessionStore: ObservableObject {
             thread.model = model
             thread.sandbox = sandbox
             thread.approval = approval
+            thread.approvalsReviewer = approvalsReviewer
             thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
         }
 
@@ -2158,7 +2203,8 @@ final class SessionStore: ObservableObject {
             workspaceURL: URL(fileURLWithPath: workspacePath),
             model: optionModel,
             sandbox: sandbox,
-            approvalPolicy: approval
+            approvalPolicy: approval,
+            approvalsReviewer: approvalsReviewer
         )
     }
 
@@ -3002,17 +3048,33 @@ final class SessionStore: ObservableObject {
         switch policy {
         case .never: "从不"
         case .onRequest: "按需"
+        case .onFailure: "失败时"
         case .untrusted: "不受信任时"
         }
     }
 
-    static func accessMode(for approval: CodexApprovalPolicy, sandbox: CodexSandboxMode) -> AccessMode {
+    static func approvalsReviewerName(_ reviewer: CodexApprovalsReviewer) -> String {
+        switch reviewer {
+        case .user: "用户"
+        case .autoReview: "自动审查"
+        }
+    }
+
+    static func accessMode(
+        for approval: CodexApprovalPolicy,
+        sandbox: CodexSandboxMode,
+        approvalsReviewer: CodexApprovalsReviewer
+    ) -> AccessMode {
         if sandbox == .dangerFullAccess {
             return .full
         }
+        if approvalsReviewer == .autoReview {
+            return .autoReview
+        }
         switch approval {
         case .onRequest: return .ask
-        case .untrusted: return .autoReview
+        case .onFailure: return .autoReview
+        case .untrusted: return .ask
         case .never: return .autoReview
         }
     }
