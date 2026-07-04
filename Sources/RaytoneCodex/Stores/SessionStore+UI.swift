@@ -212,6 +212,13 @@ extension SessionStore {
             openToolPanel(.terminal)
             terminalCommand = "pwd && ls Package.swift Sources script"
             Task { await runTerminalCommand() }
+        case "side-chat", "sidechat", "side-chat-panel":
+            selectActiveDemoThreadForSmoke()
+            route = .thread
+            showInspector = true
+            openToolPanel(.sideChat)
+            sideChatDraft = "继续检查这个改动的风险"
+            sideChatStatusText = "已连接 Codex 侧边聊天"
         case "plugins":
             route = .plugins
         case "automation":

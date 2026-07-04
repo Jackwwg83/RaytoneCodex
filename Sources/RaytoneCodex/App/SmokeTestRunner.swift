@@ -60,6 +60,8 @@ enum SmokeTestRunner {
             runThreadManagementSmoke()
         } else if CommandLine.arguments.contains("--history-smoke-test") {
             runHistorySmoke()
+        } else if CommandLine.arguments.contains("--side-chat-smoke-test") {
+            runSideChatSmoke()
         } else if CommandLine.arguments.contains("--slash-smoke-test") {
             runSlashSmoke()
         }
@@ -2044,6 +2046,69 @@ enum SmokeTestRunner {
                 "initialAgentMessages": initialAgentMessages,
                 "loadedUserMessages": loadedUserMessages,
                 "loadedAgentMessages": loadedAgentMessages
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSideChatSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let marker = "RaytoneCodex side chat smoke OK \(UUID().uuidString.prefix(8))"
+        let prompt = "Reply exactly: \(marker)"
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.sandbox = .readOnly
+            store.approval = .never
+
+            await store.refreshRuntime()
+            await store.sendSideChatMessage(prompt)
+
+            let deadline = Date().addingTimeInterval(120)
+            while store.isRunning && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+
+            let items = store.selectedThread.items
+            let userMessages = items.compactMap { item -> String? in
+                if case let .userMessage(text) = item.kind { return text }
+                return nil
+            }
+            let agentMessages = items.compactMap { item -> String? in
+                if case let .agentMessage(text) = item.kind { return text }
+                return nil
+            }
+            let commands = items.compactMap { item -> CommandRun? in
+                if case let .command(run) = item.kind { return run }
+                return nil
+            }
+            let usedExecFallback = commands.contains { run in
+                run.command.contains(" codex exec ") || run.command.contains("/codex exec ")
+            }
+            let appServerThreadID = store.selectedThread.appServerThreadID ?? ""
+            let ok = !appServerThreadID.isEmpty &&
+                !store.isRunning &&
+                !usedExecFallback &&
+                userMessages == [prompt] &&
+                agentMessages == [marker] &&
+                store.sideChatStatusText == "Codex 已回复"
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "marker": marker,
+                "appServerThreadID": appServerThreadID,
+                "usedExecFallback": usedExecFallback,
+                "sideChatStatus": store.sideChatStatusText,
+                "transcriptItemCount": items.count,
+                "userMessages": userMessages,
+                "agentMessages": agentMessages
             ])
             exit(ok ? 0 : 1)
         }

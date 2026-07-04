@@ -509,7 +509,6 @@ private struct TerminalRunView: View {
 private struct SideChatToolPanel: View {
     @ObservedObject var store: SessionStore
     @Binding var showInspector: Bool
-    @State private var draft = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -539,27 +538,51 @@ private struct SideChatToolPanel: View {
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
 
-                TextEditor(text: $draft)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(recentTranscript) { item in
+                            sideChatTranscriptRow(item)
+                        }
+                        if recentTranscript.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "plus.bubble")
+                                    .font(.system(size: 28, weight: .regular))
+                                    .foregroundStyle(Theme.textTertiary)
+                                Text("从这里给 Codex 补充上下文")
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 140)
+                        }
+                    }
+                    .padding(10)
+                }
+                .frame(minHeight: 180)
+                .background(Theme.fillSubtle)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+
+                TextEditor(text: $store.sideChatDraft)
                     .font(.system(size: 13))
                     .scrollContentBackground(.hidden)
-                    .frame(minHeight: 120)
+                    .frame(minHeight: 96)
                     .padding(8)
                     .background(Theme.fill)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
 
+                Text(store.sideChatStatusText)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(2)
+
                 HStack {
                     Spacer(minLength: 0)
                     Button {
-                        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !message.isEmpty else { return }
-                        draft = ""
-                        store.prompt = message
-                        Task { await store.runPrompt() }
+                        Task { await store.sendSideChatMessage() }
                     } label: {
                         Label(store.isRunning ? "继续发送" : "发送", systemImage: "arrow.up")
                     }
                     .buttonStyle(ChipButtonStyle(tint: Theme.textPrimary, prominent: true))
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(store.sideChatDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .padding(14)
@@ -570,6 +593,53 @@ private struct SideChatToolPanel: View {
         .frame(maxHeight: .infinity)
         .background(Theme.panel)
         .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+
+    private var recentTranscript: [TranscriptItem] {
+        Array(store.selectedThread.items.suffix(8))
+    }
+
+    @ViewBuilder
+    private func sideChatTranscriptRow(_ item: TranscriptItem) -> some View {
+        switch item.kind {
+        case let .userMessage(text):
+            sideChatBubble(title: "你", text: text, symbol: "person", accent: Theme.info)
+        case let .agentMessage(text):
+            sideChatBubble(title: "Codex", text: text, symbol: "sparkles", accent: Theme.success)
+        case let .command(run):
+            sideChatBubble(title: "命令", text: run.command, symbol: "terminal", accent: Theme.textSecondary)
+        case let .notice(notice):
+            sideChatBubble(title: "提示", text: notice.text, symbol: "exclamationmark.circle", accent: Theme.warning)
+        case let .approval(request):
+            sideChatBubble(title: "审批", text: request.title, symbol: "checkmark.shield", accent: Theme.warning)
+        case let .reasoning(block):
+            sideChatBubble(title: block.title, text: block.detail, symbol: "brain", accent: Theme.textSecondary)
+        case let .fileChange(change):
+            sideChatBubble(title: "文件", text: change.fileName, symbol: "doc.text", accent: Theme.info)
+        }
+    }
+
+    private func sideChatBubble(title: String, text: String, symbol: String, accent: Color) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(accent)
+                .frame(width: 16, height: 16)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(text)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(8)
+        .background(Theme.fill)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
     }
 }
 

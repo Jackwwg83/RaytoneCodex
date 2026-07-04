@@ -41,6 +41,8 @@ final class SessionStore: ObservableObject {
     @Published var terminalCommand = "pwd && ls -la"
     @Published var terminalRuns: [TerminalCommandRecord] = []
     @Published var terminalIsRunning = false
+    @Published var sideChatDraft = ""
+    @Published var sideChatStatusText = "未发送"
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
     @Published var runtimeHooks: [CodexRuntimeHook] = []
@@ -369,6 +371,26 @@ final class SessionStore: ObservableObject {
         await runAgentPrompt(trimmedPrompt)
     }
 
+    func sendSideChatMessage(_ message: String? = nil) async {
+        let source = message ?? sideChatDraft
+        let trimmedMessage = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else { return }
+
+        if message == nil {
+            sideChatDraft = ""
+        }
+
+        if isRunning {
+            sideChatStatusText = "正在通过 turn/steer 追加到当前运行…"
+            let didSteer = await steerRunningTurn(trimmedMessage)
+            sideChatStatusText = didSteer ? "已追加到当前运行" : "侧边聊天发送失败"
+        } else {
+            sideChatStatusText = "正在通过 turn/start 发送…"
+            await runAgentPrompt(trimmedMessage)
+            sideChatStatusText = isRunning ? "已提交，等待 Codex 回复" : "Codex 已回复"
+        }
+    }
+
     private func runAgentPrompt(_ runtimePrompt: String, displayedPrompt: String? = nil) async {
         isRunning = true
         let userMessage = displayedPrompt ?? runtimePrompt
@@ -622,7 +644,8 @@ final class SessionStore: ObservableObject {
         return object["findings"] != nil && object["overall_correctness"] != nil
     }
 
-    private func steerRunningTurn(_ trimmedPrompt: String) async {
+    @discardableResult
+    private func steerRunningTurn(_ trimmedPrompt: String) async -> Bool {
         prompt = ""
         updateSelectedThread { thread in
             thread.items.append(TranscriptItem(kind: .userMessage(trimmedPrompt)))
@@ -637,7 +660,7 @@ final class SessionStore: ObservableObject {
                     text: "当前运行时不支持继续输入；请等待这一轮完成后再发送。"
                 ))))
             }
-            return
+            return false
         }
 
         do {
@@ -648,6 +671,7 @@ final class SessionStore: ObservableObject {
                 prompt: trimmedPrompt,
                 mentions: mentions
             )
+            return true
         } catch {
             updateSelectedThread { thread in
                 thread.items.append(TranscriptItem(kind: .notice(Notice(
@@ -655,6 +679,7 @@ final class SessionStore: ObservableObject {
                     text: "继续输入未能发送给 app-server：\(error.localizedDescription)"
                 ))))
             }
+            return false
         }
     }
 
@@ -2798,6 +2823,12 @@ final class SessionStore: ObservableObject {
             activeAppServerTurnID = nil
             handleCompletedTurn(params?["turn"])
             clearLocalActiveGoalIfNeeded()
+            if sideChatStatusText.hasPrefix("已提交") ||
+                sideChatStatusText.hasPrefix("已追加") ||
+                sideChatStatusText.hasPrefix("正在通过 turn/start") ||
+                sideChatStatusText.hasPrefix("正在通过 turn/steer") {
+                sideChatStatusText = "Codex 已回复"
+            }
         case "turn/plan/updated":
             updateProgressSteps(params?["plan"]?.arrayValue ?? [])
         case "turn/diff/updated":
