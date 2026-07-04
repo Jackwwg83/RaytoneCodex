@@ -171,13 +171,13 @@ private struct FilesToolPanel: View {
                 .buttonStyle(GhostIconButtonStyle())
                 .help("刷新")
                 Button {
-                    store.revealSelectedFileInFinder()
+                    store.openSelectedFileInDefaultTarget()
                 } label: {
                     Image(systemName: "arrow.up.forward.app")
                         .font(.system(size: 13, weight: .medium))
                 }
                 .buttonStyle(GhostIconButtonStyle())
-                .help("在 Finder 中显示")
+                .help("在 \(store.desktopOpenTarget) 中打开")
                 closeButton
             }
 

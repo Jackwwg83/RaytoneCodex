@@ -54,6 +54,8 @@ enum SmokeTestRunner {
             runWorkModeSmoke()
         } else if CommandLine.arguments.contains("--desktop-settings-smoke-test") {
             runDesktopSettingsSmoke()
+        } else if CommandLine.arguments.contains("--open-target-smoke-test") {
+            runOpenTargetSmoke()
         } else if CommandLine.arguments.contains("--prevent-sleep-smoke-test") {
             runPreventSleepSmoke()
         } else if CommandLine.arguments.contains("--goal-smoke-test") {
@@ -1871,6 +1873,112 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    private static func runOpenTargetSmoke() {
+        let fileManager = FileManager.default
+        let smokeRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexOpenTargetSmoke-\(UUID().uuidString)", isDirectory: true)
+        let codexHome = fileManager.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexOpenTargetCodexHome-\(UUID().uuidString)", isDirectory: true)
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = smokeRoot.path
+            store.filePanelPath = smokeRoot.path
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try fileManager.createDirectory(at: smokeRoot, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                let targetURL = smokeRoot.appendingPathComponent("open-target-proof.txt")
+                try "Raytone open target smoke\n".write(to: targetURL, atomically: true, encoding: .utf8)
+
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": smokeRoot.path,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                store.filePreview = FilePreview(path: targetURL.path, text: "Raytone open target smoke", isTruncated: false)
+
+                await store.saveRuntimeOpenTarget("Finder")
+                let finder = store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                await store.saveRuntimeOpenTarget("Terminal")
+                let terminal = store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                await store.saveRuntimeOpenTarget("iTerm2")
+                let iTerm = store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let ok = finder?.target == .finder &&
+                    finder?.selectedPath == targetURL.path &&
+                    finder?.launchPath == targetURL.path &&
+                    terminal?.target == .terminal &&
+                    terminal?.selectedPath == targetURL.path &&
+                    terminal?.launchPath == smokeRoot.path &&
+                    terminal?.applicationBundleIdentifier == "com.apple.Terminal" &&
+                    iTerm?.target == .iTerm2 &&
+                    iTerm?.selectedPath == targetURL.path &&
+                    iTerm?.launchPath == smokeRoot.path &&
+                    iTerm?.applicationBundleIdentifier == "com.googlecode.iterm2" &&
+                    configText.contains("open_target = \"iTerm2\"")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": smokeRoot.path,
+                    "targetPath": targetURL.path,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "configText": configText,
+                    "finder": openTargetPayload(finder),
+                    "terminal": openTargetPayload(terminal),
+                    "iTerm2": openTargetPayload(iTerm),
+                    "filePanelStatus": store.filePanelStatusText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": smokeRoot.path,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func openTargetPayload(_ request: FileOpenTargetRequest?) -> [String: Any] {
+        [
+            "target": request?.target.rawValue ?? "",
+            "selectedPath": request?.selectedPath ?? "",
+            "launchPath": request?.launchPath ?? "",
+            "applicationBundleIdentifier": request?.applicationBundleIdentifier ?? "",
+            "applicationName": request?.applicationName ?? ""
+        ]
     }
 
     private static func runGoalSmoke() {

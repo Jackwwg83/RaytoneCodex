@@ -1464,12 +1464,98 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func revealSelectedFileInFinder() {
-        guard let path = filePreview?.path ?? fileEntries.first?.path else {
-            NSWorkspace.shared.selectFile(workspacePath, inFileViewerRootedAtPath: workspacePath)
+    @discardableResult
+    func openSelectedFileInDefaultTarget(performExternalOpen: Bool = true) -> FileOpenTargetRequest? {
+        let path = filePreview?.path ?? fileEntries.first?.path ?? workspacePath
+        guard let request = fileOpenTargetRequest(for: path) else {
+            filePanelStatusText = "无法打开：\(Project.abbreviate(path))"
+            return nil
+        }
+
+        guard performExternalOpen else {
+            filePanelStatusText = "\(request.applicationName)：\(Project.abbreviate(request.launchPath))"
+            return request
+        }
+
+        switch request.target {
+        case .finder:
+            NSWorkspace.shared.selectFile(
+                request.selectedPath,
+                inFileViewerRootedAtPath: URL(fileURLWithPath: request.selectedPath)
+                    .deletingLastPathComponent()
+                    .path
+            )
+            filePanelStatusText = "已在 Finder 中显示 \(Project.abbreviate(request.selectedPath))"
+        case .terminal, .iTerm2:
+            openPathInExternalApplication(request)
+        }
+        return request
+    }
+
+    private func fileOpenTargetRequest(for path: String) -> FileOpenTargetRequest? {
+        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: normalizedPath, isDirectory: &isDirectory) else {
+            return nil
+        }
+
+        let launchPath = isDirectory.boolValue
+            ? normalizedPath
+            : URL(fileURLWithPath: normalizedPath).deletingLastPathComponent().path
+
+        switch desktopOpenTarget {
+        case "Terminal":
+            return FileOpenTargetRequest(
+                target: .terminal,
+                selectedPath: normalizedPath,
+                launchPath: launchPath,
+                applicationBundleIdentifier: "com.apple.Terminal",
+                applicationName: "Terminal"
+            )
+        case "iTerm2":
+            return FileOpenTargetRequest(
+                target: .iTerm2,
+                selectedPath: normalizedPath,
+                launchPath: launchPath,
+                applicationBundleIdentifier: "com.googlecode.iterm2",
+                applicationName: "iTerm2"
+            )
+        default:
+            return FileOpenTargetRequest(
+                target: .finder,
+                selectedPath: normalizedPath,
+                launchPath: normalizedPath,
+                applicationBundleIdentifier: "com.apple.finder",
+                applicationName: "Finder"
+            )
+        }
+    }
+
+    private func openPathInExternalApplication(_ request: FileOpenTargetRequest) {
+        let launchURL = URL(fileURLWithPath: request.launchPath)
+        guard let bundleIdentifier = request.applicationBundleIdentifier,
+              let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            NSWorkspace.shared.selectFile(
+                request.selectedPath,
+                inFileViewerRootedAtPath: URL(fileURLWithPath: request.selectedPath)
+                    .deletingLastPathComponent()
+                    .path
+            )
+            filePanelStatusText = "未找到 \(request.applicationName)，已在 Finder 中显示"
             return
         }
-        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: URL(fileURLWithPath: path).deletingLastPathComponent().path)
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open([launchURL], withApplicationAt: applicationURL, configuration: configuration) { [weak self] _, error in
+            Task { @MainActor in
+                if let error {
+                    self?.filePanelStatusText = "\(request.applicationName) 打开失败：\(error.localizedDescription)"
+                } else {
+                    self?.filePanelStatusText = "已在 \(request.applicationName) 中打开 \(Project.abbreviate(request.launchPath))"
+                }
+            }
+        }
     }
 
     func runTerminalCommand() async {

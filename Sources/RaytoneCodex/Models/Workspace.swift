@@ -182,6 +182,20 @@ struct FilePreview: Equatable {
     }
 }
 
+struct FileOpenTargetRequest: Equatable {
+    enum Target: String, Equatable {
+        case finder = "Finder"
+        case terminal = "Terminal"
+        case iTerm2 = "iTerm2"
+    }
+
+    var target: Target
+    var selectedPath: String
+    var launchPath: String
+    var applicationBundleIdentifier: String?
+    var applicationName: String
+}
+
 struct TerminalCommandRecord: Identifiable, Equatable {
     enum Status: Equatable {
         case running
