@@ -3614,14 +3614,16 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func ensureCodexHomeSubfolder(_ subfolder: String) -> URL {
         let trimmedSubfolder = subfolder.trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
-        let safeSubfolder = trimmedSubfolder.isEmpty ? "plugins" : trimmedSubfolder
-        let url = Self.defaultCodexConfigURL(
+        let codexHomeURL = Self.defaultCodexConfigURL(
             overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
         )
         .deletingLastPathComponent()
-        .appendingPathComponent(safeSubfolder, isDirectory: true)
+        let url = trimmedSubfolder.isEmpty
+            ? codexHomeURL
+            : codexHomeURL.appendingPathComponent(trimmedSubfolder, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        runtimeCatalogStatusText = "已准备 Codex \(safeSubfolder) 目录：\(Project.abbreviate(url.path))"
+        let label = trimmedSubfolder.isEmpty ? "home" : trimmedSubfolder
+        runtimeCatalogStatusText = "已准备 Codex \(label) 目录：\(Project.abbreviate(url.path))"
         return url
     }
 

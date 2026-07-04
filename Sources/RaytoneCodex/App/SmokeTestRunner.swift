@@ -1309,11 +1309,15 @@ enum SmokeTestRunner {
                 let pluginsURL = store.ensureCodexHomeSubfolder("plugins")
                 let skillsURL = store.ensureCodexHomeSubfolder("skills")
                 let trimmedURL = store.ensureCodexHomeSubfolder("/plugins/")
+                let homeURL = store.ensureCodexHomeSubfolder("")
 
                 let pluginExists = fileManager.fileExists(atPath: pluginsURL.path)
                 let skillsExists = fileManager.fileExists(atPath: skillsURL.path)
+                let homeExists = fileManager.fileExists(atPath: homeURL.path)
                 let ok = pluginExists &&
                     skillsExists &&
+                    homeExists &&
+                    homeURL.path == codexHomeURL.path &&
                     pluginsURL.path == codexHomeURL.appendingPathComponent("plugins").path &&
                     skillsURL.path == codexHomeURL.appendingPathComponent("skills").path &&
                     trimmedURL.path == pluginsURL.path &&
@@ -1322,9 +1326,11 @@ enum SmokeTestRunner {
                 emitJSON([
                     "ok": ok,
                     "codexHome": codexHomeURL.path,
+                    "homeURL": homeURL.path,
                     "pluginsURL": pluginsURL.path,
                     "skillsURL": skillsURL.path,
                     "trimmedURL": trimmedURL.path,
+                    "homeExists": homeExists,
                     "pluginExists": pluginExists,
                     "skillsExists": skillsExists,
                     "status": store.runtimeCatalogStatusText

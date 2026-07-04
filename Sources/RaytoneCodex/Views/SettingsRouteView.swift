@@ -1140,7 +1140,7 @@ struct SettingsRouteView: View {
                         }
                             .buttonStyle(ChipButtonStyle())
                     }
-                    SettingsValueRow(title: "重置并安装工作空间", description: "删除本地捆绑包，重新下载后再重新加载工具") {
+                    SettingsValueRow(title: "Codex 数据目录", description: "打开当前运行时使用的 CODEX_HOME，插件、技能和配置都从这里读取") {
                         Button("打开 .codex") {
                             store.revealCodexHomeSubfolder("")
                         }
