@@ -26,6 +26,8 @@ enum SmokeTestRunner {
             runThreadManagementSmoke()
         } else if CommandLine.arguments.contains("--history-smoke-test") {
             runHistorySmoke()
+        } else if CommandLine.arguments.contains("--slash-smoke-test") {
+            runSlashSmoke()
         }
     }
 
@@ -797,6 +799,111 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runSlashSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexSlashSmoke-\(UUID().uuidString)", isDirectory: true)
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                let readmeURL = workspaceURL.appendingPathComponent("README.md")
+                try "# Slash smoke\n\nold line\n".write(to: readmeURL, atomically: true, encoding: .utf8)
+                _ = try runProcess(["git", "init"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "README.md"], cwd: workspaceURL)
+                _ = try runProcess([
+                    "git",
+                    "-c", "user.name=Raytone Smoke",
+                    "-c", "user.email=raytone@example.invalid",
+                    "commit",
+                    "-m",
+                    "initial"
+                ], cwd: workspaceURL)
+                try "# Slash smoke\n\nold line\nnew line from slash smoke\n".write(to: readmeURL, atomically: true, encoding: .utf8)
+
+                let scriptDirectory = workspaceURL.appendingPathComponent("script", isDirectory: true)
+                try fileManager.createDirectory(at: scriptDirectory, withIntermediateDirectories: true)
+                let testScriptURL = scriptDirectory.appendingPathComponent("test.sh")
+                try "#!/bin/sh\necho slash test OK\n".write(to: testScriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: testScriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.sandbox = .workspaceWrite
+                store.approval = .never
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                }
+
+                await store.refreshRuntime()
+                store.prompt = "/diff"
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+
+                let diffItems = store.selectedThread.items
+                let diffCommands = commandRuns(in: diffItems)
+                let fileChanges = fileChanges(in: diffItems)
+                let diffCommand = diffCommands.last
+
+                store.prompt = "/test"
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+
+                let testCommands = commandRuns(in: store.selectedThread.items)
+                let testCommand = testCommands.last
+
+                store.prompt = "/clear"
+                await store.runPrompt()
+                let afterClearItemCount = store.selectedThread.items.count
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    diffCommand?.exitCode == 0 &&
+                    diffCommand?.output.contains("README.md") == true &&
+                    fileChanges.contains(where: { $0.path == "README.md" && $0.additions > 0 }) &&
+                    testCommand?.exitCode == 0 &&
+                    testCommand?.output.contains("slash test OK") == true &&
+                    afterClearItemCount == 0
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "diffCommandExitCode": Int(diffCommand?.exitCode ?? -999),
+                    "diffCommandPreview": diffCommand?.command ?? "",
+                    "diffOutputPreview": String((diffCommand?.output ?? "").prefix(1200)),
+                    "fileChanges": fileChanges.map { change in
+                        [
+                            "path": change.path,
+                            "type": change.type.rawValue,
+                            "additions": change.additions,
+                            "deletions": change.deletions
+                        ] as [String: Any]
+                    },
+                    "testCommandExitCode": Int(testCommand?.exitCode ?? -999),
+                    "testCommandPreview": testCommand?.command ?? "",
+                    "testOutput": testCommand?.output ?? "",
+                    "afterClearItemCount": afterClearItemCount
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func argument(after flag: String) -> String? {
         guard let index = CommandLine.arguments.firstIndex(of: flag) else {
             return nil
@@ -834,5 +941,55 @@ enum SmokeTestRunner {
         case .null:
             NSNull()
         }
+    }
+
+    @MainActor
+    private static func waitForStoreToSettle(_ store: SessionStore) async {
+        let deadline = Date().addingTimeInterval(120)
+        while store.isRunning && Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+    }
+
+    private static func commandRuns(in items: [TranscriptItem]) -> [CommandRun] {
+        items.compactMap { item in
+            if case let .command(run) = item.kind {
+                return run
+            }
+            return nil
+        }
+    }
+
+    private static func fileChanges(in items: [TranscriptItem]) -> [FileChange] {
+        items.compactMap { item in
+            if case let .fileChange(change) = item.kind {
+                return change
+            }
+            return nil
+        }
+    }
+
+    private static func runProcess(_ arguments: [String], cwd: URL) throws -> (exitCode: Int32, output: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = arguments
+        process.currentDirectoryURL = cwd
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        process.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        if process.terminationStatus != 0 {
+            throw NSError(
+                domain: "RaytoneCodexSlashSmoke",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "\(arguments.joined(separator: " ")) failed: \(output)"]
+            )
+        }
+        return (process.terminationStatus, output)
     }
 }

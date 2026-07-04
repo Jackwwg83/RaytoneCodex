@@ -223,18 +223,27 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        isRunning = true
         prompt = ""
+        if await handleSlashCommand(trimmedPrompt) {
+            return
+        }
+
+        await runAgentPrompt(trimmedPrompt)
+    }
+
+    private func runAgentPrompt(_ runtimePrompt: String, displayedPrompt: String? = nil) async {
+        isRunning = true
+        let userMessage = displayedPrompt ?? runtimePrompt
 
         updateSelectedThread { thread in
             thread.model = model
             thread.sandbox = sandbox
             thread.approval = approval
-            thread.items.append(TranscriptItem(kind: .userMessage(trimmedPrompt)))
+            thread.items.append(TranscriptItem(kind: .userMessage(userMessage)))
         }
 
         do {
-            try await runPromptWithAppServer(trimmedPrompt)
+            try await runPromptWithAppServer(runtimePrompt)
             return
         } catch {
             if selectedProvider.usesSidecar {
@@ -254,11 +263,207 @@ final class SessionStore: ObservableObject {
                     text: "app-server 暂不可用，已降级到 codex exec：\(error.localizedDescription)"
                 ))))
             }
-            await runPromptWithExec(trimmedPrompt)
+            await runPromptWithExec(runtimePrompt)
         }
 
         isRunning = false
         await refreshRuntime()
+    }
+
+    private func handleSlashCommand(_ trimmedPrompt: String) async -> Bool {
+        guard trimmedPrompt.hasPrefix("/") else {
+            return false
+        }
+
+        let parts = trimmedPrompt.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+        guard let rawCommand = parts.first else {
+            return false
+        }
+
+        let command = String(rawCommand).lowercased()
+        let arguments = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
+
+        switch command {
+        case "/clear":
+            resetThread()
+            return true
+
+        case "/diff":
+            await runSlashShellCommand(
+                displayedPrompt: trimmedPrompt,
+                command: "git status --short --branch && git diff --stat && git diff -- .",
+                sandbox: .readOnly,
+                appendDiffFileChanges: true
+            )
+            return true
+
+        case "/test":
+            await runSlashShellCommand(
+                displayedPrompt: trimmedPrompt,
+                command: arguments.isEmpty ? detectedTestCommand() : arguments,
+                sandbox: sandbox == .readOnly ? .workspaceWrite : sandbox,
+                appendDiffFileChanges: false
+            )
+            return true
+
+        case "/review":
+            let suffix = arguments.isEmpty ? "" : "\n\n补充要求：\(arguments)"
+            await runAgentPrompt(
+                "请审查当前工作区变更，重点找 bug、行为回归、风险和缺失测试。先读取 git status 和 git diff，再按严重程度给出结论。\(suffix)",
+                displayedPrompt: trimmedPrompt
+            )
+            return true
+
+        case "/init":
+            let suffix = arguments.isEmpty ? "" : "\n\n补充要求：\(arguments)"
+            await runAgentPrompt(
+                "请根据当前项目生成或更新 AGENTS.md，记录构建、测试、代码风格、运行验证和协作约束。保留已有重要说明，只补充真实可验证的信息。\(suffix)",
+                displayedPrompt: trimmedPrompt
+            )
+            return true
+
+        case "/explain":
+            guard !arguments.isEmpty else {
+                appendSlashNotice(displayedPrompt: trimmedPrompt, text: "请在 /explain 后添加要解释的文件、符号或问题。")
+                return true
+            }
+            await runAgentPrompt(
+                "请解释下面这个文件、符号或问题，并结合当前项目上下文给出准确说明：\(arguments)",
+                displayedPrompt: trimmedPrompt
+            )
+            return true
+
+        default:
+            return false
+        }
+    }
+
+    private func appendSlashNotice(displayedPrompt: String, text: String) {
+        updateSelectedThread { thread in
+            thread.model = model
+            thread.sandbox = sandbox
+            thread.approval = approval
+            thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
+            thread.items.append(TranscriptItem(kind: .notice(Notice(level: .warning, text: text))))
+        }
+    }
+
+    private func runSlashShellCommand(
+        displayedPrompt: String,
+        command: String,
+        sandbox commandSandbox: CodexSandboxMode,
+        appendDiffFileChanges: Bool
+    ) async {
+        isRunning = true
+        let transcriptID = UUID()
+
+        updateSelectedThread { thread in
+            thread.model = model
+            thread.sandbox = sandbox
+            thread.approval = approval
+            thread.items.append(TranscriptItem(kind: .userMessage(displayedPrompt)))
+            thread.items.append(TranscriptItem(
+                id: transcriptID,
+                kind: .command(CommandRun(
+                    command: command,
+                    directory: Project.abbreviate(workspacePath),
+                    output: "正在通过 app-server command/exec 运行…",
+                    status: .running
+                ))
+            ))
+        }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.execCommand(
+                ["/bin/zsh", "-lc", command],
+                cwd: URL(fileURLWithPath: workspacePath),
+                sandbox: commandSandbox,
+                timeoutMs: 120_000
+            )
+            let output = [result.stdout, result.stderr]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+            let renderedOutput = output.isEmpty ? "命令无输出" : output
+
+            lastCommandPreview = command
+            lastRawOutput = renderedOutput
+
+            updateSelectedThread { thread in
+                if let index = thread.items.firstIndex(where: { $0.id == transcriptID }) {
+                    thread.items[index].kind = .command(CommandRun(
+                        command: command,
+                        directory: Project.abbreviate(workspacePath),
+                        output: renderedOutput,
+                        exitCode: result.exitCode,
+                        status: result.exitCode == 0 ? .succeeded : .failed
+                    ))
+                }
+            }
+
+            if appendDiffFileChanges {
+                workspaceGitStatusText = result.stdout
+                workspaceGitDiff = CodexRuntimeGitDiff(sha: nil, diff: result.stdout)
+                let changes = Self.fileChanges(fromUnifiedDiff: result.stdout)
+                if changes.isEmpty {
+                    updateSelectedThread { thread in
+                        thread.items.append(TranscriptItem(kind: .notice(Notice(
+                            level: .info,
+                            text: "当前工作区没有可显示的未提交 diff。"
+                        ))))
+                    }
+                } else {
+                    updateSelectedThread { thread in
+                        for change in changes {
+                            thread.items.append(TranscriptItem(kind: .fileChange(change)))
+                        }
+                    }
+                }
+            }
+        } catch {
+            updateSelectedThread { thread in
+                if let index = thread.items.firstIndex(where: { $0.id == transcriptID }) {
+                    thread.items[index].kind = .command(CommandRun(
+                        command: command,
+                        directory: Project.abbreviate(workspacePath),
+                        output: error.localizedDescription,
+                        exitCode: nil,
+                        status: .failed
+                    ))
+                }
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .error,
+                    text: "slash 命令执行失败：\(error.localizedDescription)"
+                ))))
+            }
+        }
+
+        isRunning = false
+        await refreshRuntime()
+    }
+
+    private func detectedTestCommand() -> String {
+        let workspaceURL = URL(fileURLWithPath: workspacePath)
+        let fileManager = FileManager.default
+        let scriptURL = workspaceURL.appendingPathComponent("script/test.sh")
+        if fileManager.fileExists(atPath: scriptURL.path) {
+            return "bash script/test.sh"
+        }
+
+        if fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("Package.swift").path) {
+            return "swift test"
+        }
+
+        if fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("package.json").path) {
+            return "npm test"
+        }
+
+        if fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("pyproject.toml").path) ||
+            fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("pytest.ini").path) {
+            return "python -m pytest"
+        }
+
+        return "test -x ./test.sh && ./test.sh || (echo '未找到可自动识别的测试命令；请用 /test <命令> 指定。' >&2; exit 2)"
     }
 
     private func steerRunningTurn(_ trimmedPrompt: String) async {
