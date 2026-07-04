@@ -1133,8 +1133,23 @@ final class SessionStore: ObservableObject {
         panel.directoryURL = URL(fileURLWithPath: workspacePath)
 
         if panel.runModal() == .OK, let url = panel.url {
-            workspacePath = url.path
-            updateSelectedProject(path: url.path)
+            setWorkspacePathForSelectedProject(url.path)
+        }
+    }
+
+    func setWorkspacePathForSelectedProject(_ path: String) {
+        let normalizedPath = URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .path
+        workspacePath = normalizedPath
+        filePanelPath = normalizedPath
+        updateSelectedProject(path: normalizedPath)
+        runtimeCatalogStatusText = "正在切换工作区：\(Project.abbreviate(normalizedPath))"
+
+        Task {
+            await refreshWorkspaceBranches()
+            await loadFilePanelDirectory(normalizedPath)
+            await refreshWorkspaceGitDiff()
         }
     }
 

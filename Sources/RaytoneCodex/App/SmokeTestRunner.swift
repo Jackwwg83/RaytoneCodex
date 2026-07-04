@@ -44,6 +44,8 @@ enum SmokeTestRunner {
             runIntegrationPagesSmoke()
         } else if CommandLine.arguments.contains("--project-switch-smoke-test") {
             runProjectSwitchSmoke()
+        } else if CommandLine.arguments.contains("--workspace-switch-smoke-test") {
+            runWorkspaceSwitchSmoke()
         } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
             runRemoteControlSmoke()
         } else if CommandLine.arguments.contains("--realtime-voices-smoke-test") {
@@ -4429,6 +4431,73 @@ enum SmokeTestRunner {
                     "filePanelStatus": store.filePanelStatusText,
                     "fileEntries": fileNames,
                     "route": "\(store.route)"
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "error": error.localizedDescription
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runWorkspaceSwitchSmoke() {
+        Task { @MainActor in
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexWorkspaceSwitchSmoke-\(UUID().uuidString)", isDirectory: true)
+            let targetWorkspace = temporaryRoot.appendingPathComponent("workspace", isDirectory: true)
+
+            do {
+                try FileManager.default.createDirectory(at: targetWorkspace, withIntermediateDirectories: true)
+                try "workspace switch\n".write(to: targetWorkspace.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+                _ = try runProcess(["git", "init"], cwd: targetWorkspace)
+                _ = try runProcess(["git", "checkout", "-b", "raytone-workspace-smoke"], cwd: targetWorkspace)
+
+                let store = SessionStore()
+                store.setWorkspacePathForSelectedProject(targetWorkspace.path)
+
+                let deadline = Date().addingTimeInterval(25)
+                while Date() < deadline {
+                    let hasFile = store.fileEntries.contains { $0.name == "README.md" }
+                    let hasBranch = store.workspaceBranches.contains("raytone-workspace-smoke") ||
+                        store.selectedProject.branch == "raytone-workspace-smoke"
+                    let gitStatusSettled = !store.runtimeCatalogStatusText.hasPrefix("正在")
+                    if hasFile && hasBranch && gitStatusSettled {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+
+                let fileNames = store.fileEntries.map(\.name)
+                let ok = store.workspacePath == targetWorkspace.path &&
+                    store.filePanelPath == targetWorkspace.path &&
+                    store.selectedProject.path == targetWorkspace.path &&
+                    fileNames.contains("README.md") &&
+                    (
+                        store.workspaceBranches.contains("raytone-workspace-smoke") ||
+                            store.selectedProject.branch == "raytone-workspace-smoke"
+                    ) &&
+                    !store.runtimeCatalogStatusText.hasPrefix("正在") &&
+                    !store.runtimeCatalogStatusText.hasPrefix("Git 差异读取失败")
+
+                emitJSON([
+                    "ok": ok,
+                    "selectedProject": store.selectedProject.name,
+                    "selectedProjectPath": store.selectedProject.path,
+                    "workspacePath": store.workspacePath,
+                    "filePanelPath": store.filePanelPath,
+                    "filePanelStatus": store.filePanelStatusText,
+                    "fileEntries": fileNames,
+                    "branch": store.selectedProject.branch ?? "",
+                    "branches": store.workspaceBranches,
+                    "branchStatus": store.workspaceBranchStatusText,
+                    "runtimeStatus": store.runtimeCatalogStatusText
                 ])
                 try? FileManager.default.removeItem(at: temporaryRoot)
                 exit(ok ? 0 : 1)
