@@ -283,6 +283,28 @@ public struct CodexDirectoryEntry: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexFileMetadata: Equatable, Sendable {
+    public var isDirectory: Bool
+    public var isFile: Bool
+    public var isSymlink: Bool
+    public var createdAtMs: Int
+    public var modifiedAtMs: Int
+
+    public init(
+        isDirectory: Bool,
+        isFile: Bool,
+        isSymlink: Bool,
+        createdAtMs: Int,
+        modifiedAtMs: Int
+    ) {
+        self.isDirectory = isDirectory
+        self.isFile = isFile
+        self.isSymlink = isSymlink
+        self.createdAtMs = createdAtMs
+        self.modifiedAtMs = modifiedAtMs
+    }
+}
+
 public struct CodexFuzzyFileSearchResult: Equatable, Sendable, Identifiable {
     public enum MatchType: String, Sendable {
         case file
@@ -1782,6 +1804,41 @@ public actor CodexAppServerClient {
             }
             return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
         }
+    }
+
+    public func getMetadata(path: String) async throws -> CodexFileMetadata {
+        let result = try await request(method: "fs/getMetadata", params: .object([
+            "path": .string(path)
+        ]))
+        guard let isDirectory = result["isDirectory"]?.boolValue,
+              let isFile = result["isFile"]?.boolValue,
+              let isSymlink = result["isSymlink"]?.boolValue,
+              let createdAtMs = result["createdAtMs"]?.intValue,
+              let modifiedAtMs = result["modifiedAtMs"]?.intValue else {
+            throw CodexAppServerError.invalidResponse("Missing fs/getMetadata fields.")
+        }
+        return CodexFileMetadata(
+            isDirectory: isDirectory,
+            isFile: isFile,
+            isSymlink: isSymlink,
+            createdAtMs: createdAtMs,
+            modifiedAtMs: modifiedAtMs
+        )
+    }
+
+    @discardableResult
+    public func watchFileSystem(path: String, watchID: String) async throws -> String {
+        let result = try await request(method: "fs/watch", params: .object([
+            "path": .string(path),
+            "watchId": .string(watchID)
+        ]))
+        return result["path"]?.stringValue ?? path
+    }
+
+    public func unwatchFileSystem(watchID: String) async throws {
+        _ = try await request(method: "fs/unwatch", params: .object([
+            "watchId": .string(watchID)
+        ]))
     }
 
     public func fuzzyFileSearch(

@@ -123,6 +123,8 @@ final class SessionStore: ObservableObject {
     private var activeAppServerTurnID: String?
     private var appServerConnectionState: ConnectionState?
     private var appServerEnvironmentKey: String?
+    private var filePanelWatchID: String?
+    private var filePanelWatchedPath: String?
     private var activeProxySession: RaytoneProxySession?
     private var preventSleepAssertionID: IOPMAssertionID?
     var appServerEnvironmentOverridesForTesting: [String: String] = [:]
@@ -469,6 +471,7 @@ final class SessionStore: ObservableObject {
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
         appServerItemIDs.removeAll()
+        resetFilePanelWatch()
         await proxyService.stop()
         activeProxySession = nil
     }
@@ -1494,7 +1497,7 @@ final class SessionStore: ObservableObject {
         await openFileEntry(entry)
     }
 
-    func loadFilePanelDirectory(_ path: String? = nil) async {
+    func loadFilePanelDirectory(_ path: String? = nil, updateWatch: Bool = true) async {
         let targetPath = path ?? (filePanelPath.isEmpty ? workspacePath : filePanelPath)
         filePanelStatusText = "正在读取…"
         filePreview = nil
@@ -1511,8 +1514,17 @@ final class SessionStore: ObservableObject {
                     isFile: $0.isFile
                 )
             }
-            filePanelStatusText = "\(fileEntries.count) 项"
+            if updateWatch {
+                await watchFilePanelDirectory(targetPath, client: client)
+            }
+            filePanelStatusText = filePanelWatchID == nil
+                ? "\(fileEntries.count) 项"
+                : "\(fileEntries.count) 项 · 已监听"
         } catch {
+            guard !Self.isCancellation(error) else {
+                filePanelStatusText = "读取已取消"
+                return
+            }
             filePanelStatusText = "读取失败：\(error.localizedDescription)"
             updateSelectedThread { thread in
                 thread.items.append(TranscriptItem(kind: .notice(Notice(
@@ -1520,6 +1532,26 @@ final class SessionStore: ObservableObject {
                     text: "文件面板无法通过 app-server 读取目录：\(error.localizedDescription)"
                 ))))
             }
+        }
+    }
+
+    private func watchFilePanelDirectory(_ path: String, client: CodexAppServerClient) async {
+        if filePanelWatchedPath == path, filePanelWatchID != nil {
+            return
+        }
+
+        if let oldWatchID = filePanelWatchID {
+            try? await client.unwatchFileSystem(watchID: oldWatchID)
+        }
+
+        let watchID = "raytone-file-panel-\(UUID().uuidString)"
+        do {
+            let watchedPath = try await client.watchFileSystem(path: path, watchID: watchID)
+            filePanelWatchID = watchID
+            filePanelWatchedPath = watchedPath
+        } catch {
+            filePanelWatchID = nil
+            filePanelWatchedPath = nil
         }
     }
 
@@ -1581,6 +1613,7 @@ final class SessionStore: ObservableObject {
         filePanelStatusText = "正在读取文件…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let metadata = try await client.getMetadata(path: entry.path)
             let data = try await client.readFile(path: entry.path)
             let maxBytes = 120_000
             let previewData = data.prefix(maxBytes)
@@ -1589,10 +1622,19 @@ final class SessionStore: ObservableObject {
             filePreview = FilePreview(
                 path: entry.path,
                 text: text,
-                isTruncated: data.count > maxBytes
+                isTruncated: data.count > maxBytes,
+                byteCount: data.count,
+                modifiedAt: metadata.modifiedAtMs > 0
+                    ? Date(timeIntervalSince1970: TimeInterval(metadata.modifiedAtMs) / 1000)
+                    : nil,
+                isSymlink: metadata.isSymlink
             )
             filePanelStatusText = Project.abbreviate(entry.path)
         } catch {
+            guard !Self.isCancellation(error) else {
+                filePanelStatusText = "读取文件已取消"
+                return
+            }
             filePanelStatusText = "读取失败：\(error.localizedDescription)"
         }
     }
@@ -3293,6 +3335,7 @@ final class SessionStore: ObservableObject {
             appServerEventsTask = nil
             appServerItemIDs.removeAll()
             activeDiffTranscriptIDs.removeAll()
+            resetFilePanelWatch()
         }
         appServerEnvironmentKey = environmentKey
 
@@ -3377,10 +3420,16 @@ final class SessionStore: ObservableObject {
         appServerEnvironmentKey = nil
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
+        resetFilePanelWatch()
         await proxyService.stop()
         activeProxySession = nil
         appServerConnectionState = nil
         sidecarStatusText = selectedProvider.usesSidecar ? "未启动" : "直连"
+    }
+
+    private func resetFilePanelWatch() {
+        filePanelWatchID = nil
+        filePanelWatchedPath = nil
     }
 
     private func resolveRaytoneProxyExecutableURL() -> URL? {
@@ -3599,6 +3648,8 @@ final class SessionStore: ObservableObject {
             Task { await refreshAccountUsageRuntime() }
         case "account/rateLimits/updated", "thread/tokenUsage/updated":
             Task { await refreshAccountUsageRuntime() }
+        case "fs/changed":
+            handleFileSystemChanged(params)
         case "item/agentMessage/delta":
             appendAgentDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
@@ -3608,6 +3659,21 @@ final class SessionStore: ObservableObject {
         default:
             break
         }
+    }
+
+    private func handleFileSystemChanged(_ params: JSONValue?) {
+        guard let watchID = params?["watchId"]?.stringValue,
+              watchID == filePanelWatchID,
+              let watchedPath = filePanelWatchedPath else {
+            return
+        }
+
+        let changedPaths = params?["changedPaths"]?.arrayValue?
+            .compactMap(\.stringValue)
+            .map(Project.abbreviate)
+            .joined(separator: "、") ?? "工作区文件"
+        filePanelStatusText = "检测到变化：\(changedPaths)"
+        Task { await loadFilePanelDirectory(watchedPath, updateWatch: false) }
     }
 
     private func handleThreadSettingsUpdated(_ params: JSONValue?) {
@@ -3968,6 +4034,13 @@ final class SessionStore: ObservableObject {
         }
 
         return FileManager.default.currentDirectoryPath
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        return error.localizedDescription.contains("CancellationError")
     }
 
     private static func shellQuoted(_ value: String) -> String {

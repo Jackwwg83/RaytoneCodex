@@ -286,6 +286,11 @@ private struct FilesToolPanel: View {
                         }
                         .foregroundStyle(Theme.textSecondary)
 
+                        Text(preview.metadataSummary)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+
                         ScrollView([.horizontal, .vertical]) {
                             Text(preview.text)
                                 .font(Theme.mono(11))

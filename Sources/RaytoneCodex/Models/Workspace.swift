@@ -176,9 +176,23 @@ struct FilePreview: Equatable {
     var path: String
     var text: String
     var isTruncated: Bool
+    var byteCount: Int = 0
+    var modifiedAt: Date?
+    var isSymlink: Bool = false
 
     var fileName: String {
         (path as NSString).lastPathComponent
+    }
+
+    var metadataSummary: String {
+        var parts = ["\(byteCount.formatted()) 字节"]
+        if let modifiedAt {
+            parts.append("修改于 \(modifiedAt.formatted(date: .abbreviated, time: .shortened))")
+        }
+        if isSymlink {
+            parts.append("符号链接")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
