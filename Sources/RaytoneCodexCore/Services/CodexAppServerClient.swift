@@ -647,6 +647,28 @@ public struct CodexRuntimeAccount: Equatable, Sendable {
     }
 }
 
+public struct CodexAccountLogin: Equatable, Sendable {
+    public var kind: String
+    public var loginID: String?
+    public var authURL: URL?
+    public var verificationURL: URL?
+    public var userCode: String?
+
+    public init(
+        kind: String,
+        loginID: String? = nil,
+        authURL: URL? = nil,
+        verificationURL: URL? = nil,
+        userCode: String? = nil
+    ) {
+        self.kind = kind
+        self.loginID = loginID
+        self.authURL = authURL
+        self.verificationURL = verificationURL
+        self.userCode = userCode
+    }
+}
+
 public struct CodexRuntimeTokenUsage: Equatable, Sendable {
     public var lifetimeTokens: Int?
     public var peakDailyTokens: Int?
@@ -1486,6 +1508,39 @@ public actor CodexAppServerClient {
         return Self.runtimeRateLimits(from: result)
     }
 
+    public func startChatGPTAccountLogin(codexStreamlinedLogin: Bool = false) async throws -> CodexAccountLogin {
+        let result = try await request(method: "account/login/start", params: .object([
+            "type": .string("chatgpt"),
+            "codexStreamlinedLogin": .bool(codexStreamlinedLogin)
+        ]))
+        return try Self.accountLogin(from: result)
+    }
+
+    public func startChatGPTDeviceCodeAccountLogin() async throws -> CodexAccountLogin {
+        let result = try await request(method: "account/login/start", params: .object([
+            "type": .string("chatgptDeviceCode")
+        ]))
+        return try Self.accountLogin(from: result)
+    }
+
+    public func loginWithOpenAIAPIKey(_ apiKey: String) async throws {
+        _ = try await request(method: "account/login/start", params: .object([
+            "type": .string("apiKey"),
+            "apiKey": .string(apiKey)
+        ]))
+    }
+
+    public func cancelAccountLogin(loginID: String) async throws -> String {
+        let result = try await request(method: "account/login/cancel", params: .object([
+            "loginId": .string(loginID)
+        ]))
+        return result["status"]?.stringValue ?? "unknown"
+    }
+
+    public func logoutAccount() async throws {
+        _ = try await request(method: "account/logout", params: nil)
+    }
+
     public func listThreads(
         archived: Bool? = nil,
         cwd: String? = nil,
@@ -2207,6 +2262,27 @@ public actor CodexAppServerClient {
             email: account?["email"]?.stringValue,
             planType: account?["planType"]?.stringValue,
             requiresOpenAIAuth: result["requiresOpenaiAuth"]?.boolValue ?? false
+        )
+    }
+
+    private static func accountLogin(from result: JSONValue) throws -> CodexAccountLogin {
+        let kind = result["type"]?.stringValue ?? "unknown"
+        let authURL = result["authUrl"]?.stringValue.flatMap(URL.init(string:))
+        let verificationURL = result["verificationUrl"]?.stringValue.flatMap(URL.init(string:))
+
+        if kind == "chatgpt", authURL == nil {
+            throw CodexAppServerError.invalidResponse("account/login/start did not return authUrl.")
+        }
+        if kind == "chatgptDeviceCode", verificationURL == nil {
+            throw CodexAppServerError.invalidResponse("account/login/start did not return verificationUrl.")
+        }
+
+        return CodexAccountLogin(
+            kind: kind,
+            loginID: result["loginId"]?.stringValue,
+            authURL: authURL,
+            verificationURL: verificationURL,
+            userCode: result["userCode"]?.stringValue
         )
     }
 

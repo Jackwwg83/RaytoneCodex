@@ -359,6 +359,7 @@ struct SettingsRouteView: View {
     private var profilePane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
+                accountAuthControlGroup
                 Spacer(minLength: 0)
                 Button("Share") {
                     copyProfileShareSummary()
@@ -404,6 +405,13 @@ struct SettingsRouteView: View {
                         .background(Theme.fill)
                         .clipShape(Capsule())
                     statusBadge(accountKindName(store.runtimeAccount?.kind), ok: store.runtimeAccount?.kind != nil && store.runtimeAccount?.kind != "notLoggedIn")
+                }
+                if let login = store.activeAccountLogin, let loginID = login.loginID {
+                    Text("正在等待登录完成 · \(loginID)")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -533,7 +541,36 @@ struct SettingsRouteView: View {
                 metricRow("账户", store.runtimeAccount.map(SessionStore.accountDisplayName) ?? "未返回")
                 metricRow("计划", store.runtimeAccount?.planType ?? "未返回")
                 metricRow("来源", "account/read")
+                Divider()
+                    .overlay(Theme.borderSoft)
+                accountAuthControlGroup
             }
+        }
+    }
+
+    @ViewBuilder
+    private var accountAuthControlGroup: some View {
+        HStack(spacing: 8) {
+            if store.activeAccountLogin != nil {
+                Button("取消登录") {
+                    Task { await store.cancelAccountLogin() }
+                }
+                .buttonStyle(ChipButtonStyle())
+            } else if store.runtimeAccount == nil || store.runtimeAccount?.kind == "notLoggedIn" {
+                Button("登录 Codex") {
+                    Task { await store.startAccountChatGPTLogin() }
+                }
+                .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+            } else {
+                Button("退出登录") {
+                    Task { await store.logoutRuntimeAccount() }
+                }
+                .buttonStyle(ChipButtonStyle())
+            }
+            Button("刷新账户") {
+                Task { await store.refreshAccountUsageRuntime() }
+            }
+            .buttonStyle(ChipButtonStyle())
         }
     }
 

@@ -18,6 +18,8 @@ enum SmokeTestRunner {
             runReviewSmoke()
         } else if CommandLine.arguments.contains("--catalog-smoke-test") {
             runCatalogSmoke()
+        } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
+            runAccountAuthSmoke()
         } else if CommandLine.arguments.contains("--mention-smoke-test") {
             runMentionSmoke()
         } else if CommandLine.arguments.contains("--runtime-pages-smoke-test") {
@@ -2988,6 +2990,62 @@ enum SmokeTestRunner {
                 ])
                 exit(1)
             }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAccountAuthSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            fputs("account-auth-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("account-auth-smoke: refreshAccountUsageRuntime\n", stderr)
+            await store.refreshAccountUsageRuntime()
+            let beforeAccountKind = store.runtimeAccount?.kind ?? "notLoggedIn"
+
+            fputs("account-auth-smoke: startAccountChatGPTLogin\n", stderr)
+            await store.startAccountChatGPTLogin(openBrowser: false)
+            let login = store.activeAccountLogin
+            let startStatus = store.runtimeCatalogStatusText
+            let startErrors = store.runtimeCatalogErrors
+
+            fputs("account-auth-smoke: cancelAccountLogin\n", stderr)
+            await store.cancelAccountLogin()
+            let cancelStatus = store.runtimeCatalogStatusText
+            let cancelErrors = store.runtimeCatalogErrors
+
+            let authURL = login?.authURL?.absoluteString ?? ""
+            let ok = store.runtimeSnapshot.executable != nil &&
+                login?.kind == "chatgpt" &&
+                login?.loginID?.isEmpty == false &&
+                !authURL.isEmpty &&
+                startErrors.isEmpty &&
+                !cancelStatus.hasPrefix("取消登录失败") &&
+                !cancelErrors.contains { $0.localizedCaseInsensitiveContains("account/login/cancel") }
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "beforeAccountKind": beforeAccountKind,
+                "loginKind": login?.kind ?? "",
+                "loginID": login?.loginID ?? "",
+                "authURLHost": login?.authURL?.host ?? "",
+                "startStatus": startStatus,
+                "startErrors": startErrors,
+                "cancelStatus": cancelStatus,
+                "cancelErrors": cancelErrors,
+                "activeLoginAfterCancel": store.activeAccountLogin?.loginID ?? ""
+            ])
+            exit(ok ? 0 : 1)
         }
 
         dispatchMain()

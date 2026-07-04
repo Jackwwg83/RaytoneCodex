@@ -62,6 +62,7 @@ final class SessionStore: ObservableObject {
     @Published var defaultPermissionsEnabled = true
     @Published var defaultFullAccessPermissionsEnabled = false
     @Published var runtimeAccount: CodexRuntimeAccount?
+    @Published var activeAccountLogin: CodexAccountLogin?
     @Published var runtimeTokenUsage: CodexRuntimeTokenUsage?
     @Published var runtimeRateLimits: CodexRuntimeRateLimits?
     @Published var runtimeRequirements: CodexRuntimeConfigRequirements?
@@ -1947,6 +1948,78 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func startAccountChatGPTLogin(openBrowser: Bool = true) async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 account/login/start…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let login = try await client.startChatGPTAccountLogin(codexStreamlinedLogin: false)
+            activeAccountLogin = login
+            if openBrowser, let authURL = login.authURL {
+                NSWorkspace.shared.open(authURL)
+                runtimeCatalogStatusText = "已打开 ChatGPT 授权页面，等待 account/login/completed…"
+            } else if let authURL = login.authURL {
+                let host = authURL.host ?? "auth URL"
+                runtimeCatalogStatusText = "account/login/start：\(host) · \(login.loginID ?? "无 loginId")"
+            } else {
+                runtimeCatalogStatusText = "account/login/start：\(login.kind)"
+            }
+        } catch {
+            runtimeCatalogStatusText = "ChatGPT 登录启动失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func cancelAccountLogin() async {
+        guard let loginID = activeAccountLogin?.loginID else {
+            runtimeCatalogStatusText = "没有正在进行的账户登录"
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 account/login/cancel…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let status = try await client.cancelAccountLogin(loginID: loginID)
+            activeAccountLogin = nil
+            await refreshAccountUsageRuntime()
+            runtimeCatalogStatusText = "account/login/cancel：\(status)"
+        } catch {
+            runtimeCatalogStatusText = "取消登录失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func logoutRuntimeAccount() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 account/logout…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.logoutAccount()
+            activeAccountLogin = nil
+            runtimeAccount = nil
+            runtimeTokenUsage = nil
+            runtimeRateLimits = nil
+            await refreshAccountUsageRuntime()
+            runtimeCatalogStatusText = "account/logout 已完成"
+        } catch {
+            runtimeCatalogStatusText = "退出登录失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
     func refreshArchivedThreads() async {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在读取 thread/list archived=true…"
@@ -3383,6 +3456,28 @@ final class SessionStore: ObservableObject {
                 runtimeCatalogErrors = [error]
             }
             Task { await refreshRuntimeMCPServers() }
+        case "account/login/completed":
+            let success = params?["success"]?.boolValue ?? false
+            activeAccountLogin = nil
+            if success {
+                runtimeCatalogStatusText = "account/login/completed：登录成功"
+                runtimeCatalogErrors = []
+                appServerConnectionState = nil
+            } else {
+                let error = params?["error"]?.stringValue ?? "登录未完成"
+                runtimeCatalogStatusText = "account/login/completed：\(error)"
+                runtimeCatalogErrors = [error]
+            }
+            Task { await refreshAccountUsageRuntime() }
+        case "account/updated":
+            let authMode = params?["authMode"]?.stringValue ?? "未知"
+            let planType = params?["planType"]?.stringValue ?? "未返回"
+            runtimeCatalogStatusText = "account/updated：\(authMode) · \(planType)"
+            runtimeCatalogErrors = []
+            appServerConnectionState = nil
+            Task { await refreshAccountUsageRuntime() }
+        case "account/rateLimits/updated", "thread/tokenUsage/updated":
+            Task { await refreshAccountUsageRuntime() }
         case "item/agentMessage/delta":
             appendAgentDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
