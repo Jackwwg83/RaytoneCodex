@@ -54,6 +54,8 @@ enum SmokeTestRunner {
             runGoalSmoke()
         } else if CommandLine.arguments.contains("--browser-navigation-smoke-test") {
             runBrowserNavigationSmoke()
+        } else if CommandLine.arguments.contains("--browser-snapshot-smoke-test") {
+            runBrowserSnapshotSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -1677,6 +1679,34 @@ enum SmokeTestRunner {
                 "initial": initialState,
                 "afterBack": afterBackState,
                 "afterForward": afterForwardState
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runBrowserSnapshotSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.openBrowserSample()
+            store.captureBrowserPanelScreenshot()
+            let request = store.browserSnapshotRequest
+            let ok = store.browserURL != nil &&
+                request != nil &&
+                request?.outputURL.path.contains("/screenshots/raytonecodex-browser-") == true &&
+                store.browserScreenshotStatusText == "正在截取网页…"
+
+            emitJSON([
+                "ok": ok,
+                "workspacePath": workspacePath,
+                "browserURL": store.browserURL?.path ?? "",
+                "status": store.browserScreenshotStatusText,
+                "snapshotRequestID": request?.id.uuidString ?? "",
+                "snapshotOutput": request?.outputURL.path ?? ""
             ])
             exit(ok ? 0 : 1)
         }

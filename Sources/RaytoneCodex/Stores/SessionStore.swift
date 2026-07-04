@@ -29,6 +29,7 @@ final class SessionStore: ObservableObject {
     @Published var browserCanGoBack = false
     @Published var browserCanGoForward = false
     @Published var browserNavigationCommand: BrowserNavigationCommand?
+    @Published var browserSnapshotRequest: BrowserSnapshotRequest?
     @Published var browserScreenshotStatusText = ""
     @Published var filePanelPath = ""
     @Published var fileEntries: [WorkspaceFileEntry] = []
@@ -1359,6 +1360,7 @@ final class SessionStore: ObservableObject {
         browserCanGoBack = false
         browserCanGoForward = false
         browserNavigationCommand = nil
+        browserSnapshotRequest = nil
         browserScreenshotStatusText = ""
         openToolPanel(.browser)
     }
@@ -1395,25 +1397,37 @@ final class SessionStore: ObservableObject {
     }
 
     func captureBrowserPanelScreenshot() {
-        let directory = URL(fileURLWithPath: workspacePath).appendingPathComponent("screenshots")
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let url = directory.appendingPathComponent("raytonecodex-browser-\(formatter.string(from: Date())).png")
+        guard browserURL != nil else {
+            browserScreenshotStatusText = "没有可截图的网页"
+            return
+        }
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", url.path]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        browserScreenshotStatusText = "正在截取网页…"
+        browserSnapshotRequest = BrowserSnapshotRequest(outputURL: browserSnapshotOutputURL())
+    }
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-            browserScreenshotStatusText = process.terminationStatus == 0 ? Project.abbreviate(url.path) : "截图失败"
-        } catch {
+    func completeBrowserPanelScreenshot(request: BrowserSnapshotRequest, result: Result<URL, Error>) {
+        guard browserSnapshotRequest?.id == request.id else { return }
+        browserSnapshotRequest = nil
+
+        switch result {
+        case let .success(url):
+            browserScreenshotStatusText = "网页截图：\(Project.abbreviate(url.path))"
+        case let .failure(error):
             browserScreenshotStatusText = "截图失败：\(error.localizedDescription)"
         }
+    }
+
+    private func browserSnapshotOutputURL() -> URL {
+        if let overridePath = ProcessInfo.processInfo.environment["RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH"],
+           !overridePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: (overridePath as NSString).expandingTildeInPath)
+        }
+
+        let directory = URL(fileURLWithPath: workspacePath).appendingPathComponent("screenshots")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return directory.appendingPathComponent("raytonecodex-browser-\(formatter.string(from: Date())).png")
     }
 
     func refreshModelCatalog() async {

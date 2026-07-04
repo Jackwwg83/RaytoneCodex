@@ -128,6 +128,16 @@ struct BrowserNavigationCommand: Equatable {
     }
 }
 
+struct BrowserSnapshotRequest: Equatable {
+    let id: UUID
+    let outputURL: URL
+
+    init(id: UUID = UUID(), outputURL: URL) {
+        self.id = id
+        self.outputURL = outputURL
+    }
+}
+
 struct ProgressStep: Identifiable, Equatable {
     enum State: Equatable {
         case done

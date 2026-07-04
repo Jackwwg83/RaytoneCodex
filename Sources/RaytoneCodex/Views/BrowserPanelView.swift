@@ -5,6 +5,7 @@ struct BrowserPanelView: View {
     @ObservedObject var store: SessionStore
     @Binding var showInspector: Bool
     @State private var addressDraft = ""
+    @State private var didRequestSmokeSnapshot = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,7 +17,8 @@ struct BrowserPanelView: View {
                         store: store,
                         url: url,
                         reloadToken: store.browserReloadToken,
-                        navigationCommand: store.browserNavigationCommand
+                        navigationCommand: store.browserNavigationCommand,
+                        snapshotRequest: store.browserSnapshotRequest
                     )
                 } else {
                     browserEmptyState
@@ -43,9 +45,11 @@ struct BrowserPanelView: View {
         .overlay(alignment: .leading) { Hairline(axis: .vertical) }
         .onAppear {
             addressDraft = addressText
+            requestSmokeSnapshotIfNeeded()
         }
         .onChange(of: store.browserURL) { _, _ in
             addressDraft = addressText
+            requestSmokeSnapshotIfNeeded()
         }
     }
 
@@ -203,6 +207,19 @@ struct BrowserPanelView: View {
         }
         return url.absoluteString
     }
+
+    private func requestSmokeSnapshotIfNeeded() {
+        guard ProcessInfo.processInfo.environment["RAYTONE_CODEX_BROWSER_SNAPSHOT_SMOKE"] == "1",
+              !didRequestSmokeSnapshot,
+              store.browserURL != nil else {
+            return
+        }
+
+        didRequestSmokeSnapshot = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            store.captureBrowserPanelScreenshot()
+        }
+    }
 }
 
 private struct BrowserWebView: NSViewRepresentable {
@@ -210,6 +227,7 @@ private struct BrowserWebView: NSViewRepresentable {
     let url: URL
     let reloadToken: UUID
     let navigationCommand: BrowserNavigationCommand?
+    let snapshotRequest: BrowserSnapshotRequest?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(store: store)
@@ -246,6 +264,12 @@ private struct BrowserWebView: NSViewRepresentable {
             context.coordinator.publishNavigationState(from: webView)
         }
 
+        if let snapshotRequest,
+           context.coordinator.handledSnapshotRequestID != snapshotRequest.id {
+            context.coordinator.handledSnapshotRequestID = snapshotRequest.id
+            context.coordinator.captureSnapshot(snapshotRequest, from: webView)
+        }
+
         guard context.coordinator.loadedURL != url else {
             if context.coordinator.reloadToken != reloadToken {
                 context.coordinator.reloadToken = reloadToken
@@ -273,6 +297,7 @@ private struct BrowserWebView: NSViewRepresentable {
         var reloadToken: UUID?
 
         var handledNavigationCommandID: UUID?
+        var handledSnapshotRequestID: UUID?
 
         init(store: SessionStore) {
             self.store = store
@@ -290,6 +315,34 @@ private struct BrowserWebView: NSViewRepresentable {
                     canGoBack: canGoBack,
                     canGoForward: canGoForward
                 )
+            }
+        }
+
+        func captureSnapshot(_ request: BrowserSnapshotRequest, from webView: WKWebView) {
+            let configuration = WKSnapshotConfiguration()
+            configuration.rect = webView.bounds
+            webView.takeSnapshot(with: configuration) { [weak self] image, error in
+                Task { @MainActor [weak self] in
+                    if let error {
+                        self?.store?.completeBrowserPanelScreenshot(request: request, result: .failure(error))
+                        return
+                    }
+
+                    guard let image else {
+                        self?.store?.completeBrowserPanelScreenshot(
+                            request: request,
+                            result: .failure(BrowserSnapshotWriter.SnapshotError.missingImageData)
+                        )
+                        return
+                    }
+
+                    do {
+                        try BrowserSnapshotWriter.writePNG(image: image, to: request.outputURL)
+                        self?.store?.completeBrowserPanelScreenshot(request: request, result: .success(request.outputURL))
+                    } catch {
+                        self?.store?.completeBrowserPanelScreenshot(request: request, result: .failure(error))
+                    }
+                }
             }
         }
 
