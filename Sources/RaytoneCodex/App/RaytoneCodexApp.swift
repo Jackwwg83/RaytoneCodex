@@ -30,5 +30,38 @@ struct RaytoneCodexApp: App {
                 .frame(width: 520)
                 .preferredColorScheme(sessionStore.preferredColorScheme)
         }
+
+        MenuBarExtra(
+            "RaytoneCodex",
+            systemImage: "sparkles",
+            isInserted: Binding(
+                get: { sessionStore.desktopShowInMenuBar },
+                set: { isVisible in
+                    Task { @MainActor in
+                        await sessionStore.saveRuntimeShowInMenuBar(isVisible)
+                    }
+                }
+            )
+        ) {
+            Button("显示 RaytoneCodex") {
+                showMainWindow()
+            }
+            Button("新建对话") {
+                sessionStore.resetThread()
+                showMainWindow()
+            }
+            Divider()
+            Button("退出 RaytoneCodex") {
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func showMainWindow() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows
+            .filter { !$0.title.isEmpty }
+            .forEach { $0.makeKeyAndOrderFront(nil) }
     }
 }
