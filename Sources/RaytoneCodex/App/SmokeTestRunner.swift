@@ -42,6 +42,8 @@ enum SmokeTestRunner {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
+        } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
+            runRemoteControlSmoke()
         } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
             runAccessModeSmoke()
         } else if CommandLine.arguments.contains("--personality-smoke-test") {
@@ -4280,6 +4282,41 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runRemoteControlSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            fputs("remote-control-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("remote-control-smoke: remoteControl/status/read\n", stderr)
+            await store.refreshRemoteControlStatus()
+
+            let errors = store.runtimeCatalogErrors
+            let ok = store.runtimeSnapshot.executable != nil &&
+                store.runtimeRemoteControlStatus != nil &&
+                errors.isEmpty
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "catalogStatus": store.runtimeCatalogStatusText,
+                "catalogErrors": errors,
+                "workspaceExecutionMode": store.workspaceExecutionMode.title,
+                "remoteControl": remoteControlPayload(store.runtimeRemoteControlStatus)
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
     private static func runSlashSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -5022,6 +5059,16 @@ enum SmokeTestRunner {
             return
         }
         print(json)
+    }
+
+    private static func remoteControlPayload(_ status: CodexRuntimeRemoteControlStatus?) -> [String: Any] {
+        [
+            "status": status?.status ?? "",
+            "statusName": SessionStore.remoteControlStatusDisplayName(status?.status),
+            "serverName": status?.serverName ?? "",
+            "installationID": status?.installationID ?? "",
+            "environmentID": status?.environmentID ?? ""
+        ]
     }
 
     private static func goalPayload(_ goal: CodexRuntimeGoal) -> [String: Any] {

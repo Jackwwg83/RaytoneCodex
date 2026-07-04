@@ -1182,6 +1182,20 @@ public struct CodexRuntimeRemoteControlStatus: Equatable, Sendable {
     }
 }
 
+public struct CodexRemoteControlPairing: Equatable, Sendable {
+    public var pairingCode: String
+    public var manualPairingCode: String?
+    public var environmentID: String
+    public var expiresAt: Int
+
+    public init(pairingCode: String, manualPairingCode: String?, environmentID: String, expiresAt: Int) {
+        self.pairingCode = pairingCode
+        self.manualPairingCode = manualPairingCode
+        self.environmentID = environmentID
+        self.expiresAt = expiresAt
+    }
+}
+
 public struct CodexRuntimeAppCatalog: Equatable, Sendable {
     public var apps: [CodexRuntimeAppInfo]
     public var nextCursor: String?
@@ -1334,6 +1348,7 @@ public actor CodexAppServerClient {
     private let workspaceURL: URL
     private let environmentOverrides: [String: String]
     private let experimentalApi: Bool
+    private let remoteControl: Bool
     private let eventContinuation: AsyncStream<ServerEvent>.Continuation
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -1355,12 +1370,14 @@ public actor CodexAppServerClient {
         executable: CodexExecutable,
         workspaceURL: URL,
         environmentOverrides: [String: String] = [:],
-        experimentalApi: Bool = true
+        experimentalApi: Bool = true,
+        remoteControl: Bool = false
     ) {
         self.executable = executable
         self.workspaceURL = workspaceURL
         self.environmentOverrides = environmentOverrides
         self.experimentalApi = experimentalApi
+        self.remoteControl = remoteControl
         self.debugEnabled = ProcessInfo.processInfo.environment["RAYTONE_CODEX_APP_SERVER_DEBUG"] == "1"
         let stream = AsyncStream<ServerEvent>.makeStream()
         self.events = stream.stream
@@ -1377,7 +1394,12 @@ public actor CodexAppServerClient {
         let stderrPipe = Pipe()
         let launchedProcess = Process()
         launchedProcess.executableURL = executable.url
-        launchedProcess.arguments = ["app-server", "--listen", "stdio://"]
+        var arguments = ["app-server"]
+        if remoteControl {
+            arguments.append("--remote-control")
+        }
+        arguments += ["--listen", "stdio://"]
+        launchedProcess.arguments = arguments
         launchedProcess.currentDirectoryURL = workspaceURL
         launchedProcess.standardInput = stdinPipe
         launchedProcess.standardOutput = stdoutPipe
@@ -2051,6 +2073,28 @@ public actor CodexAppServerClient {
     public func readRemoteControlStatus() async throws -> CodexRuntimeRemoteControlStatus {
         let result = try await request(method: "remoteControl/status/read", params: nil)
         return Self.remoteControlStatus(from: result)
+    }
+
+    public func enableRemoteControl() async throws -> CodexRuntimeRemoteControlStatus {
+        let result = try await request(method: "remoteControl/enable", params: nil)
+        return Self.remoteControlStatus(from: result)
+    }
+
+    public func disableRemoteControl() async throws -> CodexRuntimeRemoteControlStatus {
+        let result = try await request(method: "remoteControl/disable", params: nil)
+        return Self.remoteControlStatus(from: result)
+    }
+
+    public func startRemoteControlPairing(manualCode: Bool = false) async throws -> CodexRemoteControlPairing {
+        let result = try await request(method: "remoteControl/pairing/start", params: .object([
+            "manualCode": .bool(manualCode)
+        ]))
+        return CodexRemoteControlPairing(
+            pairingCode: result["pairingCode"]?.stringValue ?? "",
+            manualPairingCode: result["manualPairingCode"]?.stringValue,
+            environmentID: result["environmentId"]?.stringValue ?? "",
+            expiresAt: result["expiresAt"]?.intValue ?? 0
+        )
     }
 
     public func resetMemory() async throws {
@@ -3087,12 +3131,12 @@ public actor CodexAppServerClient {
         )
     }
 
-    private static func remoteControlStatus(from result: JSONValue) -> CodexRuntimeRemoteControlStatus {
+    public static func remoteControlStatus(from result: JSONValue?) -> CodexRuntimeRemoteControlStatus {
         CodexRuntimeRemoteControlStatus(
-            status: result["status"]?.stringValue ?? "unknown",
-            serverName: result["serverName"]?.stringValue ?? "",
-            installationID: result["installationId"]?.stringValue ?? "",
-            environmentID: result["environmentId"]?.stringValue
+            status: result?["status"]?.stringValue ?? "unknown",
+            serverName: result?["serverName"]?.stringValue ?? "",
+            installationID: result?["installationId"]?.stringValue ?? "",
+            environmentID: result?["environmentId"]?.stringValue
         )
     }
 

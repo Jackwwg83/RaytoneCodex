@@ -74,6 +74,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeRateLimits: CodexRuntimeRateLimits?
     @Published var runtimeRequirements: CodexRuntimeConfigRequirements?
     @Published var runtimeRemoteControlStatus: CodexRuntimeRemoteControlStatus?
+    @Published var runtimeRemoteControlPairing: CodexRemoteControlPairing?
     @Published var runtimeApps: [CodexRuntimeAppInfo] = []
     @Published var runtimePermissionProfiles: [CodexRuntimePermissionProfile] = []
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
@@ -3180,11 +3181,96 @@ final class SessionStore: ObservableObject {
         switch mode {
         case .local:
             route = .thread
+            Task { await disableRemoteControlMode() }
         case .cloudPending:
             route = .settings
-            settingsPane = .environments
-            Task { await refreshIntegrationRuntime() }
+            settingsPane = .connections
+            Task { await enableRemoteControlMode() }
         }
+    }
+
+    func refreshRemoteControlStatus() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 remoteControl/status/read 读取云端模式…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
+            let status = try await client.readRemoteControlStatus()
+            runtimeRemoteControlStatus = status
+            workspaceExecutionMode = status.status == "disabled" ? .local : .cloudPending
+            runtimeCatalogStatusText = "remoteControl/status/read：\(Self.remoteControlStatusDisplayName(status.status))"
+        } catch {
+            runtimeCatalogStatusText = "remoteControl/status/read 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func enableRemoteControlMode() async {
+        workspaceExecutionMode = .cloudPending
+        route = .settings
+        settingsPane = .connections
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 remoteControl/enable 启用云端模式…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
+            let status = try await client.enableRemoteControl()
+            runtimeRemoteControlStatus = status
+            runtimeCatalogStatusText = "remoteControl/enable：\(Self.remoteControlStatusDisplayName(status.status))"
+        } catch {
+            workspaceExecutionMode = .local
+            runtimeCatalogStatusText = "remoteControl/enable 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func disableRemoteControlMode() async {
+        workspaceExecutionMode = .local
+        runtimeRemoteControlPairing = nil
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 remoteControl/disable 停用云端模式…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
+            let status = try await client.disableRemoteControl()
+            runtimeRemoteControlStatus = status
+            runtimeCatalogStatusText = "remoteControl/disable：\(Self.remoteControlStatusDisplayName(status.status))"
+        } catch {
+            runtimeCatalogStatusText = "remoteControl/disable 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func startRemoteControlPairing(manualCode: Bool = true) async {
+        workspaceExecutionMode = .cloudPending
+        route = .settings
+        settingsPane = .connections
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 remoteControl/pairing/start 生成配对码…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
+            runtimeRemoteControlStatus = try await client.enableRemoteControl()
+            let pairing = try await client.startRemoteControlPairing(manualCode: manualCode)
+            runtimeRemoteControlPairing = pairing
+            let manualText = pairing.manualPairingCode.map { " · 手动码 \($0)" } ?? ""
+            runtimeCatalogStatusText = "remoteControl/pairing/start：\(pairing.pairingCode)\(manualText)"
+        } catch {
+            runtimeCatalogStatusText = "remoteControl/pairing/start 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
     }
 
     func togglePluginInstallation(_ plugin: CodexRuntimePlugin) async {
@@ -3881,7 +3967,10 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    private func ensureAppServerClient(useProviderConfiguration: Bool = true) async throws -> CodexAppServerClient {
+    private func ensureAppServerClient(
+        useProviderConfiguration: Bool = true,
+        remoteControl: Bool = false
+    ) async throws -> CodexAppServerClient {
         if runtimeSnapshot.executable == nil {
             runtimeSnapshot = await service.inspectRuntime()
         }
@@ -3895,14 +3984,15 @@ final class SessionStore: ObservableObject {
         if useProviderConfiguration {
             environmentOverrides.merge(try await appServerEnvironmentOverrides()) { _, new in new }
         }
-        let environmentKey: String
+        let baseEnvironmentKey: String
         if let codexHome = environmentOverrides["CODEX_HOME"] {
-            environmentKey = codexHome
+            baseEnvironmentKey = codexHome
         } else if useProviderConfiguration {
-            environmentKey = "global"
+            baseEnvironmentKey = "global"
         } else {
-            environmentKey = selectedProvider.usesSidecar ? "global-tools" : "global"
+            baseEnvironmentKey = selectedProvider.usesSidecar ? "global-tools" : "global"
         }
+        let environmentKey = "\(baseEnvironmentKey)|remoteControl:\(remoteControl)"
         if appServerEnvironmentKey != nil, appServerEnvironmentKey != environmentKey {
             if let existing = appServerClient {
                 await existing.stop()
@@ -3924,7 +4014,8 @@ final class SessionStore: ObservableObject {
             client = CodexAppServerClient(
                 executable: executable,
                 workspaceURL: URL(fileURLWithPath: workspacePath),
-                environmentOverrides: environmentOverrides
+                environmentOverrides: environmentOverrides,
+                remoteControl: remoteControl
             )
             appServerClient = client
             startAppServerEventPump(client)
@@ -4233,6 +4324,12 @@ final class SessionStore: ObservableObject {
             Task { await refreshAccountUsageRuntime() }
         case "account/rateLimits/updated", "thread/tokenUsage/updated":
             Task { await refreshAccountUsageRuntime() }
+        case "remoteControl/status/changed":
+            let status = CodexAppServerClient.remoteControlStatus(from: params)
+            runtimeRemoteControlStatus = status
+            workspaceExecutionMode = status.status == "disabled" ? .local : .cloudPending
+            runtimeCatalogStatusText = "remoteControl/status/changed：\(Self.remoteControlStatusDisplayName(status.status))"
+            runtimeCatalogErrors = []
         case "fs/changed":
             handleFileSystemChanged(params)
         case "command/exec/outputDelta":
@@ -4835,6 +4932,18 @@ final class SessionStore: ObservableObject {
             return "Amazon Bedrock"
         default:
             return account.requiresOpenAIAuth ? "需要登录 OpenAI" : "未登录"
+        }
+    }
+
+    nonisolated static func remoteControlStatusDisplayName(_ value: String?) -> String {
+        switch value {
+        case "connected": "已连接"
+        case "connecting": "连接中"
+        case "errored": "错误"
+        case "disconnected": "未连接"
+        case "disabled": "已停用"
+        case nil: "未返回"
+        default: value ?? "未返回"
         }
     }
 

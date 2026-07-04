@@ -1648,6 +1648,36 @@ struct SettingsRouteView: View {
                 metricRow("服务器", store.runtimeRemoteControlStatus?.serverName ?? "未返回")
                 metricRow("安装 ID", store.runtimeRemoteControlStatus?.installationID ?? "未返回")
                 metricRow("环境 ID", store.runtimeRemoteControlStatus?.environmentID ?? "未返回")
+                if let pairing = store.runtimeRemoteControlPairing {
+                    Divider()
+                        .overlay(Theme.borderSoft)
+                    metricRow("配对码", pairing.pairingCode)
+                    if let manualCode = pairing.manualPairingCode {
+                        metricRow("手动码", manualCode)
+                    }
+                    metricRow("配对环境", pairing.environmentID)
+                    metricRow("过期时间", remotePairingExpiryText(pairing.expiresAt))
+                }
+                HStack(spacing: 8) {
+                    Button("启用云端模式") {
+                        Task { await store.enableRemoteControlMode() }
+                    }
+                    .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                    .disabled(store.runtimeCatalogIsRefreshing)
+
+                    Button("生成配对码") {
+                        Task { await store.startRemoteControlPairing(manualCode: true) }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.runtimeCatalogIsRefreshing)
+
+                    Button("停用") {
+                        Task { await store.disableRemoteControlMode() }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.runtimeCatalogIsRefreshing)
+                }
+                .padding(.top, 4)
             }
 
             SettingsSection(title: "MCP 连接") {
@@ -2134,14 +2164,13 @@ struct SettingsRouteView: View {
     }
 
     private func remoteControlName(_ value: String?) -> String {
-        switch value {
-        case "connected": "已连接"
-        case "connecting": "连接中"
-        case "disconnected": "未连接"
-        case "disabled": "已停用"
-        case nil: "未返回"
-        default: value ?? "未返回"
-        }
+        SessionStore.remoteControlStatusDisplayName(value)
+    }
+
+    private func remotePairingExpiryText(_ value: Int) -> String {
+        guard value > 0 else { return "未返回" }
+        let date = Date(timeIntervalSince1970: TimeInterval(value))
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func tokenText(_ value: Int?) -> String {
