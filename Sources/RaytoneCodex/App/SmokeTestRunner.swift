@@ -34,6 +34,8 @@ enum SmokeTestRunner {
             runModelCatalogSmoke()
         } else if CommandLine.arguments.contains("--model-config-smoke-test") {
             runModelConfigSmoke()
+        } else if CommandLine.arguments.contains("--provider-sidecar-smoke-test") {
+            runProviderSidecarSmoke()
         } else if CommandLine.arguments.contains("--reasoning-config-smoke-test") {
             runReasoningConfigSmoke()
         } else if CommandLine.arguments.contains("--instructions-config-smoke-test") {
@@ -776,6 +778,85 @@ enum SmokeTestRunner {
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
                     "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runProviderSidecarSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let providerID = "smoke-\(UUID().uuidString.prefix(8))"
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.providers.append(RaytoneProviderConfiguration(
+                id: providerID,
+                displayName: "Smoke Provider",
+                baseURL: "http://127.0.0.1:65535/v1",
+                model: "smoke-model",
+                models: ["smoke-model"],
+                kind: .chatCompletionsSidecar
+            ))
+
+            do {
+                try store.saveProviderAPIKey("raytone-smoke-key", providerID: providerID)
+                await store.refreshRuntime()
+                await store.testProviderConnection(providerID: providerID)
+
+                let codexConfigText = (try? String(
+                    contentsOfFile: store.providerConnectionCodexConfigPath,
+                    encoding: .utf8
+                )) ?? ""
+                let proxyConfigText = (try? String(
+                    contentsOfFile: store.providerConnectionProxyConfigPath,
+                    encoding: .utf8
+                )) ?? ""
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    store.selectedProviderID == providerID &&
+                    store.providerConnectionStatusText.contains("sidecar 已就绪") &&
+                    store.providerConnectionBaseURL.contains("127.0.0.1") &&
+                    codexConfigText.contains("model_provider = \"raytone-\(providerID)\"") &&
+                    codexConfigText.contains("wire_api = \"responses\"") &&
+                    codexConfigText.contains("base_url = \"\(store.providerConnectionBaseURL)") &&
+                    proxyConfigText.contains("current_provider = \"\(providerID)\"") &&
+                    proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"")
+
+                await store.stopAppServerForTesting()
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "providerID": providerID,
+                    "status": store.providerConnectionStatusText,
+                    "detail": store.providerConnectionDetailText,
+                    "sidecar": store.sidecarStatusText,
+                    "baseURL": store.providerConnectionBaseURL,
+                    "codexConfigPath": store.providerConnectionCodexConfigPath,
+                    "proxyConfigPath": store.providerConnectionProxyConfigPath,
+                    "codexConfigText": codexConfigText,
+                    "proxyConfigText": proxyConfigText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "providerID": providerID,
+                    "status": store.providerConnectionStatusText,
                     "error": error.localizedDescription
                 ])
                 exit(1)

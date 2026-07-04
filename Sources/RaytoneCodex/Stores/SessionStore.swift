@@ -83,6 +83,11 @@ final class SessionStore: ObservableObject {
     @Published var codexModelCatalog: [CodexAppServerModel] = []
     @Published var sidecarStatusText = "未启动"
     @Published var modelCatalogStatusText = "未刷新"
+    @Published var providerConnectionStatusText = "未测试"
+    @Published var providerConnectionDetailText = ""
+    @Published var providerConnectionBaseURL = ""
+    @Published var providerConnectionCodexConfigPath = ""
+    @Published var providerConnectionProxyConfigPath = ""
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
     @Published var isRunning = false
     @Published var lastCommandPreview = ""
@@ -383,6 +388,8 @@ final class SessionStore: ObservableObject {
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
         appServerItemIDs.removeAll()
+        await proxyService.stop()
+        activeProxySession = nil
     }
 
     func selectThread(_ thread: ChatThread) {
@@ -2508,6 +2515,52 @@ final class SessionStore: ObservableObject {
             return true
         }
         return false
+    }
+
+    func testProviderConnection(providerID: String? = nil) async {
+        let id = providerID ?? selectedProviderID
+        guard let provider = providers.first(where: { $0.id == id }) else {
+            providerConnectionStatusText = "未找到 provider：\(id)"
+            providerConnectionDetailText = ""
+            return
+        }
+
+        selectedProviderID = provider.id
+        await resetAppServerForProviderChange()
+        providerConnectionStatusText = "正在测试 \(provider.displayName)…"
+        providerConnectionDetailText = ""
+        providerConnectionBaseURL = ""
+        providerConnectionCodexConfigPath = ""
+        providerConnectionProxyConfigPath = ""
+
+        guard provider.usesSidecar else {
+            await refreshModelCatalog()
+            let count = codexModelCatalog.count
+            providerConnectionStatusText = count > 0 ? "model/list：\(count) 个模型" : modelCatalogStatusText
+            providerConnectionDetailText = "Codex 原生 app-server model/list"
+            return
+        }
+
+        do {
+            _ = try await appServerEnvironmentOverrides()
+            guard let session = activeProxySession else {
+                throw RaytoneProxyServiceError.healthCheckFailed("sidecar 已启动但没有返回 session")
+            }
+
+            providerConnectionBaseURL = session.baseURL.absoluteString
+            providerConnectionProxyConfigPath = session.configURL.path
+            providerConnectionCodexConfigPath = session.codexHomeURL
+                .appendingPathComponent("config.toml")
+                .path
+            providerConnectionStatusText = "sidecar 已就绪：127.0.0.1:\(session.port)"
+            providerConnectionDetailText = "raytone-proxy /health：\(provider.displayName) · \(provider.model)"
+            runtimeCatalogStatusText = "Provider 测试通过：\(provider.displayName) via \(providerConnectionBaseURL)"
+        } catch {
+            providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
+            providerConnectionDetailText = provider.apiKeyEnvironmentName.map { "Keychain 或 \($0)" } ?? "Keychain"
+            runtimeCatalogStatusText = providerConnectionStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
     }
 
     private func runPromptWithAppServer(_ trimmedPrompt: String) async throws {

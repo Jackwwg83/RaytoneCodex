@@ -449,6 +449,12 @@ struct SettingsRouteView: View {
                         let sidecarText = store.selectedProvider.usesSidecar ? store.sidecarStatusText : "不需要"
                         statusBadge(sidecarText, ok: store.selectedProvider.usesSidecar ? sidecarText.contains("127.0.0.1") : true)
                     }
+                    SettingsValueRow(title: "连接测试", description: store.providerConnectionDetailText.isEmpty ? "OpenAI 使用 model/list；第三方 provider 使用 raytone-proxy /health" : store.providerConnectionDetailText) {
+                        Text(store.providerConnectionStatusText)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                    }
                 }
             }
         }
@@ -683,7 +689,6 @@ struct SettingsRouteView: View {
                         .disabled(providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         Button("测试连接") {
-                            store.selectProvider(provider.id)
                             do {
                                 let draft = providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                                 if !draft.isEmpty {
@@ -691,8 +696,8 @@ struct SettingsRouteView: View {
                                     providerAPIKeyDraft = ""
                                 }
                                 Task {
-                                    await store.refreshModelCatalog()
-                                    providerStatusMessage = store.modelCatalogStatusText
+                                    await store.testProviderConnection(providerID: provider.id)
+                                    providerStatusMessage = store.providerConnectionStatusText
                                 }
                             } catch {
                                 providerStatusMessage = error.localizedDescription
