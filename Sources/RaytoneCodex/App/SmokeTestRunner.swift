@@ -846,8 +846,34 @@ enum SmokeTestRunner {
 
             let config = store.runtimeConfig
             let hasConfig = config != nil
+            let shareContextFixture = try? JSONValue(jsonString: """
+            {
+              "remotePluginId": "plugins_raytone_shared",
+              "remoteVersion": "1.2.3",
+              "discoverability": "UNLISTED",
+              "creatorAccountUserId": "user_raytone",
+              "creatorName": "Raytone",
+              "shareUrl": "https://chatgpt.example/plugins/share/raytone",
+              "sharePrincipals": [
+                {
+                  "principalId": "workspace_raytone",
+                  "principalType": "workspace",
+                  "role": "reader",
+                  "name": "Raytone Workspace"
+                }
+              ]
+            }
+            """)
+            let parsedShareContext = CodexAppServerClient.pluginShareContext(from: shareContextFixture)
+            let shareContextParserOK = parsedShareContext?.remotePluginID == "plugins_raytone_shared" &&
+                parsedShareContext?.remoteVersion == "1.2.3" &&
+                parsedShareContext?.discoverability == "UNLISTED" &&
+                parsedShareContext?.creatorName == "Raytone" &&
+                parsedShareContext?.sharePrincipals.first?.principalType == "workspace" &&
+                parsedShareContext?.sharePrincipals.first?.role == "reader"
             let ok = store.runtimeSnapshot.executable != nil &&
                 hasConfig &&
+                shareContextParserOK &&
                 !store.runtimeCatalogStatusText.hasPrefix("app-server 读取失败") &&
                 !mcpReloadStatus.hasPrefix("MCP 重载失败")
 
@@ -863,6 +889,7 @@ enum SmokeTestRunner {
                 "mcpReloadStatus": mcpReloadStatus,
                 "mcpReloadErrors": mcpReloadErrors,
                 "pluginCount": store.runtimePlugins.count,
+                "sharedPluginCount": store.runtimeSharedPluginCount,
                 "pluginsPreview": Array(store.runtimePlugins.prefix(8).map { plugin in
                     [
                         "id": plugin.id,
@@ -870,9 +897,18 @@ enum SmokeTestRunner {
                         "displayName": plugin.displayName,
                         "installed": plugin.installed,
                         "enabled": plugin.enabled,
-                        "marketplace": plugin.marketplaceDisplayName
+                        "marketplace": plugin.marketplaceDisplayName,
+                        "shareContext": pluginSharePayload(plugin.shareContext)
                     ] as [String: Any]
                 }),
+                "shareContextParser": [
+                    "ok": shareContextParserOK,
+                    "remotePluginId": parsedShareContext?.remotePluginID ?? "",
+                    "remoteVersion": parsedShareContext?.remoteVersion ?? "",
+                    "discoverability": parsedShareContext?.discoverability ?? "",
+                    "creatorName": parsedShareContext?.creatorName ?? "",
+                    "principalCount": parsedShareContext?.sharePrincipals.count ?? 0
+                ] as [String: Any],
                 "skillCount": store.runtimeSkills.count,
                 "skillsPreview": Array(store.runtimeSkills.prefix(8).map { skill in
                     [
@@ -5636,6 +5672,17 @@ enum SmokeTestRunner {
             "defaultV2": voices?.defaultV2 ?? "",
             "v1Count": voices?.v1.count ?? 0,
             "v2Count": voices?.v2.count ?? 0
+        ]
+    }
+
+    private static func pluginSharePayload(_ context: CodexRuntimePluginShareContext?) -> [String: Any] {
+        [
+            "remotePluginId": context?.remotePluginID ?? "",
+            "remoteVersion": context?.remoteVersion ?? "",
+            "discoverability": context?.discoverability ?? "",
+            "shareUrl": context?.shareURL ?? "",
+            "creatorName": context?.creatorName ?? "",
+            "principalCount": context?.sharePrincipals.count ?? 0
         ]
     }
 

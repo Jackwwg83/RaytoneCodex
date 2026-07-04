@@ -1,6 +1,60 @@
 import RaytoneCodexCore
 import SwiftUI
 
+private func pluginShareSummary(_ shareContext: CodexRuntimePluginShareContext) -> String {
+    var pieces = ["共享"]
+    if let discoverability = shareContext.discoverability, !discoverability.isEmpty {
+        pieces.append(pluginShareDiscoverabilityName(discoverability))
+    }
+    if let creatorName = shareContext.creatorName, !creatorName.isEmpty {
+        pieces.append("来自 \(creatorName)")
+    }
+    let version = shareContext.remoteVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    pieces.append(version.isEmpty ? shareContext.remotePluginID : "\(shareContext.remotePluginID)@\(version)")
+    return pieces.joined(separator: " · ")
+}
+
+private func pluginShareRows(_ shareContext: CodexRuntimePluginShareContext) -> [String] {
+    var rows = [pluginShareSummary(shareContext)]
+    if let shareURL = shareContext.shareURL, !shareURL.isEmpty {
+        rows.append("链接 · \(shareURL)")
+    }
+    if !shareContext.sharePrincipals.isEmpty {
+        let principals = shareContext.sharePrincipals
+            .prefix(4)
+            .map { "\($0.name) · \(pluginShareRoleName($0.role)) · \(pluginSharePrincipalTypeName($0.principalType))" }
+        rows.append(contentsOf: principals)
+    }
+    return rows
+}
+
+private func pluginShareDiscoverabilityName(_ value: String) -> String {
+    switch value.uppercased() {
+    case "LISTED": "公开列出"
+    case "UNLISTED": "未列出"
+    case "PRIVATE": "私有"
+    default: value
+    }
+}
+
+private func pluginShareRoleName(_ value: String) -> String {
+    switch value.lowercased() {
+    case "reader": "可读"
+    case "editor": "可编辑"
+    case "owner": "所有者"
+    default: value
+    }
+}
+
+private func pluginSharePrincipalTypeName(_ value: String) -> String {
+    switch value.lowercased() {
+    case "user": "用户"
+    case "group": "团队"
+    case "workspace": "工作区"
+    default: value
+    }
+}
+
 struct PluginsPage: View {
     @ObservedObject var store: SessionStore
     @State private var selectedTab: PluginTab = .plugins
@@ -16,10 +70,17 @@ struct PluginsPage: View {
     private var filteredPlugins: [CodexRuntimePlugin] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return store.runtimePlugins.filter { plugin in
-            let matchesSource = sourceFilter == "全部来源" ||
-                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("OpenAI") ||
-                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("Codex official") ||
-                plugin.developerName?.localizedCaseInsensitiveContains("OpenAI") == true
+            let matchesSource: Bool
+            switch sourceFilter {
+            case "全部来源":
+                matchesSource = true
+            case "共享插件":
+                matchesSource = plugin.shareContext != nil
+            default:
+                matchesSource = plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("OpenAI") ||
+                    plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("Codex official") ||
+                    plugin.developerName?.localizedCaseInsensitiveContains("OpenAI") == true
+            }
             let matchesState: Bool
             switch stateFilter {
             case "已安装":
@@ -33,7 +94,10 @@ struct PluginsPage: View {
                 plugin.displayName.localizedCaseInsensitiveContains(query) ||
                 plugin.name.localizedCaseInsensitiveContains(query) ||
                 plugin.summary.localizedCaseInsensitiveContains(query) ||
-                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains(query)
+                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains(query) ||
+                plugin.shareContext?.remotePluginID.localizedCaseInsensitiveContains(query) == true ||
+                plugin.shareContext?.creatorName?.localizedCaseInsensitiveContains(query) == true ||
+                plugin.shareContext?.shareURL?.localizedCaseInsensitiveContains(query) == true
             return matchesSource && matchesState && matchesQuery
         }
     }
@@ -174,7 +238,7 @@ struct PluginsPage: View {
             .background(Theme.fill)
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
 
-            filterMenu(selection: $sourceFilter, values: ["OpenAI 构建", "全部来源"])
+            filterMenu(selection: $sourceFilter, values: ["OpenAI 构建", "共享插件", "全部来源"])
             filterMenu(selection: $stateFilter, values: stateFilterValues)
         }
     }
@@ -337,6 +401,13 @@ struct PluginsPage: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.textSecondary)
                             .lineLimit(3)
+                        if let shareContext = detail.plugin.shareContext {
+                            Text(pluginShareSummary(shareContext))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                     }
                     Spacer(minLength: 0)
                     Text(store.runtimePluginDetailStatusText)
@@ -352,6 +423,9 @@ struct PluginsPage: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
+                    if let shareContext = detail.plugin.shareContext {
+                        pluginDetailList("共享", rows: pluginShareRows(shareContext))
+                    }
                     if !detail.skills.isEmpty {
                         pluginDetailList("技能", rows: detail.skills.map { "\($0.displayName) · \($0.enabled ? "启用" : "停用")" })
                     }
@@ -488,6 +562,13 @@ private struct RuntimePluginRow: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
+                if let shareContext = plugin.shareContext {
+                    Text(pluginShareSummary(shareContext))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
 
             Spacer(minLength: 8)

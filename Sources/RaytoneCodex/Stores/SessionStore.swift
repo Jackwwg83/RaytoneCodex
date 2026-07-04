@@ -50,6 +50,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
     @Published var runtimePluginDetail: CodexRuntimePluginDetail?
     @Published var runtimePluginDetailStatusText = "未读取"
+    @Published var runtimeSharedPluginCount = 0
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
     @Published var runtimeHooks: [CodexRuntimeHook] = []
     @Published var runtimeMCPServers: [CodexRuntimeMCPServer] = []
@@ -2277,6 +2278,15 @@ final class SessionStore: ObservableObject {
             }
 
             do {
+                let sharedCatalog = try await client.listSharedPluginCatalog()
+                runtimeSharedPluginCount = sharedCatalog.plugins.count
+                runtimePlugins = Self.mergedRuntimePlugins(runtimePlugins, with: sharedCatalog.plugins)
+            } catch {
+                runtimeSharedPluginCount = 0
+                errors.append("plugin/share/list：\(error.localizedDescription)")
+            }
+
+            do {
                 let catalog = try await client.listSkills(cwds: [workspacePath], forceReload: forceReloadSkills)
                 runtimeSkills = catalog.skills
                 errors.append(contentsOf: catalog.errors)
@@ -2284,7 +2294,7 @@ final class SessionStore: ObservableObject {
                 errors.append("skills/list：\(error.localizedDescription)")
             }
             runtimeCatalogErrors = errors
-            runtimeCatalogStatusText = "app-server：\(runtimePlugins.count) 个插件 · \(runtimeSkills.count) 个技能 · 正在读取设置…"
+            runtimeCatalogStatusText = "app-server：\(runtimePlugins.count) 个插件 · 共享 \(runtimeSharedPluginCount) 个 · \(runtimeSkills.count) 个技能 · 正在读取设置…"
 
             do {
                 applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
@@ -2309,13 +2319,31 @@ final class SessionStore: ObservableObject {
             }
 
             runtimeCatalogErrors = errors
-            runtimeCatalogStatusText = "app-server：\(runtimePlugins.count) 个插件 · \(runtimeSkills.count) 个技能 · \(runtimeMCPServers.count) 个 MCP · \(runtimeHooks.count) 个钩子"
+            runtimeCatalogStatusText = "app-server：\(runtimePlugins.count) 个插件 · 共享 \(runtimeSharedPluginCount) 个 · \(runtimeSkills.count) 个技能 · \(runtimeMCPServers.count) 个 MCP · \(runtimeHooks.count) 个钩子"
         } catch {
             runtimeCatalogStatusText = "app-server 读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    private static func mergedRuntimePlugins(
+        _ basePlugins: [CodexRuntimePlugin],
+        with sharedPlugins: [CodexRuntimePlugin]
+    ) -> [CodexRuntimePlugin] {
+        guard !sharedPlugins.isEmpty else { return basePlugins }
+        var merged = basePlugins
+        for sharedPlugin in sharedPlugins {
+            if let index = merged.firstIndex(where: { $0.id == sharedPlugin.id }) {
+                if merged[index].shareContext == nil {
+                    merged[index] = sharedPlugin
+                }
+            } else {
+                merged.append(sharedPlugin)
+            }
+        }
+        return merged
     }
 
     func refreshRuntimeConfiguration() async {

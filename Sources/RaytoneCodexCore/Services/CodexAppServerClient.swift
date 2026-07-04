@@ -382,6 +382,49 @@ public struct CodexRuntimePluginCatalog: Equatable, Sendable {
     }
 }
 
+public struct CodexRuntimePluginSharePrincipal: Equatable, Sendable, Identifiable {
+    public var id: String { principalID }
+    public var principalID: String
+    public var principalType: String
+    public var role: String
+    public var name: String
+
+    public init(principalID: String, principalType: String, role: String, name: String) {
+        self.principalID = principalID
+        self.principalType = principalType
+        self.role = role
+        self.name = name
+    }
+}
+
+public struct CodexRuntimePluginShareContext: Equatable, Sendable {
+    public var remotePluginID: String
+    public var remoteVersion: String?
+    public var discoverability: String?
+    public var shareURL: String?
+    public var creatorAccountUserID: String?
+    public var creatorName: String?
+    public var sharePrincipals: [CodexRuntimePluginSharePrincipal]
+
+    public init(
+        remotePluginID: String,
+        remoteVersion: String?,
+        discoverability: String?,
+        shareURL: String?,
+        creatorAccountUserID: String?,
+        creatorName: String?,
+        sharePrincipals: [CodexRuntimePluginSharePrincipal]
+    ) {
+        self.remotePluginID = remotePluginID
+        self.remoteVersion = remoteVersion
+        self.discoverability = discoverability
+        self.shareURL = shareURL
+        self.creatorAccountUserID = creatorAccountUserID
+        self.creatorName = creatorName
+        self.sharePrincipals = sharePrincipals
+    }
+}
+
 public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
@@ -396,6 +439,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
     public var installPolicy: String
     public var authPolicy: String
     public var availability: String
+    public var shareContext: CodexRuntimePluginShareContext?
     public var installed: Bool
     public var enabled: Bool
 
@@ -417,6 +461,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
         installPolicy: String,
         authPolicy: String,
         availability: String,
+        shareContext: CodexRuntimePluginShareContext? = nil,
         installed: Bool,
         enabled: Bool
     ) {
@@ -433,6 +478,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
         self.installPolicy = installPolicy
         self.authPolicy = authPolicy
         self.availability = availability
+        self.shareContext = shareContext
         self.installed = installed
         self.enabled = enabled
     }
@@ -1723,6 +1769,11 @@ public actor CodexAppServerClient {
         return Self.pluginCatalog(from: result)
     }
 
+    public func listSharedPluginCatalog() async throws -> CodexRuntimePluginCatalog {
+        let result = try await request(method: "plugin/share/list", params: .object([:]))
+        return Self.sharedPluginCatalog(from: result)
+    }
+
     public func readPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginDetail {
         var params: [String: JSONValue] = [
             "pluginName": .string(plugin.name)
@@ -2682,6 +2733,27 @@ public actor CodexAppServerClient {
         )
     }
 
+    private static func sharedPluginCatalog(from result: JSONValue) -> CodexRuntimePluginCatalog {
+        let plugins = result["data"]?.arrayValue?.compactMap { itemValue -> CodexRuntimePlugin? in
+            guard let item = itemValue.objectValue,
+                  let plugin = item["plugin"]?.objectValue else {
+                return nil
+            }
+            return runtimePlugin(
+                from: plugin,
+                marketplaceName: "workspace-shared-with-me",
+                marketplaceDisplayName: "共享插件",
+                marketplacePath: item["localPluginPath"]?.pathString
+            )
+        } ?? []
+
+        return CodexRuntimePluginCatalog(
+            plugins: plugins.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending },
+            featuredPluginIds: [],
+            marketplaceLoadErrors: []
+        )
+    }
+
     private static func pluginDetail(from value: JSONValue, fallback: CodexRuntimePlugin) -> CodexRuntimePluginDetail {
         let object = value.objectValue ?? [:]
         let marketplaceName = object["marketplaceName"]?.stringValue ?? fallback.marketplaceName
@@ -2734,8 +2806,43 @@ public actor CodexAppServerClient {
             installPolicy: plugin["installPolicy"]?.stringValue ?? "UNKNOWN",
             authPolicy: plugin["authPolicy"]?.stringValue ?? "UNKNOWN",
             availability: plugin["availability"]?.stringValue ?? "AVAILABLE",
+            shareContext: pluginShareContext(from: plugin["shareContext"]),
             installed: plugin["installed"]?.boolValue ?? false,
             enabled: plugin["enabled"]?.boolValue ?? false
+        )
+    }
+
+    public static func pluginShareContext(from value: JSONValue?) -> CodexRuntimePluginShareContext? {
+        guard let object = value?.objectValue,
+              let remotePluginID = object["remotePluginId"]?.stringValue,
+              !remotePluginID.isEmpty else {
+            return nil
+        }
+
+        let principals = object["sharePrincipals"]?.arrayValue?.compactMap { principalValue -> CodexRuntimePluginSharePrincipal? in
+            guard let principal = principalValue.objectValue,
+                  let principalID = principal["principalId"]?.stringValue,
+                  let principalType = principal["principalType"]?.stringValue,
+                  let role = principal["role"]?.stringValue,
+                  let name = principal["name"]?.stringValue else {
+                return nil
+            }
+            return CodexRuntimePluginSharePrincipal(
+                principalID: principalID,
+                principalType: principalType,
+                role: role,
+                name: name
+            )
+        } ?? []
+
+        return CodexRuntimePluginShareContext(
+            remotePluginID: remotePluginID,
+            remoteVersion: object["remoteVersion"]?.stringValue,
+            discoverability: object["discoverability"]?.stringValue,
+            shareURL: object["shareUrl"]?.stringValue,
+            creatorAccountUserID: object["creatorAccountUserId"]?.stringValue,
+            creatorName: object["creatorName"]?.stringValue,
+            sharePrincipals: principals
         )
     }
 
