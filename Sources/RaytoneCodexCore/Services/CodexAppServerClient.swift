@@ -612,6 +612,18 @@ public struct CodexRuntimeGitDiff: Equatable, Sendable {
     }
 }
 
+public struct CodexConfigWriteEdit: Equatable, Sendable {
+    public var keyPath: String
+    public var value: JSONValue
+    public var mergeStrategy: String
+
+    public init(keyPath: String, value: JSONValue, mergeStrategy: String = "upsert") {
+        self.keyPath = keyPath
+        self.value = value
+        self.mergeStrategy = mergeStrategy
+    }
+}
+
 public struct CodexRuntimeConfigRequirements: Equatable, Sendable {
     public var allowedApprovalPolicies: [String]
     public var allowedSandboxModes: [String]
@@ -1077,6 +1089,27 @@ public actor CodexAppServerClient {
             params["filePath"] = .string(filePath)
         }
         _ = try await request(method: "config/value/write", params: .object(params))
+    }
+
+    public func batchWriteConfig(
+        edits: [CodexConfigWriteEdit],
+        filePath: String? = nil,
+        reloadUserConfig: Bool = true
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "edits": .array(edits.map { edit in
+                .object([
+                    "keyPath": .string(edit.keyPath),
+                    "value": edit.value,
+                    "mergeStrategy": .string(edit.mergeStrategy)
+                ])
+            }),
+            "reloadUserConfig": .bool(reloadUserConfig)
+        ]
+        if let filePath {
+            params["filePath"] = .string(filePath)
+        }
+        _ = try await request(method: "config/batchWrite", params: .object(params))
     }
 
     public func listHooks(cwds: [String]) async throws -> CodexRuntimeHookCatalog {

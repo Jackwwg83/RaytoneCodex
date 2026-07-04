@@ -84,6 +84,7 @@ final class SessionStore: ObservableObject {
     private var appServerConnectionState: ConnectionState?
     private var appServerEnvironmentKey: String?
     private var activeProxySession: RaytoneProxySession?
+    var appServerEnvironmentOverridesForTesting: [String: String] = [:]
 
     init(service: CodexCLIService = CodexCLIService()) {
         self.service = service
@@ -1628,6 +1629,49 @@ final class SessionStore: ObservableObject {
         toolPanel = .launcher
     }
 
+    func installAutomationHookTemplate(title: String, prompt templatePrompt: String) async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在安装 \(title) 自动化 hook…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let existing = try await client.listHooks(cwds: [workspacePath])
+            let conflictingUserHooks = existing.hooks.filter { hook in
+                Self.isUserPromptSubmitHook(hook) &&
+                    hook.source == "user" &&
+                    !(hook.command?.contains("raytone-automation-events.jsonl") == true)
+            }
+            guard conflictingUserHooks.isEmpty else {
+                runtimeCatalogStatusText = "未安装：已有用户级 UserPromptSubmit hook"
+                runtimeCatalogErrors = [
+                    "为避免覆盖现有 hook，请先在 Codex 配置里合并或移除：\(conflictingUserHooks.map(\.key).joined(separator: ", "))"
+                ]
+                runtimeCatalogIsRefreshing = false
+                return
+            }
+
+            let command = Self.raytoneAutomationHookCommand(title: title)
+            let configURL = try ensureCodexConfigFile()
+            let existingConfig = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+            let updatedConfig = Self.installRaytoneAutomationHookBlock(
+                into: existingConfig,
+                title: title,
+                command: command
+            )
+            try updatedConfig.write(to: configURL, atomically: true, encoding: .utf8)
+            await refreshRuntimeHooks()
+            runtimeCatalogStatusText = "已安装 \(title)：hooks/list 返回 \(runtimeHooks.count) 个钩子"
+            if !templatePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                prompt = templatePrompt
+            }
+        } catch {
+            runtimeCatalogStatusText = "自动化安装失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+        }
+    }
+
     func saveInstructions(_ instructions: String) async {
         runtimeCatalogStatusText = "正在写入 instructions…"
         do {
@@ -1642,17 +1686,22 @@ final class SessionStore: ObservableObject {
     }
 
     func openCodexConfigFile() {
-        let configURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex")
-            .appendingPathComponent("config.toml")
-        try? FileManager.default.createDirectory(
+        let configURL = (try? ensureCodexConfigFile()) ?? Self.defaultCodexConfigURL()
+        NSWorkspace.shared.open(configURL)
+    }
+
+    private func ensureCodexConfigFile() throws -> URL {
+        let configURL = Self.defaultCodexConfigURL(
+            overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
+        )
+        try FileManager.default.createDirectory(
             at: configURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         if !FileManager.default.fileExists(atPath: configURL.path) {
             FileManager.default.createFile(atPath: configURL.path, contents: Data())
         }
-        NSWorkspace.shared.open(configURL)
+        return configURL
     }
 
     func revealCodexHomeSubfolder(_ subfolder: String) {
@@ -1813,10 +1862,15 @@ final class SessionStore: ObservableObject {
             throw CodexCLIError.executableNotFound
         }
 
-        let environmentOverrides = useProviderConfiguration ? try await appServerEnvironmentOverrides() : [:]
-        let environmentKey: String
+        var environmentOverrides = baseAppServerEnvironmentOverrides()
         if useProviderConfiguration {
-            environmentKey = environmentOverrides["CODEX_HOME"] ?? "global"
+            environmentOverrides.merge(try await appServerEnvironmentOverrides()) { _, new in new }
+        }
+        let environmentKey: String
+        if let codexHome = environmentOverrides["CODEX_HOME"] {
+            environmentKey = codexHome
+        } else if useProviderConfiguration {
+            environmentKey = "global"
         } else {
             environmentKey = selectedProvider.usesSidecar ? "global-tools" : "global"
         }
@@ -1890,6 +1944,17 @@ final class SessionStore: ObservableObject {
             sidecarStatusText = "启动失败"
             throw error
         }
+    }
+
+    private func baseAppServerEnvironmentOverrides() -> [String: String] {
+        if !appServerEnvironmentOverridesForTesting.isEmpty {
+            return appServerEnvironmentOverridesForTesting
+        }
+        guard let codexHome = ProcessInfo.processInfo.environment["RAYTONE_CODEX_HOME"],
+              !codexHome.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return [:]
+        }
+        return ["CODEX_HOME": codexHome]
     }
 
     private func resetAppServerForProviderChange() async {
@@ -2663,6 +2728,106 @@ final class SessionStore: ObservableObject {
             return command
         }
         return String(first)
+    }
+
+    private static func defaultCodexConfigURL(overrideCodexHome: String? = nil) -> URL {
+        let environment = ProcessInfo.processInfo.environment
+        let codexHome = overrideCodexHome?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? overrideCodexHome
+            : environment["RAYTONE_CODEX_HOME"] ?? environment["CODEX_HOME"]
+        if let codexHome, !codexHome.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return URL(fileURLWithPath: codexHome).appendingPathComponent("config.toml")
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex")
+            .appendingPathComponent("config.toml")
+    }
+
+    private static func installRaytoneAutomationHookBlock(into config: String, title: String, command: String) -> String {
+        let withoutOldBlock = removeRaytoneAutomationHookBlock(from: config)
+        let withFeature = ensureHooksFeatureEnabled(in: withoutOldBlock)
+        let block = """
+
+        # BEGIN RaytoneCodex automation hooks
+        [[hooks.UserPromptSubmit]]
+
+        [[hooks.UserPromptSubmit.hooks]]
+        type = "command"
+        command = \(tomlBasicString(command))
+        timeout = 5
+        async = false
+        statusMessage = \(tomlBasicString("RaytoneCodex 自动化：\(title)"))
+        # END RaytoneCodex automation hooks
+        """
+        return withFeature.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + block + "\n"
+    }
+
+    private static func removeRaytoneAutomationHookBlock(from config: String) -> String {
+        let begin = "# BEGIN RaytoneCodex automation hooks"
+        let end = "# END RaytoneCodex automation hooks"
+        var result = config
+        while let beginRange = result.range(of: begin),
+              let endRange = result.range(of: end, range: beginRange.lowerBound..<result.endIndex) {
+            result.removeSubrange(beginRange.lowerBound..<endRange.upperBound)
+        }
+        return result
+    }
+
+    private static func ensureHooksFeatureEnabled(in config: String) -> String {
+        var lines = config.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let featuresIndex = lines.firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "[features]" }) else {
+            return "[features]\nhooks = true\n\n" + config.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var insertIndex = lines.index(after: featuresIndex)
+        while insertIndex < lines.endIndex {
+            let trimmed = lines[insertIndex].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("[") && trimmed.hasSuffix("]") {
+                break
+            }
+            if trimmed.hasPrefix("hooks") || trimmed.hasPrefix("codex_hooks") {
+                lines[insertIndex] = "hooks = true"
+                return lines.joined(separator: "\n")
+            }
+            insertIndex = lines.index(after: insertIndex)
+        }
+
+        lines.insert("hooks = true", at: lines.index(after: featuresIndex))
+        return lines.joined(separator: "\n")
+    }
+
+    private static func tomlBasicString(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\t", with: "\\t")
+        return "\"\(escaped)\""
+    }
+
+    private static func raytoneAutomationHookCommand(title: String) -> String {
+        let titleArgument = shellSingleQuote(title)
+        let script = """
+        dir="${CODEX_HOME:-$HOME/.codex}"; mkdir -p "$dir"; printf '{"source":"RaytoneCodex","template":"%s","event":"UserPromptSubmit","timestamp":"%s"}\\n' \(titleArgument) "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$dir/raytone-automation-events.jsonl"
+        """
+        return "/bin/zsh -lc \(shellSingleQuote(script))"
+    }
+
+    private static func shellSingleQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+    }
+
+    private static func isUserPromptSubmitHook(_ hook: CodexRuntimeHook) -> Bool {
+        normalizedHookEventName(hook.eventName) == "userpromptsubmit"
+    }
+
+    private static func normalizedHookEventName(_ value: String) -> String {
+        value
+            .unicodeScalars
+            .filter { CharacterSet.alphanumerics.contains($0) }
+            .map { String($0).lowercased() }
+            .joined()
     }
 
     static func approvalName(_ policy: CodexApprovalPolicy) -> String {

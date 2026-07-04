@@ -133,7 +133,7 @@ struct AutomationPage: View {
 
     private func templateButton(symbol: String, title: String, prompt: String) -> some View {
         Button {
-            store.prepareAutomationTemplate(title: title, prompt: prompt)
+            Task { await store.installAutomationHookTemplate(title: title, prompt: prompt) }
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: symbol)
@@ -293,11 +293,17 @@ private struct HookRuntimeRow: View {
 
     private var eventName: String {
         switch hook.eventName {
-        case "pre_tool_use": "工具前"
-        case "post_tool_use": "工具后"
+        case "pre_tool_use", "preToolUse": "工具前"
+        case "post_tool_use", "postToolUse": "工具后"
+        case "user_prompt_submit", "userPromptSubmit": "提交提示"
+        case "session_start", "sessionStart": "会话开始"
+        case "pre_compact", "preCompact": "压缩前"
+        case "post_compact", "postCompact": "压缩后"
+        case "permission_request", "permissionRequest": "请求权限"
         case "notification": "通知"
         case "stop": "停止"
-        case "subagent_stop": "子代理停止"
+        case "subagent_stop", "subagentStop": "子代理停止"
+        case "subagent_start", "subagentStart": "子代理开始"
         default: hook.eventName
         }
     }

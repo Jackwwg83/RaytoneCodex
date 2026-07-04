@@ -18,6 +18,8 @@ enum SmokeTestRunner {
             runRuntimePagesSmoke()
         } else if CommandLine.arguments.contains("--automation-smoke-test") {
             runAutomationSmoke()
+        } else if CommandLine.arguments.contains("--automation-hook-smoke-test") {
+            runAutomationHookSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
@@ -717,6 +719,103 @@ enum SmokeTestRunner {
                 })
             ])
             exit(hardFailure ? 1 : 0)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAutomationHookSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAutomationHookSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "# Automation hook smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                }
+
+                await store.refreshRuntime()
+                await store.installAutomationHookTemplate(
+                    title: "项目监控",
+                    prompt: "Raytone automation hook smoke prompt"
+                )
+
+                let configURL = codexHomeURL.appendingPathComponent("config.toml")
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let hooks = store.runtimeHooks
+                let raytoneHooks = hooks.filter { hook in
+                    let normalizedEvent = hook.eventName
+                        .unicodeScalars
+                        .filter { CharacterSet.alphanumerics.contains($0) }
+                        .map { String($0).lowercased() }
+                        .joined()
+                    return normalizedEvent == "userpromptsubmit" &&
+                        hook.command?.contains("raytone-automation-events.jsonl") == true
+                }
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    configText.contains("[features]") &&
+                    configText.contains("hooks = true") &&
+                    configText.contains("UserPromptSubmit") &&
+                    configText.contains("raytone-automation-events.jsonl") &&
+                    raytoneHooks.count == 1 &&
+                    store.runtimeCatalogStatusText.contains("已安装 项目监控")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "configPath": configURL.path,
+                    "configText": configText,
+                    "hookCount": hooks.count,
+                    "raytoneHookCount": raytoneHooks.count,
+                    "hooks": hooks.map { hook in
+                        [
+                            "key": hook.key,
+                            "eventName": hook.eventName,
+                            "handlerType": hook.handlerType,
+                            "command": hook.command ?? "",
+                            "source": hook.source,
+                            "sourcePath": hook.sourcePath,
+                            "enabled": hook.enabled,
+                            "trustStatus": hook.trustStatus
+                        ] as [String: Any]
+                    },
+                    "status": store.runtimeCatalogStatusText,
+                    "errors": store.runtimeCatalogErrors
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
