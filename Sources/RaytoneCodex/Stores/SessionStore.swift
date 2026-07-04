@@ -1861,6 +1861,37 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func reloadRuntimeMCPServers() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 config/mcpServer/reload…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.reloadMCPServerRegistry()
+            runtimeCatalogStatusText = "config/mcpServer/reload 已完成，正在刷新状态…"
+            await refreshRuntimeMCPServers()
+        } catch {
+            runtimeCatalogStatusText = "MCP 重载失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+        }
+    }
+
+    func loginMCPServer(_ server: CodexRuntimeMCPServer) async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在启动 \(server.title) OAuth 登录…"
+        runtimeCatalogErrors = []
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let login = try await client.loginMCPServerOAuth(name: server.name, timeoutSecs: 120)
+            NSWorkspace.shared.open(login.authorizationURL)
+            runtimeCatalogStatusText = "已打开 \(server.title) 授权页面，等待浏览器完成登录…"
+        } catch {
+            runtimeCatalogStatusText = "\(server.title) 登录失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+        runtimeCatalogIsRefreshing = false
+    }
+
     func refreshRuntimeHooks() async {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在读取 hooks/list…"
@@ -3324,10 +3355,34 @@ final class SessionStore: ObservableObject {
             if let requestID = params?["requestId"]?.stringValue {
                 clearResolvedApproval(requestID)
             }
-        case "skills/changed", "mcpServer/startupStatus/updated":
+        case "skills/changed":
             if !isRunning {
-                Task { await refreshRuntimeCatalog(forceReloadSkills: method == "skills/changed") }
+                Task { await refreshRuntimeCatalog(forceReloadSkills: true) }
             }
+        case "mcpServer/startupStatus/updated":
+            let name = params?["name"]?.stringValue ?? "MCP"
+            let status = params?["status"]?.stringValue ?? "updated"
+            if let error = params?["error"]?.stringValue, !error.isEmpty {
+                runtimeCatalogStatusText = "\(name)：\(status) · \(error)"
+                runtimeCatalogErrors = [error]
+            } else {
+                runtimeCatalogStatusText = "\(name)：\(status)"
+            }
+            if !isRunning {
+                Task { await refreshRuntimeMCPServers() }
+            }
+        case "mcpServer/oauthLogin/completed":
+            let name = params?["name"]?.stringValue ?? "MCP"
+            let success = params?["success"]?.boolValue ?? false
+            if success {
+                runtimeCatalogStatusText = "\(name) OAuth 登录完成"
+                runtimeCatalogErrors = []
+            } else {
+                let error = params?["error"]?.stringValue ?? "OAuth 登录失败"
+                runtimeCatalogStatusText = "\(name) OAuth 登录失败"
+                runtimeCatalogErrors = [error]
+            }
+            Task { await refreshRuntimeMCPServers() }
         case "item/agentMessage/delta":
             appendAgentDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":

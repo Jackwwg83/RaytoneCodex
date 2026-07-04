@@ -533,6 +533,14 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexMCPServerOAuthLogin: Equatable, Sendable {
+    public var authorizationURL: URL
+
+    public init(authorizationURL: URL) {
+        self.authorizationURL = authorizationURL
+    }
+}
+
 public struct CodexRuntimeDesktopSettings: Equatable, Sendable {
     public var showInMenuBar: Bool?
     public var showBottomPanel: Bool?
@@ -1437,6 +1445,28 @@ public actor CodexAppServerClient {
         }
         let result = try await request(method: "mcpServerStatus/list", params: .object(params))
         return Self.mcpCatalog(from: result)
+    }
+
+    public func loginMCPServerOAuth(name: String, scopes: [String]? = nil, timeoutSecs: Int? = nil) async throws -> CodexMCPServerOAuthLogin {
+        var params: [String: JSONValue] = [
+            "name": .string(name)
+        ]
+        if let scopes {
+            params["scopes"] = .array(scopes.map(JSONValue.string))
+        }
+        if let timeoutSecs {
+            params["timeoutSecs"] = .number(Double(timeoutSecs))
+        }
+        let result = try await request(method: "mcpServer/oauth/login", params: .object(params))
+        guard let urlString = result["authorizationUrl"]?.stringValue,
+              let url = URL(string: urlString) else {
+            throw CodexAppServerError.invalidResponse("mcpServer/oauth/login did not return a valid authorizationUrl.")
+        }
+        return CodexMCPServerOAuthLogin(authorizationURL: url)
+    }
+
+    public func reloadMCPServerRegistry() async throws {
+        _ = try await request(method: "config/mcpServer/reload", params: nil)
     }
 
     public func readAccount(refreshToken: Bool = false) async throws -> CodexRuntimeAccount {

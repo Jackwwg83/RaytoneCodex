@@ -614,13 +614,18 @@ enum SmokeTestRunner {
             await store.refreshRuntime()
             fputs("catalog-smoke: refreshRuntimeCatalog\n", stderr)
             await store.refreshRuntimeCatalog(forceReloadSkills: true)
+            fputs("catalog-smoke: reloadRuntimeMCPServers\n", stderr)
+            await store.reloadRuntimeMCPServers()
+            let mcpReloadStatus = store.runtimeCatalogStatusText
+            let mcpReloadErrors = store.runtimeCatalogErrors
             fputs("catalog-smoke: collect result\n", stderr)
 
             let config = store.runtimeConfig
             let hasConfig = config != nil
             let ok = store.runtimeSnapshot.executable != nil &&
                 hasConfig &&
-                !store.runtimeCatalogStatusText.hasPrefix("app-server 读取失败")
+                !store.runtimeCatalogStatusText.hasPrefix("app-server 读取失败") &&
+                !mcpReloadStatus.hasPrefix("MCP 重载失败")
 
             emitJSON([
                 "ok": ok,
@@ -631,6 +636,8 @@ enum SmokeTestRunner {
                 "status": store.runtimeCatalogStatusText,
                 "errorCount": store.runtimeCatalogErrors.count,
                 "errors": store.runtimeCatalogErrors,
+                "mcpReloadStatus": mcpReloadStatus,
+                "mcpReloadErrors": mcpReloadErrors,
                 "pluginCount": store.runtimePlugins.count,
                 "pluginsPreview": Array(store.runtimePlugins.prefix(8).map { plugin in
                     [

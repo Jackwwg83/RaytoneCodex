@@ -1073,6 +1073,10 @@ struct SettingsRouteView: View {
             HStack {
                 paneTitle("MCP 服务器", subtitle: "来自 app-server 的 mcpServerStatus/list")
                 Spacer(minLength: 0)
+                Button("重载") {
+                    Task { await store.reloadRuntimeMCPServers() }
+                }
+                .buttonStyle(ChipButtonStyle())
                 Button("刷新") {
                     Task { await store.refreshRuntimeMCPServers() }
                 }
@@ -1098,6 +1102,12 @@ struct SettingsRouteView: View {
                                     Text(server.title)
                                         .font(.system(size: 13.5, weight: .semibold))
                                     Spacer(minLength: 0)
+                                    if mcpServerCanLogin(server) {
+                                        Button("登录") {
+                                            Task { await store.loginMCPServer(server) }
+                                        }
+                                        .buttonStyle(ChipButtonStyle(prominent: true))
+                                    }
                                     statusBadge(mcpAuthName(server.authStatus), ok: server.authStatus != "notLoggedIn")
                                 }
                                 metricRow("名称", server.name)
@@ -1437,8 +1447,19 @@ struct SettingsRouteView: View {
                     VStack(spacing: 10) {
                         ForEach(store.runtimeMCPServers.prefix(8)) { server in
                             SettingsCard {
-                                metricRow(server.title, mcpAuthName(server.authStatus))
-                                metricRow("工具", "\(server.toolNames.count) 个")
+                                HStack(spacing: 8) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        metricRow(server.title, mcpAuthName(server.authStatus))
+                                        metricRow("工具", "\(server.toolNames.count) 个")
+                                    }
+                                    Spacer(minLength: 0)
+                                    if mcpServerCanLogin(server) {
+                                        Button("登录") {
+                                            Task { await store.loginMCPServer(server) }
+                                        }
+                                        .buttonStyle(ChipButtonStyle(prominent: true))
+                                    }
+                                }
                             }
                         }
                     }
@@ -2008,6 +2029,10 @@ struct SettingsRouteView: View {
         case "oAuth": "OAuth"
         default: value
         }
+    }
+
+    private func mcpServerCanLogin(_ server: CodexRuntimeMCPServer) -> Bool {
+        server.authStatus == "notLoggedIn"
     }
 
     private func hookTrustName(_ value: String) -> String {
