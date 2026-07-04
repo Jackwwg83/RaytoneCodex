@@ -9,7 +9,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use bytes::Bytes;
 use clap::Parser;
+use futures::{Stream, StreamExt};
 use provider::{ProviderRuntime, ProxyConfig};
 use proxy::{
     error::ProxyError,
@@ -29,11 +31,14 @@ use proxy::{
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::{
+    io,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 #[derive(Debug, Parser)]
@@ -54,6 +59,21 @@ struct AppState {
     client: Client,
     runtime: Arc<ProviderRuntime>,
     history: Arc<CodexChatHistoryStore>,
+    usage: Arc<Mutex<UsageStats>>,
+}
+
+#[derive(Debug, Default)]
+struct UsageStats {
+    requests: u64,
+    successful_responses: u64,
+    failed_responses: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: u64,
+    reasoning_tokens: u64,
+    last_usage: Option<Value>,
+    last_error: Option<String>,
+    last_updated_unix_ms: Option<u64>,
 }
 
 #[tokio::main]
@@ -73,11 +93,13 @@ async fn main() -> anyhow::Result<()> {
         client: Client::new(),
         runtime,
         history: Arc::new(CodexChatHistoryStore::default()),
+        usage: Arc::new(Mutex::new(UsageStats::default())),
     };
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/health/upstream", get(upstream_health))
+        .route("/usage", get(usage))
         .route("/v1/models", get(models))
         .route("/models", get(models))
         .route("/v1/responses", post(responses))
@@ -116,6 +138,26 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "model": state.runtime.model,
         "hasApiKey": state.runtime.api_key.is_some(),
         "baseUrl": state.runtime.base_url,
+    }))
+}
+
+async fn usage(State(state): State<AppState>) -> impl IntoResponse {
+    let stats = state.usage.lock().await;
+    Json(json!({
+        "ok": true,
+        "provider": state.runtime.provider.id,
+        "model": state.runtime.model,
+        "baseUrl": state.runtime.base_url,
+        "requests": stats.requests,
+        "successfulResponses": stats.successful_responses,
+        "failedResponses": stats.failed_responses,
+        "inputTokens": stats.input_tokens,
+        "outputTokens": stats.output_tokens,
+        "totalTokens": stats.total_tokens,
+        "reasoningTokens": stats.reasoning_tokens,
+        "lastUsage": stats.last_usage,
+        "lastError": stats.last_error,
+        "lastUpdatedUnixMs": stats.last_updated_unix_ms,
     }))
 }
 
@@ -205,8 +247,14 @@ async fn forward_responses(
             "endpoint {endpoint} is not a Codex Responses route"
         )));
     }
+    record_usage_request(&state.usage).await;
 
     let Some(api_key) = state.runtime.api_key.as_deref() else {
+        record_usage_failure(
+            &state.usage,
+            format!("provider '{}' has no API key", state.runtime.provider.id),
+        )
+        .await;
         return Err(ProxyError::AuthError(format!(
             "provider '{}' has no API key",
             state.runtime.provider.id
@@ -226,14 +274,21 @@ async fn forward_responses(
     apply_codex_chat_upstream_model(&state.runtime.provider, &mut chat_body);
 
     let upstream_url = build_upstream_url(&state.runtime.base_url, "chat/completions");
-    let upstream = state
+    let upstream = match state
         .client
         .post(upstream_url)
         .bearer_auth(api_key)
         .json(&chat_body)
         .send()
         .await
-        .map_err(|error| ProxyError::ForwardFailed(error.to_string()))?;
+    {
+        Ok(upstream) => upstream,
+        Err(error) => {
+            let message = error.to_string();
+            record_usage_failure(&state.usage, message.clone()).await;
+            return Err(ProxyError::ForwardFailed(message));
+        }
+    };
 
     let status = upstream.status();
     if !status.is_success() {
@@ -241,6 +296,11 @@ async fn forward_responses(
             .text()
             .await
             .unwrap_or_else(|error| error.to_string());
+        record_usage_failure(
+            &state.usage,
+            format!("upstream returned {}: {}", status.as_u16(), text),
+        )
+        .await;
         let parsed = serde_json::from_str::<Value>(&text).ok();
         let body = chat_error_to_response_error(parsed.as_ref());
         let response_status =
@@ -256,11 +316,12 @@ async fn forward_responses(
     if is_stream {
         let stream = upstream.bytes_stream();
         let converted = create_responses_sse_stream_from_chat_with_context(stream, tool_context);
+        let recorded = record_usage_from_responses_sse_stream(converted, state.usage.clone());
         return Ok(Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/event-stream")
             .header(header::CACHE_CONTROL, "no-cache")
-            .body(Body::from_stream(converted))
+            .body(Body::from_stream(recorded))
             .map_err(|error| ProxyError::Internal(error.to_string()))?);
     }
 
@@ -269,10 +330,137 @@ async fn forward_responses(
         .await
         .map_err(|error| ProxyError::ForwardFailed(error.to_string()))?;
     let response = chat_completion_to_response_with_context(chat_response, &tool_context)?;
+    record_usage_success(&state.usage, response.get("usage")).await;
     if let Err(error) = record_history(&state.history, &response).await {
         warn!(%error, "failed to record response history");
     }
     Ok(Json(response).into_response())
+}
+
+async fn record_usage_request(usage: &Arc<Mutex<UsageStats>>) {
+    let mut stats = usage.lock().await;
+    stats.requests += 1;
+    stats.last_updated_unix_ms = Some(now_unix_ms());
+}
+
+async fn record_usage_failure(usage: &Arc<Mutex<UsageStats>>, error: String) {
+    let mut stats = usage.lock().await;
+    stats.failed_responses += 1;
+    stats.last_error = Some(error);
+    stats.last_updated_unix_ms = Some(now_unix_ms());
+}
+
+async fn record_usage_success(usage: &Arc<Mutex<UsageStats>>, value: Option<&Value>) {
+    let usage_value = normalize_response_usage(value);
+    let mut stats = usage.lock().await;
+    stats.successful_responses += 1;
+    stats.input_tokens += usage_value
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    stats.output_tokens += usage_value
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    stats.total_tokens += usage_value
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    stats.reasoning_tokens += usage_value
+        .pointer("/output_tokens_details/reasoning_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    stats.last_usage = Some(usage_value);
+    stats.last_error = None;
+    stats.last_updated_unix_ms = Some(now_unix_ms());
+}
+
+fn record_usage_from_responses_sse_stream(
+    stream: impl Stream<Item = Result<Bytes, io::Error>> + Send + 'static,
+    usage: Arc<Mutex<UsageStats>>,
+) -> impl Stream<Item = Result<Bytes, io::Error>> + Send {
+    async_stream::stream! {
+        tokio::pin!(stream);
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    if let Some(usage_value) = response_completed_usage_from_sse_bytes(&bytes) {
+                        record_usage_success(&usage, Some(&usage_value)).await;
+                    }
+                    yield Ok(bytes);
+                }
+                Err(error) => {
+                    record_usage_failure(&usage, error.to_string()).await;
+                    yield Err(error);
+                }
+            }
+        }
+    }
+}
+
+fn response_completed_usage_from_sse_bytes(bytes: &[u8]) -> Option<Value> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    for block in text.split("\n\n") {
+        if !block.contains("event: response.completed") {
+            continue;
+        }
+        let data = block
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if data.is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<Value>(&data).ok()?;
+        if let Some(usage) = value.pointer("/response/usage").cloned() {
+            return Some(usage);
+        }
+    }
+    None
+}
+
+fn normalize_response_usage(value: Option<&Value>) -> Value {
+    let Some(value) = value.filter(|value| value.is_object()) else {
+        return json!({
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "output_tokens_details": { "reasoning_tokens": 0 }
+        });
+    };
+    let input_tokens = value
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = value
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_tokens = value
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(input_tokens + output_tokens);
+    let mut normalized = value.clone();
+    normalized["input_tokens"] = json!(input_tokens);
+    normalized["output_tokens"] = json!(output_tokens);
+    normalized["total_tokens"] = json!(total_tokens);
+    if normalized
+        .pointer("/output_tokens_details/reasoning_tokens")
+        .and_then(Value::as_u64)
+        .is_none()
+    {
+        normalized["output_tokens_details"] = json!({ "reasoning_tokens": 0 });
+    }
+    normalized
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 async fn record_history(

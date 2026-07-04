@@ -102,6 +102,8 @@ final class SessionStore: ObservableObject {
     @Published var providerConnectionBaseURL = ""
     @Published var providerConnectionCodexConfigPath = ""
     @Published var providerConnectionProxyConfigPath = ""
+    @Published var providerUsage: RaytoneProxyUsage?
+    @Published var providerUsageStatusText = "未读取"
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
     @Published var isRunning = false {
         didSet { updatePreventSleepAssertion() }
@@ -2478,6 +2480,8 @@ final class SessionStore: ObservableObject {
                 errors.append("account/rateLimits/read：\(error.localizedDescription)")
             }
 
+            await refreshSelectedProviderUsage()
+
             runtimeCatalogErrors = errors
             let accountLabel = runtimeAccount.map { Self.accountDisplayName($0) } ?? "未返回账户"
             let tokenLabel = runtimeTokenUsage?.lifetimeTokens.map(Self.compactNumber) ?? "未知 token"
@@ -2488,6 +2492,28 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    func refreshSelectedProviderUsage() async {
+        let provider = selectedProvider
+        guard provider.usesSidecar else {
+            providerUsage = nil
+            providerUsageStatusText = "OpenAI 用量来自 account/usage/read"
+            return
+        }
+
+        do {
+            _ = try await appServerEnvironmentOverrides()
+            guard let session = activeProxySession else {
+                throw RaytoneProxyServiceError.healthCheckFailed("sidecar 未返回 session")
+            }
+            let usage = try await proxyService.readUsage(session: session)
+            providerUsage = usage
+            providerUsageStatusText = "sidecar /usage：\(usage.successfulResponses) 次响应"
+        } catch {
+            providerUsage = nil
+            providerUsageStatusText = "sidecar 用量读取失败：\(error.localizedDescription)"
+        }
     }
 
     func startAccountChatGPTLogin(openBrowser: Bool = true) async {

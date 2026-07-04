@@ -32,6 +32,46 @@ public struct RaytoneProxyUpstreamHealth: Equatable, Sendable {
     }
 }
 
+public struct RaytoneProxyUsage: Equatable, Sendable {
+    public var provider: String
+    public var model: String
+    public var baseURL: String
+    public var requests: Int
+    public var successfulResponses: Int
+    public var failedResponses: Int
+    public var inputTokens: Int
+    public var outputTokens: Int
+    public var totalTokens: Int
+    public var reasoningTokens: Int
+    public var lastUpdatedUnixMs: Int?
+
+    public init(
+        provider: String,
+        model: String,
+        baseURL: String,
+        requests: Int,
+        successfulResponses: Int,
+        failedResponses: Int,
+        inputTokens: Int,
+        outputTokens: Int,
+        totalTokens: Int,
+        reasoningTokens: Int,
+        lastUpdatedUnixMs: Int?
+    ) {
+        self.provider = provider
+        self.model = model
+        self.baseURL = baseURL
+        self.requests = requests
+        self.successfulResponses = successfulResponses
+        self.failedResponses = failedResponses
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.totalTokens = totalTokens
+        self.reasoningTokens = reasoningTokens
+        self.lastUpdatedUnixMs = lastUpdatedUnixMs
+    }
+}
+
 public enum RaytoneProxyServiceError: LocalizedError, Sendable {
     case executableMissing(URL)
     case missingAPIKey(String)
@@ -164,6 +204,29 @@ public actor RaytoneProxyService {
             modelsEndpoint: endpoint,
             modelCount: modelCount,
             models: models
+        )
+    }
+
+    public func readUsage(session: RaytoneProxySession) async throws -> RaytoneProxyUsage {
+        let url = Self.rootURL(for: session.baseURL, path: "/usage")
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw RaytoneProxyServiceError.healthCheckFailed(String(data: data, encoding: .utf8) ?? "No response body.")
+        }
+
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return RaytoneProxyUsage(
+            provider: object?["provider"] as? String ?? "",
+            model: object?["model"] as? String ?? "",
+            baseURL: object?["baseUrl"] as? String ?? "",
+            requests: object?["requests"] as? Int ?? 0,
+            successfulResponses: object?["successfulResponses"] as? Int ?? 0,
+            failedResponses: object?["failedResponses"] as? Int ?? 0,
+            inputTokens: object?["inputTokens"] as? Int ?? 0,
+            outputTokens: object?["outputTokens"] as? Int ?? 0,
+            totalTokens: object?["totalTokens"] as? Int ?? 0,
+            reasoningTokens: object?["reasoningTokens"] as? Int ?? 0,
+            lastUpdatedUnixMs: object?["lastUpdatedUnixMs"] as? Int
         )
     }
 

@@ -496,6 +496,7 @@ struct SettingsRouteView: View {
             ], spacing: 12) {
                 accountSummaryCard
                 tokenUsageSummaryCard
+                providerUsageSummaryCard
             }
 
             SettingsSection(title: "速率限制") {
@@ -636,6 +637,62 @@ struct SettingsRouteView: View {
                 metricRow("最长连续", daysText(store.runtimeTokenUsage?.longestStreakDays))
             }
         }
+    }
+
+    private var providerUsageSummaryCard: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: store.selectedProvider.usesSidecar ? "shippingbox" : "sparkles")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("当前 Provider")
+                        .font(.system(size: 13.5, weight: .semibold))
+                    Spacer(minLength: 0)
+                    statusBadge(providerUsageBadgeText, ok: providerUsageBadgeOK)
+                }
+                metricRow("Provider", store.selectedProvider.displayName)
+                metricRow("模型", store.selectedProvider.usesSidecar ? store.selectedProvider.model : (store.model.isEmpty ? store.selectedProvider.model : store.model))
+                if let usage = store.providerUsage {
+                    metricRow("请求", "\(usage.requests) 次 · 成功 \(usage.successfulResponses) · 失败 \(usage.failedResponses)")
+                    metricRow("Provider Token", tokenText(usage.totalTokens))
+                    metricRow("输入 / 输出", "\(tokenText(usage.inputTokens)) / \(tokenText(usage.outputTokens))")
+                    metricRow("推理 Token", tokenText(usage.reasoningTokens))
+                    metricRow("更新", providerUsageUpdatedText(usage.lastUpdatedUnixMs))
+                    metricRow("来源", "raytone-proxy /usage")
+                } else {
+                    metricRow("状态", store.providerUsageStatusText)
+                    metricRow("来源", store.selectedProvider.usesSidecar ? "raytone-proxy /usage" : "account/usage/read")
+                }
+                HStack {
+                    Spacer(minLength: 0)
+                    Button("刷新 Provider") {
+                        Task { await store.refreshSelectedProviderUsage() }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                }
+            }
+        }
+    }
+
+    private var providerUsageBadgeText: String {
+        if store.selectedProvider.usesSidecar {
+            store.providerUsage == nil ? "未读取" : "已读取"
+        } else {
+            "Codex 账户"
+        }
+    }
+
+    private var providerUsageBadgeOK: Bool {
+        store.selectedProvider.usesSidecar ? store.providerUsage != nil : true
+    }
+
+    private func providerUsageUpdatedText(_ unixMs: Int?) -> String {
+        guard let unixMs, unixMs > 0 else {
+            return "未返回"
+        }
+        let date = Date(timeIntervalSince1970: TimeInterval(unixMs) / 1000)
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func providerListRow(_ provider: RaytoneProviderConfiguration) -> some View {

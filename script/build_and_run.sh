@@ -162,7 +162,11 @@ openai_codex_head() {
   fi
 
   local head
-  head="$(GIT_TERMINAL_PROMPT=0 git ls-remote "$OPENAI_CODEX_REPO.git" HEAD 2>/dev/null | /usr/bin/awk '{ print $1; exit }' || true)"
+  if [[ -x /usr/bin/perl ]]; then
+    head="$(GIT_TERMINAL_PROMPT=0 /usr/bin/perl -e 'alarm shift; exec @ARGV' 8 git ls-remote "$OPENAI_CODEX_REPO.git" HEAD 2>/dev/null | /usr/bin/awk '{ print $1; exit }' || true)"
+  else
+    head="$(GIT_TERMINAL_PROMPT=0 git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=8 ls-remote "$OPENAI_CODEX_REPO.git" HEAD 2>/dev/null | /usr/bin/awk '{ print $1; exit }' || true)"
+  fi
   if [[ -n "$head" ]]; then
     printf '%s\n' "$head"
   else

@@ -1518,6 +1518,11 @@ enum SmokeTestRunner {
                 try store.saveProviderAPIKey("raytone-smoke-key", providerID: providerID)
                 await store.refreshRuntime()
                 await store.testProviderConnection(providerID: providerID)
+                let usageResponse = try await postProviderUsageSmokeRequest(
+                    sidecarBaseURL: store.providerConnectionBaseURL,
+                    model: editedModel
+                )
+                await store.refreshSelectedProviderUsage()
 
                 let codexConfigText = (try? String(
                     contentsOfFile: store.providerConnectionCodexConfigPath,
@@ -1530,6 +1535,7 @@ enum SmokeTestRunner {
                 let persistedConfigURL = codexHome.appendingPathComponent("config.toml")
                 let persistedConfigText = (try? String(contentsOf: persistedConfigURL, encoding: .utf8)) ?? ""
                 let persistedProvider = store.runtimeConfig?.raytoneProviders.first { $0.id == providerID }
+                let providerUsage = store.providerUsage
                 let ok = store.runtimeSnapshot.executable != nil &&
                     store.selectedProviderID == providerID &&
                     store.providerConnectionStatusText.contains("上游已验证") &&
@@ -1551,12 +1557,20 @@ enum SmokeTestRunner {
                     proxyConfigText.contains("current_provider = \"\(providerID)\"") &&
                     proxyConfigText.contains("base_url = \"\(editedBaseURL)\"") &&
                     proxyConfigText.contains("model = \"\(editedModel)\"") &&
-                    proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"")
+                    proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"") &&
+                    usageResponse.contains("\"total_tokens\":18") &&
+                    providerUsage?.provider == providerID &&
+                    providerUsage?.model == editedModel &&
+                    providerUsage?.requests == 1 &&
+                    providerUsage?.successfulResponses == 1 &&
+                    providerUsage?.totalTokens == 18 &&
+                    providerUsage?.reasoningTokens == 3
                 let upstreamRequestLog = (try? String(contentsOf: server.requestLogURL, encoding: .utf8)) ?? ""
                 let upstreamVerified = (
                     upstreamRequestLog.contains("\"path\":\"/v1/models\"") ||
                         upstreamRequestLog.contains("\"path\":\"\\/v1\\/models\"")
                 ) &&
+                    upstreamRequestLog.contains("\"path\":\"/v1/chat/completions\"") &&
                     upstreamRequestLog.contains("\"authorization\":\"Bearer raytone-smoke-key\"")
                 let finalOK = ok && upstreamVerified
 
@@ -1577,6 +1591,21 @@ enum SmokeTestRunner {
                     "status": store.providerConnectionStatusText,
                     "detail": store.providerConnectionDetailText,
                     "sidecar": store.sidecarStatusText,
+                    "usageStatus": store.providerUsageStatusText,
+                    "usageResponse": usageResponse,
+                    "providerUsage": providerUsage.map { usage in
+                        [
+                            "provider": usage.provider,
+                            "model": usage.model,
+                            "requests": usage.requests,
+                            "successfulResponses": usage.successfulResponses,
+                            "failedResponses": usage.failedResponses,
+                            "inputTokens": usage.inputTokens,
+                            "outputTokens": usage.outputTokens,
+                            "totalTokens": usage.totalTokens,
+                            "reasoningTokens": usage.reasoningTokens
+                        ] as [String: Any]
+                    } ?? NSNull(),
                     "baseURL": store.providerConnectionBaseURL,
                     "codexConfigPath": store.providerConnectionCodexConfigPath,
                     "proxyConfigPath": store.providerConnectionProxyConfigPath,
@@ -4456,6 +4485,34 @@ enum SmokeTestRunner {
         )
     }
 
+    private static func postProviderUsageSmokeRequest(sidecarBaseURL: String, model: String) async throws -> String {
+        guard let url = URL(string: "\(sidecarBaseURL)/responses") else {
+            throw NSError(
+                domain: "RaytoneCodexProviderSmoke",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "invalid sidecar base URL: \(sidecarBaseURL)"]
+            )
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model,
+            "input": "Raytone provider usage smoke",
+            "stream": false
+        ], options: [])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(
+                domain: "RaytoneCodexProviderSmoke",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: String(data: data, encoding: .utf8) ?? "provider usage request failed"]
+            )
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
     private static var mockResponsesServerScript: String {
         #"""
         import json
@@ -4551,6 +4608,48 @@ enum SmokeTestRunner {
                         {"id": model, "object": "model", "created": 0, "owned_by": "raytone-smoke"}
                         for model in models
                     ],
+                }, separators=(",", ":")).encode("utf-8")
+                self.send_response(200)
+                self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def do_POST(self):
+                length = int(self.headers.get("content-length") or "0")
+                body = self.rfile.read(length).decode("utf-8", "replace")
+                with log_file.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "method": "POST",
+                        "path": self.path,
+                        "authorization": self.headers.get("authorization", ""),
+                        "body": body,
+                    }, separators=(",", ":")) + "\n")
+                if self.path not in ("/v1/chat/completions", "/chat/completions"):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                payload = json.dumps({
+                    "id": "chatcmpl-raytone-usage",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": models[0] if models else "smoke-model",
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "Raytone provider usage smoke OK",
+                        },
+                        "finish_reason": "stop",
+                    }],
+                    "usage": {
+                        "prompt_tokens": 11,
+                        "completion_tokens": 7,
+                        "total_tokens": 18,
+                        "completion_tokens_details": {
+                            "reasoning_tokens": 3,
+                        },
+                    },
                 }, separators=(",", ":")).encode("utf-8")
                 self.send_response(200)
                 self.send_header("content-type", "application/json")
