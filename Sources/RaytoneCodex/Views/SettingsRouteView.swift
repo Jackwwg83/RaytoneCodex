@@ -1194,7 +1194,33 @@ struct SettingsRouteView: View {
                                 metricRow("版本", server.version ?? "未知")
                                 metricRow("工具", server.toolNames.isEmpty ? "无" : server.toolNames.prefix(8).joined(separator: "、"))
                                 metricRow("资源", "\(server.resourceCount) 个资源 · \(server.resourceTemplateCount) 个模板")
+                                if !server.resources.isEmpty {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        ForEach(server.resources.prefix(4)) { resource in
+                                            mcpResourceRow(resource, server: server)
+                                        }
+                                    }
+                                }
                             }
+                        }
+                    }
+                }
+            }
+
+            if let preview = store.mcpResourcePreview {
+                SettingsSection(title: "资源预览", description: store.mcpResourceStatusText) {
+                    SettingsCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            metricRow("服务器", preview.server)
+                            metricRow("URI", preview.requestedURI)
+                            Text(diffPreview(preview.textPreview))
+                                .font(Theme.mono(11))
+                                .foregroundStyle(Theme.textSecondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(Theme.fillSubtle)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
                         }
                     }
                 }
@@ -2113,6 +2139,35 @@ struct SettingsRouteView: View {
 
     private func mcpServerCanLogin(_ server: CodexRuntimeMCPServer) -> Bool {
         server.authStatus == "notLoggedIn"
+    }
+
+    private func mcpResourceRow(_ resource: CodexRuntimeMCPResource, server: CodexRuntimeMCPServer) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(resource.displayName)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(resource.uri)
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+            Button("读取") {
+                Task { await store.readMCPResource(resource, from: server) }
+            }
+            .buttonStyle(ChipButtonStyle())
+            .disabled(store.runtimeCatalogIsRefreshing)
+        }
+        .padding(9)
+        .background(Theme.fillSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
     }
 
     private func hookTrustName(_ value: String) -> String {

@@ -533,6 +533,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
     public var version: String?
     public var authStatus: String
     public var toolNames: [String]
+    public var resources: [CodexRuntimeMCPResource]
     public var resourceCount: Int
     public var resourceTemplateCount: Int
 
@@ -542,6 +543,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         version: String?,
         authStatus: String,
         toolNames: [String],
+        resources: [CodexRuntimeMCPResource] = [],
         resourceCount: Int,
         resourceTemplateCount: Int
     ) {
@@ -550,8 +552,73 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         self.version = version
         self.authStatus = authStatus
         self.toolNames = toolNames
+        self.resources = resources
         self.resourceCount = resourceCount
         self.resourceTemplateCount = resourceTemplateCount
+    }
+}
+
+public struct CodexRuntimeMCPResource: Equatable, Sendable, Identifiable {
+    public var id: String { uri }
+    public var name: String
+    public var title: String?
+    public var uri: String
+    public var description: String?
+    public var mimeType: String?
+    public var size: Int?
+
+    public init(name: String, title: String?, uri: String, description: String?, mimeType: String?, size: Int?) {
+        self.name = name
+        self.title = title
+        self.uri = uri
+        self.description = description
+        self.mimeType = mimeType
+        self.size = size
+    }
+
+    public var displayName: String {
+        title?.isEmpty == false ? title! : name
+    }
+}
+
+public struct CodexMCPResourceReadResult: Equatable, Sendable {
+    public var server: String
+    public var requestedURI: String
+    public var contents: [CodexMCPResourceContent]
+
+    public init(server: String, requestedURI: String, contents: [CodexMCPResourceContent]) {
+        self.server = server
+        self.requestedURI = requestedURI
+        self.contents = contents
+    }
+
+    public var textPreview: String {
+        let rendered = contents.map(\.previewText).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return rendered.isEmpty ? "资源没有可显示文本" : rendered
+    }
+}
+
+public struct CodexMCPResourceContent: Equatable, Sendable {
+    public var uri: String
+    public var mimeType: String?
+    public var text: String?
+    public var blobBase64: String?
+
+    public init(uri: String, mimeType: String?, text: String?, blobBase64: String?) {
+        self.uri = uri
+        self.mimeType = mimeType
+        self.text = text
+        self.blobBase64 = blobBase64
+    }
+
+    public var previewText: String {
+        if let text, !text.isEmpty {
+            return text
+        }
+        if let blobBase64, !blobBase64.isEmpty {
+            return "二进制资源：\(blobBase64.utf8.count) 个 base64 字节"
+        }
+        return ""
     }
 }
 
@@ -1509,6 +1576,19 @@ public actor CodexAppServerClient {
         return CodexMCPServerOAuthLogin(authorizationURL: url)
     }
 
+    public func readMCPResource(server: String, uri: String, threadID: String? = nil) async throws -> CodexMCPResourceReadResult {
+        var params: [String: JSONValue] = [
+            "server": .string(server),
+            "uri": .string(uri)
+        ]
+        if let threadID {
+            params["threadId"] = .string(threadID)
+        }
+        let result = try await request(method: "mcpServer/resource/read", params: .object(params))
+        let contents = result["contents"]?.arrayValue?.compactMap(Self.mcpResourceContent(from:)) ?? []
+        return CodexMCPResourceReadResult(server: server, requestedURI: uri, contents: contents)
+    }
+
     public func reloadMCPServerRegistry() async throws {
         _ = try await request(method: "config/mcpServer/reload", params: nil)
     }
@@ -2321,12 +2401,14 @@ public actor CodexAppServerClient {
             let toolNames = toolsObject.map { key, value in
                 value["name"]?.stringValue ?? key
             }
+            let resources = server["resources"]?.arrayValue?.compactMap(Self.mcpResource(from:)) ?? []
             return CodexRuntimeMCPServer(
                 name: name,
                 title: info?["title"]?.stringValue ?? info?["name"]?.stringValue ?? name,
                 version: info?["version"]?.stringValue,
                 authStatus: server["authStatus"]?.stringValue ?? "unsupported",
                 toolNames: toolNames.sorted(),
+                resources: resources,
                 resourceCount: server["resources"]?.arrayValue?.count ?? 0,
                 resourceTemplateCount: server["resourceTemplates"]?.arrayValue?.count ?? 0
             )
@@ -2335,6 +2417,35 @@ public actor CodexAppServerClient {
         return CodexRuntimeMCPServerCatalog(
             servers: servers.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending },
             nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    private static func mcpResource(from value: JSONValue) -> CodexRuntimeMCPResource? {
+        guard let object = value.objectValue,
+              let name = object["name"]?.stringValue,
+              let uri = object["uri"]?.stringValue else {
+            return nil
+        }
+        return CodexRuntimeMCPResource(
+            name: name,
+            title: object["title"]?.stringValue,
+            uri: uri,
+            description: object["description"]?.stringValue,
+            mimeType: object["mimeType"]?.stringValue,
+            size: object["size"]?.intValue
+        )
+    }
+
+    private static func mcpResourceContent(from value: JSONValue) -> CodexMCPResourceContent? {
+        guard let object = value.objectValue,
+              let uri = object["uri"]?.stringValue else {
+            return nil
+        }
+        return CodexMCPResourceContent(
+            uri: uri,
+            mimeType: object["mimeType"]?.stringValue,
+            text: object["text"]?.stringValue,
+            blobBase64: object["blob"]?.stringValue
         )
     }
 

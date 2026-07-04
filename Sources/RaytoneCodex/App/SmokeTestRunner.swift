@@ -20,6 +20,8 @@ enum SmokeTestRunner {
             runReviewSmoke()
         } else if CommandLine.arguments.contains("--catalog-smoke-test") {
             runCatalogSmoke()
+        } else if CommandLine.arguments.contains("--mcp-resource-smoke-test") {
+            runMCPResourceSmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
             runAccountAuthSmoke()
         } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
@@ -825,6 +827,125 @@ enum SmokeTestRunner {
                 ] as [String: Any]
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runMCPResourceSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let marker = "Raytone MCP resource smoke OK \(UUID().uuidString.prefix(8))"
+        let serverName = "raytone_resource"
+        let resourceURI = "raytone://resource/smoke"
+
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexMCPResourceSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let serverURL = rootURL.appendingPathComponent("raytone_mcp_resource_server.py")
+
+            do {
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try mcpResourceSmokeServerScript(marker: marker, resourceURI: resourceURI)
+                    .write(to: serverURL, atomically: true, encoding: .utf8)
+
+                let escapedServerPath = serverURL.path
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                let config = """
+                approval_policy = "never"
+                sandbox_mode = "read-only"
+
+                [mcp_servers.\(serverName)]
+                command = "/usr/bin/python3"
+                args = ["\(escapedServerPath)"]
+                """
+                try config.write(to: codexHomeURL.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+
+                let store = SessionStore()
+                store.workspacePath = workspacePath
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("mcp-resource-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("mcp-resource-smoke: refreshRuntimeMCPServers\n", stderr)
+                await store.refreshRuntimeMCPServers()
+
+                guard let server = store.runtimeMCPServers.first(where: { $0.name == serverName }),
+                      let resource = server.resources.first(where: { $0.uri == resourceURI }) else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHomeURL.path,
+                        "serverName": serverName,
+                        "resourceURI": resourceURI,
+                        "status": store.runtimeCatalogStatusText,
+                        "errors": store.runtimeCatalogErrors,
+                        "servers": store.runtimeMCPServers.map { server in
+                            [
+                                "name": server.name,
+                                "title": server.title,
+                                "authStatus": server.authStatus,
+                                "toolNames": server.toolNames,
+                                "resourceCount": server.resourceCount,
+                                "resources": server.resources.map(\.uri)
+                            ] as [String: Any]
+                        }
+                    ])
+                    exit(1)
+                }
+
+                fputs("mcp-resource-smoke: readMCPResource\n", stderr)
+                await store.readMCPResource(resource, from: server)
+                let preview = store.mcpResourcePreview?.textPreview ?? ""
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    server.resourceCount == 1 &&
+                    resource.displayName == "Raytone MCP Smoke Resource" &&
+                    store.mcpResourcePreview?.server == serverName &&
+                    store.mcpResourcePreview?.requestedURI == resourceURI &&
+                    preview.contains(marker) &&
+                    store.mcpResourceStatusText.hasPrefix("mcpServer/resource/read")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHomeURL.path,
+                    "serverName": server.name,
+                    "serverTitle": server.title,
+                    "authStatus": server.authStatus,
+                    "resourceCount": server.resourceCount,
+                    "resource": [
+                        "name": resource.name,
+                        "displayName": resource.displayName,
+                        "uri": resource.uri,
+                        "mimeType": resource.mimeType ?? ""
+                    ] as [String: Any],
+                    "readStatus": store.mcpResourceStatusText,
+                    "contentCount": store.mcpResourcePreview?.contents.count ?? 0,
+                    "preview": preview
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
@@ -3725,6 +3846,88 @@ enum SmokeTestRunner {
             return nil
         }
         return CommandLine.arguments[valueIndex]
+    }
+
+    private static func mcpResourceSmokeServerScript(marker: String, resourceURI: String) -> String {
+        let markerLiteral = String(reflecting: marker)
+        let resourceURILiteral = String(reflecting: resourceURI)
+        return """
+        import json
+        import sys
+
+        MARKER = \(markerLiteral)
+        RESOURCE_URI = \(resourceURILiteral)
+
+        def read_message():
+            line = sys.stdin.buffer.readline()
+            if not line:
+                return None
+            return json.loads(line.decode("utf-8"))
+
+        def send_message(message):
+            body = json.dumps(message, separators=(",", ":")).encode("utf-8")
+            sys.stdout.buffer.write(body + b"\\n")
+            sys.stdout.buffer.flush()
+
+        def result_for(method, params):
+            if method == "initialize":
+                return {
+                    "protocolVersion": params.get("protocolVersion", "2024-11-05"),
+                    "capabilities": {
+                        "resources": {"subscribe": False, "listChanged": False},
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "raytone-resource-smoke",
+                        "title": "Raytone MCP Resource Smoke",
+                        "version": "1.0.0"
+                    }
+                }
+            if method == "resources/list":
+                return {
+                    "resources": [{
+                        "uri": RESOURCE_URI,
+                        "name": "raytone-smoke-resource",
+                        "title": "Raytone MCP Smoke Resource",
+                        "description": "A local smoke resource served over MCP stdio.",
+                        "mimeType": "text/plain",
+                        "size": len(MARKER)
+                    }]
+                }
+            if method == "resources/templates/list":
+                return {"resourceTemplates": []}
+            if method == "resources/read":
+                return {
+                    "contents": [{
+                        "uri": params.get("uri", RESOURCE_URI),
+                        "mimeType": "text/plain",
+                        "text": MARKER
+                    }]
+                }
+            if method == "tools/list":
+                return {"tools": []}
+            if method == "ping":
+                return {}
+            raise KeyError(method)
+
+        while True:
+            message = read_message()
+            if message is None:
+                break
+            request_id = message.get("id")
+            if request_id is None:
+                continue
+            method = message.get("method")
+            params = message.get("params") or {}
+            try:
+                send_message({"jsonrpc": "2.0", "id": request_id, "result": result_for(method, params)})
+            except Exception as error:
+                send_message({
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32601, "message": str(error)}
+                })
+        """
     }
 
     private static func emitJSON(_ object: [String: Any]) {

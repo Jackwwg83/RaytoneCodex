@@ -51,6 +51,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
     @Published var runtimeHooks: [CodexRuntimeHook] = []
     @Published var runtimeMCPServers: [CodexRuntimeMCPServer] = []
+    @Published var mcpResourcePreview: CodexMCPResourceReadResult?
+    @Published var mcpResourceStatusText = "未读取"
     @Published var runtimeConfig: CodexRuntimeConfig?
     @Published var desktopShowInMenuBar = true
     @Published var desktopShowBottomPanel = true
@@ -2088,6 +2090,30 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "\(server.title) 登录失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func readMCPResource(_ resource: CodexRuntimeMCPResource, from server: CodexRuntimeMCPServer) async {
+        runtimeCatalogIsRefreshing = true
+        mcpResourceStatusText = "正在读取 \(resource.displayName)…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.readMCPResource(
+                server: server.name,
+                uri: resource.uri,
+                threadID: selectedThread.appServerThreadID
+            )
+            mcpResourcePreview = result
+            mcpResourceStatusText = "mcpServer/resource/read：\(result.contents.count) 段内容"
+            runtimeCatalogStatusText = mcpResourceStatusText
+        } catch {
+            mcpResourceStatusText = "资源读取失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = mcpResourceStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
         runtimeCatalogIsRefreshing = false
     }
 
