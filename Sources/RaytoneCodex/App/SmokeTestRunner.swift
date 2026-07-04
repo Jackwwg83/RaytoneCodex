@@ -2549,6 +2549,10 @@ enum SmokeTestRunner {
             let integrationStatus = store.runtimeCatalogStatusText
             let integrationErrors = store.runtimeCatalogErrors
 
+            fputs("integration-pages-smoke: loadFilePanelDirectory\n", stderr)
+            await store.loadFilePanelDirectory(workspacePath)
+            let fileConnectionCount = store.workspaceFileConnectionCount
+
             fputs("integration-pages-smoke: refreshWorkspaceWorktrees\n", stderr)
             await store.refreshWorkspaceWorktrees()
             let worktreeStatus = store.runtimeCatalogStatusText
@@ -2565,7 +2569,8 @@ enum SmokeTestRunner {
             let appsWithScreenshots = store.runtimeApps.filter { !$0.screenshotPrompts.isEmpty }
             let ok = store.runtimeSnapshot.executable != nil &&
                 !integrationStatus.hasPrefix("集成状态读取失败") &&
-                !worktreeStatus.hasPrefix("工作树读取失败")
+                !worktreeStatus.hasPrefix("工作树读取失败") &&
+                fileConnectionCount > 0
 
             emitJSON([
                 "ok": ok,
@@ -2600,6 +2605,27 @@ enum SmokeTestRunner {
                 "browserPluginCount": browserPlugins.count,
                 "computerPluginCount": computerPlugins.count,
                 "mcpServerCount": store.runtimeMCPServers.count,
+                "homeConnectionCards": [
+                    "source": "app/list + mcpServerStatus/list + files/readDirectory",
+                    "messaging": [
+                        "connected": store.messagingConnectionCount > 0,
+                        "count": store.messagingConnectionCount,
+                        "names": store.messagingConnectionNames,
+                        "subtitle": store.messagingConnectionSubtitle
+                    ] as [String: Any],
+                    "email": [
+                        "connected": store.emailConnectionCount > 0,
+                        "count": store.emailConnectionCount,
+                        "names": store.emailConnectionNames,
+                        "subtitle": store.emailConnectionSubtitle
+                    ] as [String: Any],
+                    "files": [
+                        "connected": store.workspaceFileConnectionCount > 0,
+                        "count": store.workspaceFileConnectionCount,
+                        "subtitle": store.workspaceFileConnectionSubtitle,
+                        "path": store.filePanelPath
+                    ] as [String: Any]
+                ] as [String: Any],
                 "permissionProfileCount": store.runtimePermissionProfiles.count,
                 "worktreeStatus": worktreeStatus,
                 "worktreeErrors": worktreeErrors,

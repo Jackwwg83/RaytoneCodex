@@ -27,6 +27,12 @@ struct NewThreadHeroView: View {
         .background(Theme.transcript)
         .task {
             await store.refreshWorkspaceBranches()
+            if store.fileEntries.isEmpty {
+                await store.loadFilePanelDirectory(store.workspacePath)
+            }
+            if store.runtimeMCPServers.isEmpty {
+                await store.refreshRuntimeMCPServers()
+            }
         }
     }
 
@@ -280,15 +286,28 @@ struct NewThreadHeroView: View {
 
     private var connectionCards: some View {
         HStack(spacing: 12) {
-            ConnectionCard(symbol: "message", title: "连接消息传送", subtitle: "从近期团队讨论中获取背景信息", connected: true) {
-                store.route = .settings
-                store.settingsPane = .connections
+            ConnectionCard(
+                symbol: "message",
+                title: "连接消息传送",
+                subtitle: store.messagingConnectionSubtitle,
+                connected: store.messagingConnectionCount > 0
+            ) {
+                store.openConnectionsSettings()
             }
-            ConnectionCard(symbol: "envelope", title: "连接电子邮件", subtitle: "总结电子邮件中利益相关方的请求", connected: false) {
-                store.route = .settings
-                store.settingsPane = .connections
+            ConnectionCard(
+                symbol: "envelope",
+                title: "连接电子邮件",
+                subtitle: store.emailConnectionSubtitle,
+                connected: store.emailConnectionCount > 0
+            ) {
+                store.openConnectionsSettings()
             }
-            ConnectionCard(symbol: "folder", title: "连接文件", subtitle: "审查结果、研究资料和计划", connected: false) {
+            ConnectionCard(
+                symbol: "folder",
+                title: "连接文件",
+                subtitle: store.workspaceFileConnectionSubtitle,
+                connected: store.workspaceFileConnectionCount > 0
+            ) {
                 store.connectWorkspaceFiles()
             }
         }

@@ -190,6 +190,67 @@ extension SessionStore {
         ]
     }
 
+    var messagingConnectionCount: Int {
+        messagingConnectionNames.count
+    }
+
+    var messagingConnectionNames: [String] {
+        connectedIntegrationNames(matching: [
+            "slack",
+            "dingtalk",
+            "ding talk",
+            "microsoft teams",
+            "discord",
+            "telegram",
+            "whatsapp",
+            "wechat",
+            "飞书",
+            "lark"
+        ])
+    }
+
+    var emailConnectionCount: Int {
+        emailConnectionNames.count
+    }
+
+    var emailConnectionNames: [String] {
+        connectedIntegrationNames(matching: [
+            "gmail",
+            "email",
+            "mail",
+            "outlook",
+            "imap"
+        ])
+    }
+
+    var workspaceFileConnectionCount: Int {
+        fileEntries.filter { $0.isFile && !$0.name.hasPrefix(".") }.count
+    }
+
+    var messagingConnectionSubtitle: String {
+        messagingConnectionCount > 0
+            ? "已连接 \(messagingConnectionCount) 个消息来源"
+            : "未发现已授权消息连接"
+    }
+
+    var emailConnectionSubtitle: String {
+        emailConnectionCount > 0
+            ? "已连接 \(emailConnectionCount) 个电子邮件来源"
+            : "未发现已授权邮件连接"
+    }
+
+    var workspaceFileConnectionSubtitle: String {
+        workspaceFileConnectionCount > 0
+            ? "已读取 \(workspaceFileConnectionCount) 个工作区文件"
+            : "正在读取工作区文件"
+    }
+
+    func openConnectionsSettings() {
+        route = .settings
+        settingsPane = .connections
+        Task { await refreshIntegrationRuntime() }
+    }
+
     func editActiveGoalInComposer() {
         guard let goal = selectedThread.activeGoal else { return }
         prompt = goal.title
@@ -362,5 +423,34 @@ extension SessionStore {
            !richest.items.isEmpty {
             selectThread(richest)
         }
+    }
+
+    private func connectedIntegrationNames(matching tokens: [String]) -> [String] {
+        let normalizedTokens = tokens.map { $0.lowercased() }
+        let connectedMCPServers = runtimeMCPServers.compactMap { server -> String? in
+            guard server.authStatus != "notLoggedIn",
+                  server.authStatus != "unsupported" else {
+                return nil
+            }
+            let haystack = ([server.name, server.title] + server.toolNames)
+                .joined(separator: " ")
+                .lowercased()
+            return normalizedTokens.contains { haystack.contains($0) } ? server.title : nil
+        }
+        let connectedApps = runtimeApps.compactMap { app -> String? in
+            guard app.isEnabled, app.isAccessible else {
+                return nil
+            }
+            let haystack = [
+                app.name,
+                app.description ?? "",
+                app.category ?? "",
+                app.developer ?? ""
+            ]
+                .joined(separator: " ")
+                .lowercased()
+            return normalizedTokens.contains { haystack.contains($0) } ? app.name : nil
+        }
+        return Array(Set(connectedMCPServers + connectedApps)).sorted()
     }
 }
