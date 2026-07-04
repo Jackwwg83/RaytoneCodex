@@ -73,7 +73,7 @@ struct ThreadView: View {
             if let activeGoal = store.selectedThread.activeGoal {
                 ActiveGoalBar(
                     goal: activeGoal,
-                    onEdit: { store.editActiveGoalInComposer() },
+                    onEdit: { store.promptEditActiveGoal() },
                     onPause: { Task { await store.pauseActiveGoal() } },
                     onDelete: { Task { await store.clearActiveGoal() } },
                     onExpand: {
@@ -81,6 +81,7 @@ struct ThreadView: View {
                             showInspector = true
                             store.toolPanel = .launcher
                         }
+                        Task { await store.refreshSelectedRuntimeGoal() }
                     }
                 )
             }

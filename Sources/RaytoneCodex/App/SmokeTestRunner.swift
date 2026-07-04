@@ -698,7 +698,7 @@ enum SmokeTestRunner {
     private static func runConfigWriteSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
-        Task {
+        Task { @MainActor in
             let service = CodexCLIService()
             let runtime = await service.inspectRuntime()
             guard let executable = runtime.executable else {
@@ -2039,6 +2039,11 @@ enum SmokeTestRunner {
                 let afterClear = try await client.getThreadGoal(threadID: thread.id)
                 await client.stop()
 
+                let storeSmoke = await runStoreGoalSmoke(
+                    workspacePath: workspacePath,
+                    codexHome: codexHome
+                )
+
                 let ok = activeGoal.threadID == thread.id &&
                     activeGoal.objective == "RaytoneCodex goal smoke" &&
                     activeGoal.status == .active &&
@@ -2046,8 +2051,9 @@ enum SmokeTestRunner {
                     readGoal?.objective == activeGoal.objective &&
                     pausedGoal.status == .paused &&
                     cleared &&
-                    afterClear == nil
-                emitJSON([
+                    afterClear == nil &&
+                    storeSmoke.ok
+                var payload: [String: Any] = [
                     "ok": ok,
                     "runtimeSource": runtime.executable?.source.rawValue ?? "none",
                     "runtimePath": runtime.executable?.url.path ?? "",
@@ -2060,7 +2066,9 @@ enum SmokeTestRunner {
                     "pausedGoal": goalPayload(pausedGoal),
                     "cleared": cleared,
                     "afterClear": afterClear.map(goalPayload) ?? NSNull()
-                ])
+                ]
+                payload.merge(storeSmoke.payload) { _, new in new }
+                emitJSON(payload)
                 exit(ok ? 0 : 1)
             } catch {
                 emitJSON([
@@ -2077,6 +2085,80 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    @MainActor
+    private static func runStoreGoalSmoke(
+        workspacePath: String,
+        codexHome: URL
+    ) async -> StoreGoalSmokeResult {
+        let store = SessionStore()
+        store.workspacePath = workspacePath
+        store.sandbox = .readOnly
+        store.approval = .never
+        store.appServerEnvironmentOverridesForTesting = [
+            "CODEX_HOME": codexHome.path
+        ]
+
+        await store.refreshRuntime()
+        await store.setActiveGoal(objective: "RaytoneCodex store goal smoke", tokenBudget: 5678)
+        let storeThreadID = store.selectedThread.appServerThreadID ?? ""
+        let storeSetTitle = store.selectedThread.activeGoal?.title ?? ""
+        let storeSetRuntimeBacked = store.selectedThread.activeGoal?.runtimeBacked ?? false
+
+        await store.updateActiveGoalObjective("RaytoneCodex edited goal smoke")
+        let storeEditedGoal = await store.refreshSelectedRuntimeGoal()
+        let storeEditedTitle = store.selectedThread.activeGoal?.title ?? ""
+        let storeStatusAfterEdit = store.runtimeCatalogStatusText
+
+        await store.clearActiveGoal()
+        let storeAfterClear = await store.refreshSelectedRuntimeGoal()
+        let storeStatusAfterClear = store.runtimeCatalogStatusText
+        await store.stopAppServerForTesting()
+
+        let ok = !storeThreadID.isEmpty &&
+            storeSetTitle == "RaytoneCodex store goal smoke" &&
+            storeSetRuntimeBacked &&
+            storeEditedGoal?.objective == "RaytoneCodex edited goal smoke" &&
+            storeEditedTitle == "RaytoneCodex edited goal smoke" &&
+            storeAfterClear == nil
+
+        return StoreGoalSmokeResult(
+            ok: ok,
+            storeThreadID: storeThreadID,
+            storeSetTitle: storeSetTitle,
+            storeSetRuntimeBacked: storeSetRuntimeBacked,
+            storeEditedGoalObjective: storeEditedGoal?.objective,
+            storeEditedTitle: storeEditedTitle,
+            storeStatusAfterEdit: storeStatusAfterEdit,
+            storeAfterClearObjective: storeAfterClear?.objective,
+            storeStatusAfterClear: storeStatusAfterClear
+        )
+    }
+
+    private struct StoreGoalSmokeResult: Sendable {
+        let ok: Bool
+        let storeThreadID: String
+        let storeSetTitle: String
+        let storeSetRuntimeBacked: Bool
+        let storeEditedGoalObjective: String?
+        let storeEditedTitle: String
+        let storeStatusAfterEdit: String
+        let storeAfterClearObjective: String?
+        let storeStatusAfterClear: String
+
+        var payload: [String: Any] {
+            [
+                "storeThreadID": storeThreadID,
+                "storeSetTitle": storeSetTitle,
+                "storeSetRuntimeBacked": storeSetRuntimeBacked,
+                "storeEditedGoal": storeEditedGoalObjective.map { ["objective": $0] } ?? NSNull(),
+                "storeEditedTitle": storeEditedTitle,
+                "storeStatusAfterEdit": storeStatusAfterEdit,
+                "storeAfterClear": storeAfterClearObjective.map { ["objective": $0] } ?? NSNull(),
+                "storeStatusAfterClear": storeStatusAfterClear
+            ]
+        }
     }
 
     private static func runBrowserNavigationSmoke() {

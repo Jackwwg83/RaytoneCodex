@@ -295,9 +295,27 @@ extension SessionStore {
         Task { await refreshIntegrationRuntime() }
     }
 
-    func editActiveGoalInComposer() {
+    func promptEditActiveGoal() {
         guard let goal = selectedThread.activeGoal else { return }
-        prompt = goal.title
+
+        let alert = NSAlert()
+        alert.messageText = "编辑目标"
+        alert.informativeText = goal.runtimeBacked
+            ? "这会通过 Codex app-server 调用 thread/goal/set 更新当前线程目标。"
+            : "这会更新当前本地目标。"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        field.stringValue = goal.title
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { await updateActiveGoalObjective(field.stringValue) }
+    }
+
+    func editActiveGoalInComposer() {
+        promptEditActiveGoal()
     }
 
     func clearActiveGoalLocally() {

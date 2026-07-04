@@ -898,6 +898,127 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func setActiveGoal(objective: String, tokenBudget: Int? = nil) async {
+        let trimmedObjective = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedObjective.isEmpty else { return }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 thread/goal/set…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let options = appServerOptions()
+            let threadID = try await ensureAppServerThread(client: client, options: options)
+            let goal = try await client.setThreadGoal(
+                threadID: threadID,
+                objective: trimmedObjective,
+                status: .active,
+                tokenBudget: tokenBudget
+            )
+            applyRuntimeGoal(goal)
+            runtimeCatalogStatusText = "thread/goal/set：\(goal.objective)"
+        } catch {
+            runtimeCatalogStatusText = "目标创建失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "目标创建失败：\(error.localizedDescription)"
+                ))))
+            }
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    @discardableResult
+    func refreshSelectedRuntimeGoal() async -> CodexRuntimeGoal? {
+        guard let threadID = selectedThread.appServerThreadID else {
+            runtimeCatalogStatusText = "当前对话没有 app-server threadId"
+            return nil
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 thread/goal/get…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let goal = try await client.getThreadGoal(threadID: threadID)
+            if let goal {
+                applyRuntimeGoal(goal)
+                runtimeCatalogStatusText = "thread/goal/get：\(goal.status.rawValue)"
+            } else {
+                clearRuntimeGoal(threadID: threadID)
+                runtimeCatalogStatusText = "thread/goal/get：没有活动目标"
+            }
+            runtimeCatalogIsRefreshing = false
+            return goal
+        } catch {
+            runtimeCatalogStatusText = "目标读取失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return nil
+        }
+    }
+
+    func updateActiveGoalObjective(_ objective: String) async {
+        let trimmedObjective = objective.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedObjective.isEmpty else { return }
+
+        guard selectedThread.activeGoal?.runtimeBacked == true else {
+            updateSelectedThread { thread in
+                guard let current = thread.activeGoal else { return }
+                thread.activeGoal = ActiveGoal(
+                    title: trimmedObjective,
+                    startedAt: current.startedAt,
+                    runtimeBacked: current.runtimeBacked
+                )
+                thread.updatedAt = Date()
+            }
+            runtimeCatalogStatusText = "本地目标已更新"
+            return
+        }
+
+        guard let threadID = selectedThread.appServerThreadID else {
+            updateSelectedThread { thread in
+                guard let current = thread.activeGoal else { return }
+                thread.activeGoal = ActiveGoal(title: trimmedObjective, startedAt: current.startedAt, runtimeBacked: false)
+                thread.updatedAt = Date()
+            }
+            runtimeCatalogStatusText = "目标已本地更新；当前线程没有 app-server threadId"
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 thread/goal/set…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let updatedGoal = try await client.setThreadGoal(threadID: threadID, objective: trimmedObjective)
+            applyRuntimeGoal(updatedGoal)
+            if let readGoal = try await client.getThreadGoal(threadID: threadID) {
+                applyRuntimeGoal(readGoal)
+                runtimeCatalogStatusText = "thread/goal/set + get：\(readGoal.objective)"
+            } else {
+                runtimeCatalogStatusText = "thread/goal/set 已更新；thread/goal/get 未返回目标"
+            }
+        } catch {
+            runtimeCatalogStatusText = "目标更新失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "目标更新失败：\(error.localizedDescription)"
+                ))))
+            }
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
     func clearActiveGoal() async {
         guard selectedThread.activeGoal?.runtimeBacked == true else {
             clearSelectedThreadActiveGoal()
