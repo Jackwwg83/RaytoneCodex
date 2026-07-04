@@ -6,6 +6,7 @@ struct BrowserPanelView: View {
     @Binding var showInspector: Bool
     @State private var addressDraft = ""
     @State private var didRequestSmokeSnapshot = false
+    @State private var didRequestSmokeDataClear = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,6 +39,18 @@ struct BrowserPanelView: View {
                     .background(Theme.panel)
                     .overlay(alignment: .top) { Hairline() }
             }
+            if !store.browserDataStatusText.isEmpty {
+                Text(store.browserDataStatusText)
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.panel)
+                    .overlay(alignment: .top) { Hairline() }
+            }
         }
         .frame(width: Theme.Layout.inspectorWidth)
         .frame(maxHeight: .infinity)
@@ -46,10 +59,12 @@ struct BrowserPanelView: View {
         .onAppear {
             addressDraft = addressText
             requestSmokeSnapshotIfNeeded()
+            requestSmokeDataClearIfNeeded()
         }
         .onChange(of: store.browserURL) { _, _ in
             addressDraft = addressText
             requestSmokeSnapshotIfNeeded()
+            requestSmokeDataClearIfNeeded()
         }
     }
 
@@ -152,15 +167,40 @@ struct BrowserPanelView: View {
             toolbarButton("arrow.up.forward.app", "在浏览器打开") {
                 store.openBrowserExternally()
             }
-            toolbarButton("ellipsis", "更多") {
-                store.openBrowserSample()
-                addressDraft = addressText
-            }
+            moreMenu
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(Theme.panel)
         .overlay(alignment: .bottom) { Hairline() }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("打开本地示例") {
+                store.openBrowserSample()
+                addressDraft = addressText
+            }
+            Button("截取当前网页") {
+                store.captureBrowserPanelScreenshot()
+            }
+            .disabled(store.browserURL == nil)
+            Button("在系统浏览器打开") {
+                store.openBrowserExternally()
+            }
+            .disabled(store.browserURL == nil)
+            Divider()
+            Button("清除浏览数据") {
+                Task { await store.clearBrowserWebsiteData() }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12.5, weight: .medium))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(GhostIconButtonStyle(size: 24))
+        .help("更多")
     }
 
     private func toolbarButton(
@@ -218,6 +258,19 @@ struct BrowserPanelView: View {
         didRequestSmokeSnapshot = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             store.captureBrowserPanelScreenshot()
+        }
+    }
+
+    private func requestSmokeDataClearIfNeeded() {
+        guard ProcessInfo.processInfo.environment["RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE"] == "1",
+              !didRequestSmokeDataClear,
+              store.browserURL != nil else {
+            return
+        }
+
+        didRequestSmokeDataClear = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            Task { await store.clearBrowserWebsiteData() }
         }
     }
 }

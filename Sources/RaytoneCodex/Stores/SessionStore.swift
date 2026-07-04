@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import RaytoneCodexCore
 import UniformTypeIdentifiers
+import WebKit
 
 @MainActor
 final class SessionStore: ObservableObject {
@@ -31,6 +32,7 @@ final class SessionStore: ObservableObject {
     @Published var browserNavigationCommand: BrowserNavigationCommand?
     @Published var browserSnapshotRequest: BrowserSnapshotRequest?
     @Published var browserScreenshotStatusText = ""
+    @Published var browserDataStatusText = ""
     @Published var filePanelPath = ""
     @Published var fileEntries: [WorkspaceFileEntry] = []
     @Published var filePreview: FilePreview?
@@ -1434,6 +1436,15 @@ final class SessionStore: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func clearBrowserWebsiteData() async {
+        browserDataStatusText = "正在清除浏览数据…"
+        let completed = await Self.clearDefaultBrowserWebsiteData(timeoutSeconds: 5)
+        browserCanGoBack = false
+        browserCanGoForward = false
+        browserReloadToken = UUID()
+        browserDataStatusText = completed ? "已清除浏览数据和缓存" : "清除浏览数据请求已提交"
+    }
+
     func newBrowserTab() {
         browserURL = nil
         browserTitle = "浏览器"
@@ -1442,6 +1453,7 @@ final class SessionStore: ObservableObject {
         browserNavigationCommand = nil
         browserSnapshotRequest = nil
         browserScreenshotStatusText = ""
+        browserDataStatusText = ""
         openToolPanel(.browser)
     }
 
@@ -1495,6 +1507,23 @@ final class SessionStore: ObservableObject {
             browserScreenshotStatusText = "网页截图：\(Project.abbreviate(url.path))"
         case let .failure(error):
             browserScreenshotStatusText = "截图失败：\(error.localizedDescription)"
+        }
+    }
+
+    private nonisolated static func clearDefaultBrowserWebsiteData(timeoutSeconds: TimeInterval) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let box = BrowserWebsiteDataClearContinuation(continuation)
+            DispatchQueue.main.async {
+                WKWebsiteDataStore.default().removeData(
+                    ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                    modifiedSince: .distantPast
+                ) {
+                    box.resume(true)
+                }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeoutSeconds) {
+                box.resume(false)
+            }
         }
     }
 
@@ -3881,5 +3910,22 @@ final class SessionStore: ObservableObject {
         case .untrusted: return .ask
         case .never: return .autoReview
         }
+    }
+}
+
+private final class BrowserWebsiteDataClearContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    init(_ continuation: CheckedContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ result: Bool) {
+        lock.lock()
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: result)
     }
 }

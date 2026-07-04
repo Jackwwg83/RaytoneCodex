@@ -542,6 +542,7 @@ run_ui_smoke() {
       /bin/launchctl unsetenv RAYTONE_PROXY >/dev/null 2>&1 || true
       /bin/launchctl unsetenv RAYTONE_CODEX_BROWSER_SNAPSHOT_SMOKE >/dev/null 2>&1 || true
       /bin/launchctl unsetenv RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH >/dev/null 2>&1 || true
+      /bin/launchctl unsetenv RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE >/dev/null 2>&1 || true
     fi
   }
   trap cleanup_ui_smoke RETURN
@@ -560,6 +561,9 @@ run_ui_smoke() {
       fi
       if [[ -n "${RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH:-}" ]]; then
         /bin/launchctl setenv RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH "$RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH"
+      fi
+      if [[ -n "${RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE:-}" ]]; then
+        /bin/launchctl setenv RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE "$RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE"
       fi
       open_app || true
       if ! wait_for_app; then
@@ -671,6 +675,7 @@ run_browser_snapshot_smoke() {
   UI_SMOKE_SCREENSHOT="$SCREENSHOT_DIR/raytonecodex-browser-snapshot-window.png"
   export RAYTONE_CODEX_BROWSER_SNAPSHOT_SMOKE=1
   export RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH="$snapshot_path"
+  export RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE=1
   export RAYTONE_CODEX_UI_SETTLE_SECONDS="${RAYTONE_CODEX_UI_SETTLE_SECONDS:-10}"
 
   if ! run_ui_smoke; then
@@ -678,6 +683,7 @@ run_browser_snapshot_smoke() {
     UI_SMOKE_SCREENSHOT="$old_ui_smoke_screenshot"
     unset RAYTONE_CODEX_BROWSER_SNAPSHOT_SMOKE
     unset RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH
+    unset RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE
     return 1
   fi
 
@@ -685,6 +691,7 @@ run_browser_snapshot_smoke() {
   UI_SMOKE_SCREENSHOT="$old_ui_smoke_screenshot"
   unset RAYTONE_CODEX_BROWSER_SNAPSHOT_SMOKE
   unset RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH
+  unset RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE
 
   if [[ ! -f "$snapshot_path" ]]; then
     echo "Browser WebView snapshot was not created: $snapshot_path" >&2
