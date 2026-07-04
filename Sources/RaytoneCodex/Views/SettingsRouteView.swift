@@ -1285,13 +1285,33 @@ struct SettingsRouteView: View {
                                     Text(hook.eventName)
                                         .font(.system(size: 13.5, weight: .semibold))
                                     Spacer(minLength: 0)
-                                    statusBadge(hookTrustName(hook.trustStatus), ok: hook.trustStatus == "trusted" || hook.trustStatus == "managed")
+                                    statusBadge(hookTrustName(hook.trustStatus), ok: hookIsTrusted(hook))
                                 }
                                 metricRow("处理器", hook.handlerType)
                                 metricRow("匹配器", hook.matcher ?? "全部")
                                 metricRow("命令", hook.command ?? "非命令钩子")
                                 metricRow("来源", "\(hookSourceName(hook.source)) · \(Project.abbreviate(hook.sourcePath))")
                                 metricRow("超时", "\(hook.timeoutSec) 秒")
+                                HStack(spacing: 8) {
+                                    if !hookIsTrusted(hook), !hook.currentHash.isEmpty {
+                                        Button("信任") {
+                                            Task { await store.trustRuntimeHook(hook) }
+                                        }
+                                        .buttonStyle(ChipButtonStyle(prominent: true))
+                                    }
+                                    Button(hook.enabled ? "停用" : "启用") {
+                                        Task { await store.setRuntimeHookEnabled(hook, enabled: !hook.enabled) }
+                                    }
+                                    .buttonStyle(ChipButtonStyle())
+                                    .disabled(hook.isManaged)
+                                    Spacer(minLength: 0)
+                                    if hook.isManaged {
+                                        Text("托管 hook 由 Codex 策略控制")
+                                            .font(.system(size: 11.5))
+                                            .foregroundStyle(Theme.textTertiary)
+                                    }
+                                }
+                                .disabled(store.runtimeCatalogIsRefreshing)
                             }
                         }
                     }
@@ -2273,6 +2293,11 @@ struct SettingsRouteView: View {
         case "modified": "已变更"
         default: value
         }
+    }
+
+    private func hookIsTrusted(_ hook: CodexRuntimeHook) -> Bool {
+        hook.trustStatus.localizedCaseInsensitiveCompare("trusted") == .orderedSame ||
+            hook.trustStatus.localizedCaseInsensitiveCompare("managed") == .orderedSame
     }
 
     private func hookSourceName(_ value: String) -> String {

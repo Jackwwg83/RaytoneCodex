@@ -38,6 +38,8 @@ enum SmokeTestRunner {
             runAutomationSmoke()
         } else if CommandLine.arguments.contains("--automation-hook-smoke-test") {
             runAutomationHookSmoke()
+        } else if CommandLine.arguments.contains("--hook-controls-smoke-test") {
+            runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
         } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
@@ -3772,6 +3774,130 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runHookControlsSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexHookControlsSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            var store: SessionStore?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "# Hook controls smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                let configURL = codexHomeURL.appendingPathComponent("config.toml")
+                try """
+                [features]
+                hooks = true
+
+                [hooks]
+
+                [[hooks.UserPromptSubmit]]
+
+                [[hooks.UserPromptSubmit.hooks]]
+                type = "command"
+                command = "echo raytone hook controls"
+                timeout = 5
+                async = false
+                statusMessage = "Raytone hook controls smoke"
+                """.write(to: configURL, atomically: true, encoding: .utf8)
+
+                let hookStore = SessionStore()
+                store = hookStore
+                hookStore.workspacePath = workspaceURL.path
+                hookStore.filePanelPath = workspaceURL.path
+                hookStore.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = hookStore.projects.firstIndex(where: { $0.id == hookStore.selectedThread.projectID }) {
+                    hookStore.projects[index].path = workspaceURL.path
+                }
+
+                await hookStore.refreshRuntime()
+                await hookStore.refreshRuntimeHooks()
+                guard let initialHook = firstUserPromptHook(in: hookStore.runtimeHooks) else {
+                    await hookStore.stopAppServerForTesting()
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": hookStore.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": hookStore.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": hookStore.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHome": codexHomeURL.path,
+                        "status": hookStore.runtimeCatalogStatusText,
+                        "errors": hookStore.runtimeCatalogErrors,
+                        "hooks": hookStore.runtimeHooks.map(hookPayload)
+                    ])
+                    exit(1)
+                }
+
+                await hookStore.trustRuntimeHook(initialHook)
+                let trustedHook = firstUserPromptHook(in: hookStore.runtimeHooks)
+
+                if let trustedHook {
+                    await hookStore.setRuntimeHookEnabled(trustedHook, enabled: false)
+                }
+                let disabledHook = firstUserPromptHook(in: hookStore.runtimeHooks)
+
+                if let disabledHook {
+                    await hookStore.setRuntimeHookEnabled(disabledHook, enabled: true)
+                }
+                let enabledHook = firstUserPromptHook(in: hookStore.runtimeHooks)
+                let finalConfig = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                await hookStore.stopAppServerForTesting()
+
+                let trustOK = trustedHook?.trustStatus.localizedCaseInsensitiveCompare("trusted") == .orderedSame ||
+                    trustedHook?.trustStatus.localizedCaseInsensitiveCompare("managed") == .orderedSame
+                let ok = hookStore.runtimeSnapshot.executable != nil &&
+                    initialHook.trustStatus.localizedCaseInsensitiveCompare("untrusted") == .orderedSame &&
+                    initialHook.enabled &&
+                    trustOK &&
+                    disabledHook?.enabled == false &&
+                    enabledHook?.enabled == true &&
+                    finalConfig.contains("trusted_hash") &&
+                    finalConfig.contains("enabled = true")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": hookStore.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": hookStore.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": hookStore.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "configPath": configURL.path,
+                    "initialHook": hookPayload(initialHook),
+                    "trustedHook": trustedHook.map(hookPayload) ?? NSNull(),
+                    "disabledHook": disabledHook.map(hookPayload) ?? NSNull(),
+                    "enabledHook": enabledHook.map(hookPayload) ?? NSNull(),
+                    "finalConfig": finalConfig,
+                    "status": hookStore.runtimeCatalogStatusText,
+                    "errors": hookStore.runtimeCatalogErrors
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store?.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runIntegrationPagesSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
@@ -4121,6 +4247,30 @@ enum SmokeTestRunner {
         stream_max_retries = 0
         """
         try config.write(to: codexHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+    }
+
+    private static func firstUserPromptHook(in hooks: [CodexRuntimeHook]) -> CodexRuntimeHook? {
+        hooks.first { hook in
+            hook.eventName
+                .unicodeScalars
+                .filter { CharacterSet.alphanumerics.contains($0) }
+                .map { String($0).lowercased() }
+                .joined() == "userpromptsubmit"
+        }
+    }
+
+    private static func hookPayload(_ hook: CodexRuntimeHook) -> [String: Any] {
+        [
+            "key": hook.key,
+            "eventName": hook.eventName,
+            "handlerType": hook.handlerType,
+            "command": hook.command ?? "",
+            "source": hook.source,
+            "sourcePath": hook.sourcePath,
+            "enabled": hook.enabled,
+            "trustStatus": hook.trustStatus,
+            "currentHash": hook.currentHash
+        ]
     }
 
     private static func writePluginReadSmokeFixture(workspaceURL: URL, codexHomeURL: URL) throws {

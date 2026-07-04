@@ -2173,6 +2173,58 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func trustRuntimeHook(_ hook: CodexRuntimeHook) async {
+        guard !hook.currentHash.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            runtimeCatalogStatusText = "hook 缺少 currentHash，无法写入信任状态"
+            return
+        }
+
+        await writeRuntimeHookState(
+            hook,
+            values: ["trusted_hash": .string(hook.currentHash)],
+            statusPrefix: "信任"
+        )
+    }
+
+    func setRuntimeHookEnabled(_ hook: CodexRuntimeHook, enabled: Bool) async {
+        await writeRuntimeHookState(
+            hook,
+            values: ["enabled": .bool(enabled)],
+            statusPrefix: enabled ? "启用" : "停用"
+        )
+    }
+
+    private func writeRuntimeHookState(
+        _ hook: CodexRuntimeHook,
+        values: [String: JSONValue],
+        statusPrefix: String
+    ) async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在\(statusPrefix) hook…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.batchWriteConfig(edits: [
+                CodexConfigWriteEdit(
+                    keyPath: "hooks.state",
+                    value: .object([
+                        hook.key: .object(values)
+                    ])
+                )
+            ])
+            let catalog = try await client.listHooks(cwds: [workspacePath])
+            runtimeHooks = catalog.hooks
+            runtimeCatalogErrors = catalog.warnings.map { "hooks warning：\($0)" } + catalog.errors.map { "hooks error：\($0)" }
+            runtimeCatalogStatusText = "\(statusPrefix) hook：hooks/list 返回 \(catalog.hooks.count) 个钩子"
+        } catch {
+            runtimeCatalogStatusText = "\(statusPrefix) hook 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
     func refreshAccountUsageRuntime() async {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在读取账户和用量…"
