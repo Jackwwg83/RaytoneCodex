@@ -79,19 +79,23 @@ extension SessionStore {
 
         let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        updateSelectedThreadTitle(title)
+        Task { await renameSelectedThread(to: title) }
     }
 
-    private func updateSelectedThreadTitle(_ title: String) {
+    @discardableResult
+    func renameSelectedThread(to title: String) async -> Bool {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return false }
         guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }) else {
-            return
+            return false
         }
         let appServerThreadID = threads[index].appServerThreadID
-        threads[index].title = title
+        threads[index].title = trimmedTitle
         threads[index].updatedAt = Date()
         if let appServerThreadID {
-            Task { await setRuntimeThreadName(id: appServerThreadID, name: title) }
+            await setRuntimeThreadName(id: appServerThreadID, name: trimmedTitle)
         }
+        return true
     }
 
     /// Record an approve / deny decision on an approval request in the selected thread.

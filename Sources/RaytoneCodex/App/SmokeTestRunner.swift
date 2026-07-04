@@ -3040,8 +3040,16 @@ enum SmokeTestRunner {
                 try await client.archiveThread(id: forked.id)
                 await client.stop()
 
-                let ok = !thread.id.isEmpty && !forked.id.isEmpty && thread.id != forked.id
-                emitJSON([
+                let storeSmoke = await runStoreThreadManagementSmoke(
+                    workspacePath: workspacePath,
+                    codexHome: codexHome
+                )
+
+                let ok = !thread.id.isEmpty &&
+                    !forked.id.isEmpty &&
+                    thread.id != forked.id &&
+                    storeSmoke.ok
+                var payload: [String: Any] = [
                     "ok": ok,
                     "runtimeSource": runtime.executable?.source.rawValue ?? "none",
                     "runtimePath": runtime.executable?.url.path ?? "",
@@ -3052,7 +3060,9 @@ enum SmokeTestRunner {
                     "forkedThreadId": forked.id,
                     "renamedTo": renamed,
                     "archivedFork": forked.id
-                ])
+                ]
+                payload.merge(storeSmoke.payload) { _, new in new }
+                emitJSON(payload)
                 exit(ok ? 0 : 1)
             } catch {
                 emitJSON([
@@ -3069,6 +3079,131 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    @MainActor
+    private static func runStoreThreadManagementSmoke(
+        workspacePath: String,
+        codexHome: URL
+    ) async -> StoreThreadManagementSmokeResult {
+        let store = SessionStore()
+        store.workspacePath = workspacePath
+        store.filePanelPath = workspacePath
+        store.sandbox = .readOnly
+        store.approval = .never
+        store.appServerEnvironmentOverridesForTesting = [
+            "CODEX_HOME": codexHome.path
+        ]
+        if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+            store.projects[index].path = workspacePath
+        }
+
+        await store.refreshRuntime()
+        await store.setActiveGoal(objective: "Raytone store thread management seed")
+        let originalLocalID = store.selectedThreadID
+        let originalServerID = store.selectedThread.appServerThreadID ?? ""
+        let renamed = "Raytone store thread \(UUID().uuidString.prefix(8))"
+        let renameAccepted = await store.renameSelectedThread(to: renamed)
+        await store.refreshRuntimeThreads(searchTerm: renamed, limit: 20)
+        let runtimeRenamed = store.threads.contains { thread in
+            thread.appServerThreadID == originalServerID && thread.title == renamed
+        }
+
+        if let original = store.threads.first(where: { $0.id == originalLocalID }) {
+            store.selectThread(original)
+        }
+        store.duplicateSelectedThread()
+        let forkLocalID = store.selectedThreadID
+        let forkServerID = await waitForThreadServerID(in: store, localThreadID: forkLocalID)
+
+        if !forkServerID.isEmpty {
+            store.deleteThread(forkLocalID)
+            _ = await waitForCatalogStatus(in: store, containing: "thread/archive", timeout: 8)
+            await store.refreshArchivedThreads()
+        }
+
+        let forkArchived = !forkServerID.isEmpty &&
+            store.archivedRuntimeThreads.contains { $0.id == forkServerID && $0.archived }
+        await store.stopAppServerForTesting()
+
+        let ok = !originalServerID.isEmpty &&
+            renameAccepted &&
+            runtimeRenamed &&
+            !forkServerID.isEmpty &&
+            forkServerID != originalServerID &&
+            forkArchived
+
+        return StoreThreadManagementSmokeResult(
+            ok: ok,
+            originalLocalID: originalLocalID.uuidString,
+            originalServerID: originalServerID,
+            renamed: renamed,
+            renameAccepted: renameAccepted,
+            runtimeRenamed: runtimeRenamed,
+            forkLocalID: forkLocalID.uuidString,
+            forkServerID: forkServerID,
+            forkArchived: forkArchived,
+            archiveStatus: store.runtimeCatalogStatusText,
+            archivedCount: store.archivedRuntimeThreads.count
+        )
+    }
+
+    @MainActor
+    private static func waitForThreadServerID(in store: SessionStore, localThreadID: UUID, timeout: TimeInterval = 8) async -> String {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let thread = store.threads.first(where: { $0.id == localThreadID }),
+               let serverID = thread.appServerThreadID,
+               !serverID.isEmpty {
+                return serverID
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return store.threads.first(where: { $0.id == localThreadID })?.appServerThreadID ?? ""
+    }
+
+    @MainActor
+    private static func waitForCatalogStatus(in store: SessionStore, containing needle: String, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if store.runtimeCatalogStatusText.contains(needle) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return store.runtimeCatalogStatusText.contains(needle)
+    }
+
+    private struct StoreThreadManagementSmokeResult: Sendable {
+        let ok: Bool
+        let originalLocalID: String
+        let originalServerID: String
+        let renamed: String
+        let renameAccepted: Bool
+        let runtimeRenamed: Bool
+        let forkLocalID: String
+        let forkServerID: String
+        let forkArchived: Bool
+        let archiveStatus: String
+        let archivedCount: Int
+
+        var payload: [String: Any] {
+            [
+                "storeThreadManagement": [
+                    "ok": ok,
+                    "originalLocalID": originalLocalID,
+                    "originalServerID": originalServerID,
+                    "renamed": renamed,
+                    "renameAccepted": renameAccepted,
+                    "runtimeRenamed": runtimeRenamed,
+                    "forkLocalID": forkLocalID,
+                    "forkServerID": forkServerID,
+                    "forkArchived": forkArchived,
+                    "archiveStatus": archiveStatus,
+                    "archivedCount": archivedCount
+                ] as [String: Any]
+            ]
+        }
     }
 
     private static func runHistorySmoke() {
