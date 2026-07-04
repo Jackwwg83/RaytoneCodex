@@ -15,6 +15,7 @@ struct RaytoneCodexApp: App {
                 .frame(minWidth: 1220, minHeight: 760)
                 .task {
                     await sessionStore.refreshRuntime()
+                    await sessionStore.refreshRuntimeThreads()
                 }
         }
         .windowStyle(.hiddenTitleBar)

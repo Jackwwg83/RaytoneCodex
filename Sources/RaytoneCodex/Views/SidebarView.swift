@@ -72,9 +72,20 @@ struct SidebarView: View {
     private var projectList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 13) {
-                SectionLabel(text: "项目")
-                    .padding(.horizontal, 16)
-                    .padding(.top, 2)
+                HStack(spacing: 6) {
+                    SectionLabel(text: "项目")
+                    Spacer(minLength: 0)
+                    Button {
+                        Task { await store.refreshRuntimeThreads(searchTerm: trimmedSearch.isEmpty ? nil : trimmedSearch) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 20))
+                    .help(store.runtimeThreadSyncStatusText)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 2)
 
                 ForEach(visibleProjects) { project in
                     ProjectGroup(store: store, project: project, threads: threads(in: project))

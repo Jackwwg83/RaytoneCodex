@@ -24,6 +24,8 @@ enum SmokeTestRunner {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
             runThreadManagementSmoke()
+        } else if CommandLine.arguments.contains("--history-smoke-test") {
+            runHistorySmoke()
         }
     }
 
@@ -447,6 +449,91 @@ enum SmokeTestRunner {
                 ])
                 exit(1)
             }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runHistorySmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let marker = "RaytoneCodex history smoke OK \(UUID().uuidString.prefix(8))"
+        let prompt = "Reply exactly: \(marker)"
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.sandbox = .readOnly
+            store.approval = .never
+            await store.refreshRuntime()
+            store.prompt = prompt
+            await store.runPrompt()
+            let deadline = Date().addingTimeInterval(120)
+            while store.isRunning && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+
+            let createdThreadID = store.selectedThread.appServerThreadID ?? ""
+            let initialAgentMessages = store.selectedThread.items.compactMap { item -> String? in
+                if case let .agentMessage(text) = item.kind { return text }
+                return nil
+            }
+            let initialCommands = store.selectedThread.items.compactMap { item -> CommandRun? in
+                if case let .command(run) = item.kind { return run }
+                return nil
+            }
+            let usedExecFallback = initialCommands.contains { run in
+                run.command.contains(" codex exec ") || run.command.contains("/codex exec ")
+            }
+
+            let reloaded = SessionStore()
+            reloaded.workspacePath = workspacePath
+            await reloaded.refreshRuntime()
+            await reloaded.refreshRuntimeThreads(searchTerm: marker, limit: 10)
+
+            let historyThread = reloaded.threads.first { thread in
+                thread.appServerThreadID == createdThreadID ||
+                    thread.title.localizedCaseInsensitiveContains(marker) ||
+                    thread.preview.localizedCaseInsensitiveContains(marker)
+            }
+            if let historyThread {
+                reloaded.selectThread(historyThread)
+                await reloaded.loadRuntimeThreadTranscript(localThreadID: historyThread.id)
+            }
+
+            let loadedItems = historyThread == nil ? [] : reloaded.selectedThread.items
+            let loadedUserMessages = loadedItems.compactMap { item -> String? in
+                if case let .userMessage(text) = item.kind { return text }
+                return nil
+            }
+            let loadedAgentMessages = loadedItems.compactMap { item -> String? in
+                if case let .agentMessage(text) = item.kind { return text }
+                return nil
+            }
+
+            let ok = !createdThreadID.isEmpty &&
+                !store.isRunning &&
+                !usedExecFallback &&
+                initialAgentMessages.last == marker &&
+                historyThread != nil &&
+                loadedUserMessages.contains(prompt) &&
+                loadedAgentMessages.contains(marker)
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "marker": marker,
+                "createdThreadID": createdThreadID,
+                "usedExecFallback": usedExecFallback,
+                "historySyncStatus": reloaded.runtimeThreadSyncStatusText,
+                "historyThreadFound": historyThread != nil,
+                "loadedTranscriptItemCount": loadedItems.count,
+                "loadedUserMessages": loadedUserMessages,
+                "loadedAgentMessages": loadedAgentMessages
+            ])
+            exit(ok ? 0 : 1)
         }
 
         dispatchMain()

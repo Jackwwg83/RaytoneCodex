@@ -1144,6 +1144,36 @@ public actor CodexAppServerClient {
         return Self.threadCatalog(from: result)
     }
 
+    public func readThread(id threadID: String, includeTurns: Bool = true) async throws -> JSONValue {
+        try await request(method: "thread/read", params: .object([
+            "threadId": .string(threadID),
+            "includeTurns": .bool(includeTurns)
+        ]))
+    }
+
+    public func resumeThread(id threadID: String, options: CodexAppServerOptions) async throws -> CodexAppServerThread {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "cwd": .string(options.workspaceURL.path),
+            "approvalPolicy": .string(options.approvalPolicy.appServerValue),
+            "sandbox": .string(options.sandbox.rawValue)
+        ]
+        if let model = options.model {
+            params["model"] = .string(model)
+        }
+
+        let result = try await request(method: "thread/resume", params: .object(params))
+        guard let thread = result["thread"] else {
+            throw CodexAppServerError.invalidResponse("Missing thread/resume thread.")
+        }
+        return CodexAppServerThread(
+            id: thread["id"]?.stringValue ?? threadID,
+            sessionID: thread["sessionId"]?.stringValue ?? "",
+            preview: thread["preview"]?.stringValue ?? "",
+            cliVersion: thread["cliVersion"]?.stringValue
+        )
+    }
+
     public func archiveThread(id threadID: String) async throws {
         _ = try await request(method: "thread/archive", params: .object([
             "threadId": .string(threadID)

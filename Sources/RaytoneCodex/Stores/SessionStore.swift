@@ -45,6 +45,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeApps: [CodexRuntimeAppInfo] = []
     @Published var runtimePermissionProfiles: [CodexRuntimePermissionProfile] = []
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
+    @Published var runtimeThreadSyncStatusText = "未同步"
     @Published var workspaceGitDiff: CodexRuntimeGitDiff?
     @Published var workspaceGitStatusText = ""
     @Published var workspaceWorktrees: [String] = []
@@ -187,6 +188,9 @@ final class SessionStore: ObservableObject {
         accessMode = Self.accessMode(for: thread.approval, sandbox: thread.sandbox)
         toolPanel = .launcher
         route = .thread
+        if thread.appServerThreadID != nil, thread.items.isEmpty {
+            Task { await loadRuntimeThreadTranscript(localThreadID: thread.id) }
+        }
     }
 
     func selectThread(_ threadID: UUID) {
@@ -877,6 +881,43 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func refreshRuntimeThreads(searchTerm: String? = nil, limit: Int = 50) async {
+        runtimeThreadSyncStatusText = "正在读取 thread/list…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let catalog = try await client.listThreads(
+                archived: false,
+                cwd: nil,
+                limit: limit,
+                searchTerm: searchTerm
+            )
+            mergeRuntimeThreads(catalog.threads)
+            runtimeThreadSyncStatusText = "thread/list：\(catalog.threads.count) 个历史对话"
+        } catch {
+            runtimeThreadSyncStatusText = "历史对话读取失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func loadRuntimeThreadTranscript(localThreadID: UUID? = nil) async {
+        let targetID = localThreadID ?? selectedThreadID
+        guard let localIndex = threads.firstIndex(where: { $0.id == targetID }),
+              let serverThreadID = threads[localIndex].appServerThreadID else {
+            return
+        }
+
+        runtimeThreadSyncStatusText = "正在读取 thread/read…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.readThread(id: serverThreadID, includeTurns: true)
+            applyRuntimeThreadRead(result, to: targetID)
+            runtimeThreadSyncStatusText = "thread/read：已加载历史 transcript"
+        } catch {
+            runtimeThreadSyncStatusText = "历史 transcript 读取失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     func unarchiveRuntimeThread(_ thread: CodexRuntimeThreadSummary) async {
         runtimeCatalogStatusText = "正在恢复 \(thread.title)…"
         do {
@@ -926,6 +967,164 @@ final class SessionStore: ObservableObject {
         } catch {
             runtimeCatalogStatusText = "远端复制失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    private func mergeRuntimeThreads(_ summaries: [CodexRuntimeThreadSummary]) {
+        for summary in summaries {
+            let projectID = projectIDForRuntimeThread(cwd: summary.cwd)
+            let updatedAt = Self.dateFromRuntimeString(summary.updatedAt) ??
+                Self.dateFromRuntimeString(summary.createdAt) ??
+                Date()
+            if let index = threads.firstIndex(where: { $0.appServerThreadID == summary.id }) {
+                threads[index].title = summary.title
+                threads[index].projectID = projectID
+                threads[index].updatedAt = updatedAt
+            } else {
+                threads.append(ChatThread(
+                    title: summary.title,
+                    projectID: projectID,
+                    items: [],
+                    model: model,
+                    sandbox: sandbox,
+                    approval: approval,
+                    appServerThreadID: summary.id,
+                    appServerSessionID: nil,
+                    updatedAt: updatedAt
+                ))
+            }
+        }
+    }
+
+    private func projectIDForRuntimeThread(cwd: String?) -> UUID {
+        let path = cwd?.isEmpty == false ? cwd! : workspacePath
+        if let existing = projects.first(where: { $0.path == path }) {
+            return existing.id
+        }
+        let url = URL(fileURLWithPath: path)
+        let name = url.lastPathComponent.isEmpty ? "Codex 历史" : url.lastPathComponent
+        let project = Project(name: name, path: path, branch: Self.currentGitBranch(at: path))
+        projects.append(project)
+        return project.id
+    }
+
+    private func applyRuntimeThreadRead(_ result: JSONValue, to localThreadID: UUID) {
+        guard let threadValue = result["thread"],
+              let index = threads.firstIndex(where: { $0.id == localThreadID }) else {
+            return
+        }
+        let turns = threadValue["turns"]?.arrayValue ?? []
+        let items = transcriptItems(from: turns, threadID: threadValue["id"]?.stringValue ?? threads[index].appServerThreadID ?? localThreadID.uuidString)
+        threads[index].items = items
+        threads[index].title = threadValue["name"]?.stringValue ??
+            threadValue["preview"]?.stringValue ??
+            threads[index].title
+        threads[index].appServerSessionID = threadValue["sessionId"]?.stringValue ?? threads[index].appServerSessionID
+        if let cwd = threadValue["cwd"]?.stringValue {
+            threads[index].projectID = projectIDForRuntimeThread(cwd: cwd)
+        }
+        if let updatedAt = Self.dateFromRuntimeSeconds(threadValue["updatedAt"]) ??
+            Self.dateFromRuntimeSeconds(threadValue["recencyAt"]) {
+            threads[index].updatedAt = updatedAt
+        } else {
+            threads[index].updatedAt = Date()
+        }
+    }
+
+    private func transcriptItems(from turns: [JSONValue], threadID: String) -> [TranscriptItem] {
+        var transcript: [TranscriptItem] = []
+        for (turnIndex, turn) in turns.enumerated() {
+            let timestamp = Self.dateFromRuntimeSeconds(turn["startedAt"]) ?? Date()
+            let items = turn["items"]?.arrayValue ?? []
+            for (itemIndex, item) in items.enumerated() {
+                transcript.append(contentsOf: transcriptItems(
+                    fromRuntimeItem: item,
+                    timestamp: timestamp,
+                    stableIDPrefix: "history:\(threadID):\(turn["id"]?.stringValue ?? "\(turnIndex)"):\(item["id"]?.stringValue ?? "\(itemIndex)")"
+                ))
+            }
+        }
+        return transcript
+    }
+
+    private func transcriptItems(
+        fromRuntimeItem item: JSONValue,
+        timestamp: Date,
+        stableIDPrefix: String
+    ) -> [TranscriptItem] {
+        guard let type = item["type"]?.stringValue else {
+            return []
+        }
+
+        switch type {
+        case "userMessage":
+            let text = Self.textFromRuntimeContent(item["content"])
+            guard !text.isEmpty else { return [] }
+            return [TranscriptItem(
+                id: transcriptUUID(for: stableIDPrefix),
+                timestamp: timestamp,
+                kind: .userMessage(text)
+            )]
+        case "agentMessage":
+            let text = item["text"]?.stringValue ?? ""
+            guard !text.isEmpty else { return [] }
+            return [TranscriptItem(
+                id: transcriptUUID(for: stableIDPrefix),
+                timestamp: timestamp,
+                kind: .agentMessage(text)
+            )]
+        case "reasoning":
+            let detail = [
+                Self.textFromRuntimeContent(item["summary"]),
+                Self.textFromRuntimeContent(item["content"])
+            ]
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n\n")
+            guard !detail.isEmpty else { return [] }
+            return [TranscriptItem(
+                id: transcriptUUID(for: stableIDPrefix),
+                timestamp: timestamp,
+                kind: .reasoning(ReasoningBlock(title: "思考", detail: detail))
+            )]
+        case "commandExecution":
+            return [TranscriptItem(
+                id: transcriptUUID(for: stableIDPrefix),
+                timestamp: timestamp,
+                kind: .command(CommandRun(
+                    command: item["command"]?.stringValue ?? "命令",
+                    directory: item["cwd"]?.stringValue.map(Project.abbreviate),
+                    output: item["aggregatedOutput"]?.stringValue ?? "",
+                    exitCode: item["exitCode"]?.intValue.map(Int32.init),
+                    status: Self.runStatus(from: item["status"]?.stringValue)
+                ))
+            )]
+        case "fileChange":
+            return historyFileChangeItems(item, timestamp: timestamp, stableIDPrefix: stableIDPrefix)
+        default:
+            return []
+        }
+    }
+
+    private func historyFileChangeItems(
+        _ item: JSONValue,
+        timestamp: Date,
+        stableIDPrefix: String
+    ) -> [TranscriptItem] {
+        (item["changes"]?.arrayValue ?? []).compactMap { changeValue in
+            guard let path = changeValue["path"]?.stringValue else { return nil }
+            let diff = changeValue["diff"]?.stringValue ?? ""
+            let parsedDiff = Self.parseUnifiedDiff(diff)
+            return TranscriptItem(
+                id: transcriptUUID(for: "\(stableIDPrefix):\(path)"),
+                timestamp: timestamp,
+                kind: .fileChange(FileChange(
+                    path: path,
+                    type: Self.fileChangeType(from: changeValue["kind"]),
+                    additions: parsedDiff.additions,
+                    deletions: parsedDiff.deletions,
+                    hunks: parsedDiff.hunks
+                ))
+            )
         }
     }
 
@@ -1331,6 +1530,13 @@ final class SessionStore: ObservableObject {
 
         if threadID == nil {
             let serverThread = try await client.startThread(options: options)
+            updateSelectedThread { thread in
+                thread.appServerThreadID = serverThread.id
+                thread.appServerSessionID = serverThread.sessionID
+            }
+            threadID = serverThread.id
+        } else if selectedThread.appServerSessionID == nil, let existingThreadID = threadID {
+            let serverThread = try await client.resumeThread(id: existingThreadID, options: options)
             updateSelectedThread { thread in
                 thread.appServerThreadID = serverThread.id
                 thread.appServerSessionID = serverThread.sessionID
@@ -2014,6 +2220,34 @@ final class SessionStore: ObservableObject {
 
     private static func joinedStrings(_ value: JSONValue?) -> String {
         value?.arrayValue?.compactMap(\.stringValue).joined(separator: "\n") ?? ""
+    }
+
+    private static func textFromRuntimeContent(_ value: JSONValue?) -> String {
+        guard let value else { return "" }
+        if let string = value.stringValue {
+            return string
+        }
+        if let array = value.arrayValue {
+            return array.compactMap { entry in
+                entry.stringValue ??
+                    entry["text"]?.stringValue ??
+                    entry["summary"]?.stringValue ??
+                    entry["content"]?.stringValue
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        }
+        return value["text"]?.stringValue ?? value["summary"]?.stringValue ?? value["content"]?.stringValue ?? ""
+    }
+
+    private static func dateFromRuntimeString(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else { return nil }
+        return ISO8601DateFormatter().date(from: value)
+    }
+
+    private static func dateFromRuntimeSeconds(_ value: JSONValue?) -> Date? {
+        guard let seconds = value?.intValue else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(seconds))
     }
 
     static func compactNumber(_ value: Int) -> String {
