@@ -539,6 +539,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var approvalPolicy: String?
     public var approvalsReviewer: String?
     public var sandboxMode: String?
+    public var defaultPermissions: String?
     public var reasoningEffort: String?
     public var reasoningSummary: String?
     public var instructions: String?
@@ -553,6 +554,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         approvalPolicy: String?,
         approvalsReviewer: String?,
         sandboxMode: String?,
+        defaultPermissions: String?,
         reasoningEffort: String?,
         reasoningSummary: String?,
         instructions: String?,
@@ -566,6 +568,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.approvalPolicy = approvalPolicy
         self.approvalsReviewer = approvalsReviewer
         self.sandboxMode = sandboxMode
+        self.defaultPermissions = defaultPermissions
         self.reasoningEffort = reasoningEffort
         self.reasoningSummary = reasoningSummary
         self.instructions = instructions
@@ -1969,6 +1972,7 @@ public actor CodexAppServerClient {
             approvalPolicy: config?["approval_policy"]?.stringValue,
             approvalsReviewer: config?["approvals_reviewer"]?.stringValue,
             sandboxMode: config?["sandbox_mode"]?.stringValue,
+            defaultPermissions: config?["default_permissions"]?.stringValue ?? config?["defaultPermissions"]?.stringValue,
             reasoningEffort: config?["model_reasoning_effort"]?.stringValue,
             reasoningSummary: config?["model_reasoning_summary"]?.stringValue,
             instructions: config?["instructions"]?.stringValue,

@@ -7,9 +7,7 @@ struct SettingsRouteView: View {
 
     @State private var search = ""
     @State private var workMode = "coding"
-    @State private var defaultPermissions = true
     @State private var autoReview = true
-    @State private var fullAccess = true
     @State private var showInMenuBar = true
     @State private var bottomPanel = true
     @State private var preventSleep = true
@@ -26,6 +24,28 @@ struct SettingsRouteView: View {
     Prefer concise, actionable engineering updates.
     Keep implementation notes tied to real files and runtime evidence.
     """
+
+    private var defaultPermissionsBinding: Binding<Bool> {
+        Binding(
+            get: { store.defaultPermissionsEnabled },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimeDefaultPermissions(defaultEnabled: enabled)
+                }
+            }
+        )
+    }
+
+    private var fullAccessPermissionsBinding: Binding<Bool> {
+        Binding(
+            get: { store.defaultFullAccessPermissionsEnabled },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimeDefaultPermissions(fullAccess: enabled)
+                }
+            }
+        )
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -217,9 +237,9 @@ struct SettingsRouteView: View {
 
             SettingsSection(title: "权限") {
                 SettingsCard {
-                    SettingsToggleRow(title: "默认权限", description: "默认情况下，Codex 可以读取并编辑其工作区中的文件。必要时，它可以请求额外的访问权限", isOn: $defaultPermissions)
+                    SettingsToggleRow(title: "默认权限", description: "默认情况下，Codex 可以读取并编辑其工作区中的文件。必要时，它可以请求额外的访问权限", isOn: defaultPermissionsBinding)
                     SettingsToggleRow(title: "自动审核", description: "Codex 会自动审核额外访问权限请求。自动审核可能会出错。了解更多有关高风险的信息。", isOn: $autoReview)
-                    SettingsToggleRow(title: "完全访问权限", description: "当 Codex 以完全访问权限运行时，无需你批准。这会显著增加数据丢失、泄露或意外行为的风险。了解更多。", isOn: $fullAccess)
+                    SettingsToggleRow(title: "完全访问权限", description: "当 Codex 以完全访问权限运行时，无需你批准。这会显著增加数据丢失、泄露或意外行为的风险。了解更多。", isOn: fullAccessPermissionsBinding)
                 }
             }
 
@@ -744,6 +764,7 @@ struct SettingsRouteView: View {
                     configMetric("批准策略", store.runtimeConfig?.approvalPolicy ?? "默认")
                     configMetric("审批路由", store.runtimeConfig?.approvalsReviewer ?? "用户")
                     configMetric("沙盒", store.runtimeConfig?.sandboxMode ?? "默认")
+                    configMetric("默认权限", store.runtimeConfig?.defaultPermissions ?? store.runtimeDefaultPermissionsProfile)
                     configMetric("推理强度", store.runtimeConfig?.reasoningEffort ?? "默认")
                     configMetric("推理摘要", store.runtimeConfig?.reasoningSummary ?? "默认")
                     configMetric("配置层", "\(store.runtimeConfig?.layerCount ?? 0)")

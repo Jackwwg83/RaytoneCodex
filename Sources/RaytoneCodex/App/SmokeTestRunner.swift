@@ -38,6 +38,8 @@ enum SmokeTestRunner {
             runReasoningConfigSmoke()
         } else if CommandLine.arguments.contains("--instructions-config-smoke-test") {
             runInstructionsConfigSmoke()
+        } else if CommandLine.arguments.contains("--default-permissions-smoke-test") {
+            runDefaultPermissionsSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -874,6 +876,115 @@ enum SmokeTestRunner {
                     "systemInstructions": config?.instructions ?? "",
                     "status": store.runtimeCatalogStatusText,
                     "configText": configText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runDefaultPermissionsSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexDefaultPermissionsSmoke-\(UUID().uuidString)", isDirectory: true)
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+
+                await store.saveRuntimeDefaultPermissions(defaultEnabled: true, fullAccess: false)
+                let workspaceConfig = store.runtimeConfig
+                let workspaceConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let workspaceState: [String: Any] = [
+                    "profile": workspaceConfig?.defaultPermissions ?? "",
+                    "storeProfile": store.runtimeDefaultPermissionsProfile,
+                    "defaultEnabled": store.defaultPermissionsEnabled,
+                    "fullAccess": store.defaultFullAccessPermissionsEnabled,
+                    "configText": workspaceConfigText
+                ]
+
+                await store.saveRuntimeDefaultPermissions(defaultEnabled: false, fullAccess: false)
+                let readOnlyConfig = store.runtimeConfig
+                let readOnlyConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let readOnlyState: [String: Any] = [
+                    "profile": readOnlyConfig?.defaultPermissions ?? "",
+                    "storeProfile": store.runtimeDefaultPermissionsProfile,
+                    "defaultEnabled": store.defaultPermissionsEnabled,
+                    "fullAccess": store.defaultFullAccessPermissionsEnabled,
+                    "configText": readOnlyConfigText
+                ]
+
+                await store.saveRuntimeDefaultPermissions(defaultEnabled: true, fullAccess: true)
+                let fullAccessConfig = store.runtimeConfig
+                let fullAccessConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let fullAccessState: [String: Any] = [
+                    "profile": fullAccessConfig?.defaultPermissions ?? "",
+                    "storeProfile": store.runtimeDefaultPermissionsProfile,
+                    "defaultEnabled": store.defaultPermissionsEnabled,
+                    "fullAccess": store.defaultFullAccessPermissionsEnabled,
+                    "configText": fullAccessConfigText
+                ]
+
+                await store.stopAppServerForTesting()
+
+                let ok = workspaceConfig?.defaultPermissions == ":workspace" &&
+                    workspaceConfigText.contains("default_permissions = \":workspace\"") &&
+                    readOnlyConfig?.defaultPermissions == ":read-only" &&
+                    readOnlyConfigText.contains("default_permissions = \":read-only\"") &&
+                    readOnlyState["defaultEnabled"] as? Bool == false &&
+                    readOnlyState["fullAccess"] as? Bool == false &&
+                    fullAccessConfig?.defaultPermissions == ":danger-full-access" &&
+                    fullAccessConfigText.contains("default_permissions = \":danger-full-access\"") &&
+                    fullAccessState["defaultEnabled"] as? Bool == true &&
+                    fullAccessState["fullAccess"] as? Bool == true
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "workspace": workspaceState,
+                    "readOnly": readOnlyState,
+                    "fullAccess": fullAccessState,
+                    "runtimeCatalogStatusText": store.runtimeCatalogStatusText
                 ])
                 exit(ok ? 0 : 1)
             } catch {

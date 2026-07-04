@@ -43,6 +43,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimeHooks: [CodexRuntimeHook] = []
     @Published var runtimeMCPServers: [CodexRuntimeMCPServer] = []
     @Published var runtimeConfig: CodexRuntimeConfig?
+    @Published var defaultPermissionsEnabled = true
+    @Published var defaultFullAccessPermissionsEnabled = false
     @Published var runtimeAccount: CodexRuntimeAccount?
     @Published var runtimeTokenUsage: CodexRuntimeTokenUsage?
     @Published var runtimeRateLimits: CodexRuntimeRateLimits?
@@ -79,6 +81,10 @@ final class SessionStore: ObservableObject {
     @Published var projects: [Project]
     @Published var threads: [ChatThread]
     @Published var selectedThreadID: UUID
+
+    private static let readOnlyPermissionsProfile = ":read-only"
+    private static let workspacePermissionsProfile = ":workspace"
+    private static let dangerFullAccessPermissionsProfile = ":danger-full-access"
 
     private let service: CodexCLIService
     private let proxyService = RaytoneProxyService()
@@ -191,6 +197,34 @@ final class SessionStore: ObservableObject {
         let effort = runtimeConfig?.reasoningEffort?.lowercased()
         let summary = runtimeConfig?.reasoningSummary?.lowercased()
         return effort != "none" && summary != "none"
+    }
+
+    private func applyRuntimeConfig(_ config: CodexRuntimeConfig?, fallbackDefaultPermissions: String? = nil) {
+        runtimeConfig = config
+        applyRuntimeDefaultPermissionsProfile(
+            config?.defaultPermissions ?? fallbackDefaultPermissions ?? runtimeRequirements?.defaultPermissions
+        )
+    }
+
+    private func applyRuntimeDefaultPermissionsProfile(_ profile: String?) {
+        guard let profile, !profile.isEmpty else {
+            return
+        }
+
+        switch profile {
+        case Self.readOnlyPermissionsProfile:
+            defaultPermissionsEnabled = false
+            defaultFullAccessPermissionsEnabled = false
+        case Self.dangerFullAccessPermissionsProfile:
+            defaultPermissionsEnabled = true
+            defaultFullAccessPermissionsEnabled = true
+        case Self.workspacePermissionsProfile:
+            defaultPermissionsEnabled = true
+            defaultFullAccessPermissionsEnabled = false
+        default:
+            defaultPermissionsEnabled = true
+            defaultFullAccessPermissionsEnabled = false
+        }
     }
 
     var execApprovalDisplayName: String {
@@ -661,6 +695,44 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    var runtimeDefaultPermissionsProfile: String {
+        if defaultFullAccessPermissionsEnabled {
+            return Self.dangerFullAccessPermissionsProfile
+        }
+        return defaultPermissionsEnabled ? Self.workspacePermissionsProfile : Self.readOnlyPermissionsProfile
+    }
+
+    func saveRuntimeDefaultPermissions(defaultEnabled: Bool? = nil, fullAccess: Bool? = nil) async {
+        var nextDefaultEnabled = defaultEnabled ?? defaultPermissionsEnabled
+        var nextFullAccess = fullAccess ?? defaultFullAccessPermissionsEnabled
+        if nextFullAccess {
+            nextDefaultEnabled = true
+        }
+        if !nextDefaultEnabled {
+            nextFullAccess = false
+        }
+
+        defaultPermissionsEnabled = nextDefaultEnabled
+        defaultFullAccessPermissionsEnabled = nextFullAccess
+        let profile = runtimeDefaultPermissionsProfile
+
+        runtimeCatalogStatusText = "正在写入 default_permissions…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "default_permissions",
+                value: .string(profile)
+            )
+            let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
+            applyRuntimeConfig(config, fallbackDefaultPermissions: profile)
+            runtimeCatalogStatusText = "default_permissions 已写入 config.toml：\(profile)"
+        } catch {
+            applyRuntimeDefaultPermissionsProfile(runtimeConfig?.defaultPermissions)
+            runtimeCatalogStatusText = "default_permissions 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     func saveRuntimeApprovalPolicy(_ policy: CodexApprovalPolicy) async {
         approval = policy
         accessMode = Self.accessMode(for: approval, sandbox: sandbox, approvalsReviewer: approvalsReviewer)
@@ -676,7 +748,7 @@ final class SessionStore: ObservableObject {
                 value: .string(policy.appServerValue)
             )
             runtimeCatalogStatusText = "approval_policy 已写入 config.toml"
-            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+            applyRuntimeConfig(try? await client.readConfig(cwd: workspacePath, includeLayers: true))
         } catch {
             runtimeCatalogStatusText = "approval_policy 写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
@@ -698,7 +770,7 @@ final class SessionStore: ObservableObject {
                 value: .string(mode.rawValue)
             )
             runtimeCatalogStatusText = "sandbox_mode 已写入 config.toml"
-            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+            applyRuntimeConfig(try? await client.readConfig(cwd: workspacePath, includeLayers: true))
         } catch {
             runtimeCatalogStatusText = "sandbox_mode 写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
@@ -720,7 +792,7 @@ final class SessionStore: ObservableObject {
                 value: .string(reviewer.rawValue)
             )
             runtimeCatalogStatusText = "approvals_reviewer 已写入 config.toml"
-            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+            applyRuntimeConfig(try? await client.readConfig(cwd: workspacePath, includeLayers: true))
         } catch {
             runtimeCatalogStatusText = "approvals_reviewer 写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
@@ -1119,7 +1191,7 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "app-server：\(runtimePlugins.count) 个插件 · \(runtimeSkills.count) 个技能 · 正在读取设置…"
 
             do {
-                runtimeConfig = try await client.readConfig(cwd: workspacePath, includeLayers: true)
+                applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
             } catch {
                 errors.append("config/read：\(error.localizedDescription)")
             }
@@ -1155,7 +1227,7 @@ final class SessionStore: ObservableObject {
         runtimeCatalogStatusText = "正在读取 config/read…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            runtimeConfig = try await client.readConfig(cwd: workspacePath, includeLayers: true)
+            applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
             runtimeCatalogStatusText = "config/read：\(runtimeConfig?.layerCount ?? 0) 个配置层"
         } catch {
             runtimeCatalogStatusText = "config/read 失败：\(error.localizedDescription)"
@@ -1542,6 +1614,9 @@ final class SessionStore: ObservableObject {
 
             do {
                 runtimeRequirements = try await client.readConfigRequirements()
+                if runtimeConfig?.defaultPermissions == nil {
+                    applyRuntimeDefaultPermissionsProfile(runtimeRequirements?.defaultPermissions)
+                }
             } catch {
                 errors.append("configRequirements/read：\(error.localizedDescription)")
             }
@@ -1844,7 +1919,7 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             try await client.writeConfigValue(keyPath: "developer_instructions", value: .string(instructions))
-            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+            applyRuntimeConfig(try? await client.readConfig(cwd: workspacePath, includeLayers: true))
             runtimeCatalogStatusText = "developer_instructions 已写入 config.toml"
         } catch {
             runtimeCatalogStatusText = "写入失败：\(error.localizedDescription)"
@@ -1972,7 +2047,7 @@ final class SessionStore: ObservableObject {
                 CodexConfigWriteEdit(keyPath: "model_provider", value: .string(provider.id))
             ])
             let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
-            runtimeConfig = config
+            applyRuntimeConfig(config)
             modelCatalogStatusText = "model/model_provider 已写入 config.toml"
             runtimeCatalogStatusText = "Codex 默认模型已更新为 \(selectedModel)"
         } catch {
@@ -2021,7 +2096,7 @@ final class SessionStore: ObservableObject {
                 CodexConfigWriteEdit(keyPath: "model_reasoning_summary", value: .string(summary))
             ])
             let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
-            runtimeConfig = config
+            applyRuntimeConfig(config)
             modelCatalogStatusText = "model_reasoning_* 已写入 config.toml"
             runtimeCatalogStatusText = enabled ? "Thinking 已开启：\(effort) / \(summary)" : "Thinking 已关闭：none / none"
         } catch {
