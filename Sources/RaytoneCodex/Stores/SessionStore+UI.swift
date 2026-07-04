@@ -342,6 +342,12 @@ extension SessionStore {
             newThread(in: selectedProject.id)
             model = ""
             route = .thread
+        case "home-compact", "compact-composer", "bottom-panel-off":
+            newThread(in: selectedProject.id)
+            model = ""
+            desktopShowBottomPanel = false
+            accessModePopoverPresented = false
+            route = .thread
         case "access", "access-popover":
             newThread(in: selectedProject.id)
             model = ""

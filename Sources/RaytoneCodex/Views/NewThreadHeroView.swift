@@ -73,6 +73,7 @@ struct NewThreadHeroView: View {
                     .frame(minHeight: 98, maxHeight: 150)
                     .padding(.horizontal, 18)
                     .padding(.top, 15)
+                    .padding(.bottom, store.desktopShowBottomPanel ? 0 : 42)
 
                 if store.prompt.isEmpty {
                     Text("随心输入")
@@ -83,17 +84,26 @@ struct NewThreadHeroView: View {
                         .allowsHitTesting(false)
                 }
             }
-
-            HStack(spacing: 8) {
-                plusMenu
-                AccessModeControl(store: store)
-                Spacer(minLength: 8)
-                modelMenu
-                micButton
-                sendButton
+            .overlay(alignment: .bottomTrailing) {
+                if !store.desktopShowBottomPanel {
+                    sendButton
+                        .padding(.trailing, 12)
+                        .padding(.bottom, 12)
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+
+            if store.desktopShowBottomPanel {
+                HStack(spacing: 8) {
+                    plusMenu
+                    AccessModeControl(store: store)
+                    Spacer(minLength: 8)
+                    modelMenu
+                    micButton
+                    sendButton
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+            }
         }
         .background(Theme.transcript)
         .overlay(
@@ -103,7 +113,7 @@ struct NewThreadHeroView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous))
         .shadow(color: Theme.border.opacity(0.35), radius: 18, x: 0, y: 10)
         .overlay(alignment: .bottomLeading) {
-            if store.accessModePopoverPresented {
+            if store.desktopShowBottomPanel && store.accessModePopoverPresented {
                 AccessModePopover(store: store)
                     .offset(x: 42, y: -36)
                     .zIndex(20)

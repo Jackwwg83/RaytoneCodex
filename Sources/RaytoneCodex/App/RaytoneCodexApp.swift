@@ -17,6 +17,7 @@ struct RaytoneCodexApp: App {
                 .task {
                     await sessionStore.refreshRuntime()
                     await sessionStore.refreshRuntimeThreads()
+                    sessionStore.applyStartupScreenIfNeeded()
                 }
         }
         .windowStyle(.hiddenTitleBar)

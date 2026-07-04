@@ -313,6 +313,19 @@ final class SessionStore: ObservableObject {
         runtimeConfig?.memoryDisableOnExternalContext ?? false
     }
 
+    static var startupScreenIdentifier: String? {
+        ProcessInfo.processInfo.environment["RAYTONE_CODEX_UI_SCREEN"]?.lowercased()
+    }
+
+    static var startupScreenDisablesBottomPanel: Bool {
+        switch startupScreenIdentifier {
+        case "home-compact", "compact-composer", "bottom-panel-off":
+            true
+        default:
+            false
+        }
+    }
+
     var runtimeDesktopSettingsSummary: String {
         [
             "菜单栏 \(desktopShowInMenuBar ? "开" : "关")",
@@ -343,6 +356,9 @@ final class SessionStore: ObservableObject {
     private func applyRuntimeDesktopSettings(_ settings: CodexRuntimeDesktopSettings) {
         desktopShowInMenuBar = settings.showInMenuBar ?? true
         desktopShowBottomPanel = settings.showBottomPanel ?? true
+        if Self.startupScreenDisablesBottomPanel {
+            desktopShowBottomPanel = false
+        }
         desktopPreventSleepWhileRunning = settings.preventSleepWhileRunning ?? true
         desktopTerminalPosition = settings.terminalPosition ?? "底部"
         desktopAppearance = settings.appearance ?? "跟随系统"

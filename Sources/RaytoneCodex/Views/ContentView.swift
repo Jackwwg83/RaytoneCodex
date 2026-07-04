@@ -21,7 +21,6 @@ struct ContentView: View {
         .background(Theme.window)
         .onAppear {
             store.installSampleWorkspaceIfNeeded()
-            store.applyStartupScreenIfNeeded()
         }
     }
 

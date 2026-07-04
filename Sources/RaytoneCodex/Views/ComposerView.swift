@@ -10,7 +10,9 @@ struct ComposerView: View {
     var body: some View {
         VStack(spacing: 0) {
             inputArea
-            controlRow
+            if store.desktopShowBottomPanel {
+                controlRow
+            }
         }
         .background(Theme.transcript)
         .overlay(
@@ -20,7 +22,7 @@ struct ComposerView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.composer, style: .continuous))
         .shadow(color: .black.opacity(0.06), radius: 14, x: 0, y: 6)
         .overlay(alignment: .bottomLeading) {
-            if store.accessModePopoverPresented {
+            if store.desktopShowBottomPanel && store.accessModePopoverPresented {
                 AccessModePopover(store: store)
                     .offset(x: 40, y: -36)
                     .zIndex(20)
@@ -38,6 +40,7 @@ struct ComposerView: View {
                 .frame(minHeight: 46, maxHeight: 150)
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
+                .padding(.bottom, store.desktopShowBottomPanel ? 0 : 38)
 
             if store.prompt.isEmpty {
                 Text(placeholder)
@@ -46,6 +49,13 @@ struct ComposerView: View {
                     .padding(.horizontal, 19)
                     .padding(.top, 20)
                     .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if !store.desktopShowBottomPanel {
+                sendButton
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 10)
             }
         }
     }
