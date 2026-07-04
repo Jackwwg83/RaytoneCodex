@@ -48,6 +48,8 @@ enum SmokeTestRunner {
             runMemorySettingsSmoke()
         } else if CommandLine.arguments.contains("--work-mode-smoke-test") {
             runWorkModeSmoke()
+        } else if CommandLine.arguments.contains("--desktop-settings-smoke-test") {
+            runDesktopSettingsSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -1397,6 +1399,114 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    private static func runDesktopSettingsSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            await executeDesktopSettingsSmoke(workspacePath: workspacePath)
+        }
+
+        dispatchMain()
+    }
+
+    @MainActor
+    private static func executeDesktopSettingsSmoke(workspacePath: String) async {
+        let codexHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexDesktopSettingsSmoke-\(UUID().uuidString)", isDirectory: true)
+        let store = SessionStore()
+        store.workspacePath = workspacePath
+        store.appServerEnvironmentOverridesForTesting = [
+            "CODEX_HOME": codexHome.path
+        ]
+
+        do {
+            try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+            await store.refreshRuntime()
+            let runtime = store.runtimeSnapshot
+            guard runtime.executable != nil else {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "none",
+                    "runtimePath": "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": "Codex runtime executable was not found"
+                ])
+                exit(1)
+            }
+
+            let configURL = codexHome.appendingPathComponent("config.toml")
+
+            await store.saveRuntimeShowInMenuBar(false)
+            await store.saveRuntimeShowBottomPanel(false)
+            await store.saveRuntimePreventSleepWhileRunning(false)
+            await store.saveRuntimeTerminalPosition("右侧")
+            await store.saveRuntimeAppearance("深色")
+            await store.saveRuntimeOpenTarget("Finder")
+            await store.saveRuntimeLanguage("简体中文")
+
+            let config = store.runtimeConfig
+            let desktop = config?.desktopSettings
+            let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+            await store.stopAppServerForTesting()
+
+            let desktopValuesOk = desktop?.showInMenuBar == false &&
+                desktop?.showBottomPanel == false &&
+                desktop?.preventSleepWhileRunning == false &&
+                desktop?.terminalPosition == "右侧" &&
+                desktop?.appearance == "深色" &&
+                desktop?.openTarget == "Finder" &&
+                desktop?.language == "简体中文" &&
+                config?.desktopKeys.contains("raytone") == true
+            let configTextOk = configText.contains("[desktop.raytone]") &&
+                configText.contains("show_in_menu_bar = false") &&
+                configText.contains("show_bottom_panel = false") &&
+                configText.contains("prevent_sleep_while_running = false") &&
+                configText.contains("terminal_position = \"右侧\"") &&
+                configText.contains("appearance = \"深色\"") &&
+                configText.contains("open_target = \"Finder\"") &&
+                configText.contains("language = \"简体中文\"")
+            let ok = desktopValuesOk && configTextOk
+            let desktopPayload: [String: Any] = [
+                "showInMenuBar": desktop?.showInMenuBar.map { $0 as Any } ?? NSNull(),
+                "showBottomPanel": desktop?.showBottomPanel.map { $0 as Any } ?? NSNull(),
+                "preventSleepWhileRunning": desktop?.preventSleepWhileRunning.map { $0 as Any } ?? NSNull(),
+                "terminalPosition": desktop?.terminalPosition ?? "",
+                "appearance": desktop?.appearance ?? "",
+                "openTarget": desktop?.openTarget ?? "",
+                "language": desktop?.language ?? ""
+            ]
+            let payload: [String: Any] = [
+                "ok": ok,
+                "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                "runtimePath": runtime.executable?.url.path ?? "",
+                "runtimeVersion": runtime.version ?? "",
+                "workspacePath": workspacePath,
+                "codexHome": codexHome.path,
+                "configPath": configURL.path,
+                "desktopKeys": config?.desktopKeys ?? [],
+                "desktop": desktopPayload,
+                "configText": configText,
+                "runtimeCatalogStatusText": store.runtimeCatalogStatusText
+            ]
+            emitJSON(payload)
+            exit(ok ? 0 : 1)
+        } catch {
+            await store.stopAppServerForTesting()
+            emitJSON([
+                "ok": false,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "codexHome": codexHome.path,
+                "error": error.localizedDescription
+            ])
+            exit(1)
+        }
     }
 
     private static func runAccessModeSmoke() {

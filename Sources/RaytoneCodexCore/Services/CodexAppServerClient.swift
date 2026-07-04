@@ -533,6 +533,34 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexRuntimeDesktopSettings: Equatable, Sendable {
+    public var showInMenuBar: Bool?
+    public var showBottomPanel: Bool?
+    public var preventSleepWhileRunning: Bool?
+    public var terminalPosition: String?
+    public var appearance: String?
+    public var openTarget: String?
+    public var language: String?
+
+    public init(
+        showInMenuBar: Bool? = nil,
+        showBottomPanel: Bool? = nil,
+        preventSleepWhileRunning: Bool? = nil,
+        terminalPosition: String? = nil,
+        appearance: String? = nil,
+        openTarget: String? = nil,
+        language: String? = nil
+    ) {
+        self.showInMenuBar = showInMenuBar
+        self.showBottomPanel = showBottomPanel
+        self.preventSleepWhileRunning = preventSleepWhileRunning
+        self.terminalPosition = terminalPosition
+        self.appearance = appearance
+        self.openTarget = openTarget
+        self.language = language
+    }
+}
+
 public struct CodexRuntimeConfig: Equatable, Sendable {
     public var model: String?
     public var modelProvider: String?
@@ -550,6 +578,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var instructions: String?
     public var developerInstructions: String?
     public var desktopKeys: [String]
+    public var desktopSettings: CodexRuntimeDesktopSettings
     public var layerCount: Int
     public var originKeys: [String]
 
@@ -570,6 +599,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         instructions: String?,
         developerInstructions: String?,
         desktopKeys: [String],
+        desktopSettings: CodexRuntimeDesktopSettings,
         layerCount: Int,
         originKeys: [String]
     ) {
@@ -589,6 +619,7 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.instructions = instructions
         self.developerInstructions = developerInstructions
         self.desktopKeys = desktopKeys
+        self.desktopSettings = desktopSettings
         self.layerCount = layerCount
         self.originKeys = originKeys
     }
@@ -1980,6 +2011,8 @@ public actor CodexAppServerClient {
     private static func runtimeConfig(from result: JSONValue) -> CodexRuntimeConfig {
         let config = result["config"]
         let memories = config?["memories"]
+        let desktop = config?["desktop"]
+        let raytoneDesktop = desktop?["raytone"] ?? desktop?["RaytoneCodex"]
         let desktopKeys = config?["desktop"]?.objectValue?.keys.sorted() ?? []
         let originKeys = result["origins"]?.objectValue?.keys.sorted() ?? []
         return CodexRuntimeConfig(
@@ -1999,9 +2032,26 @@ public actor CodexAppServerClient {
             instructions: config?["instructions"]?.stringValue,
             developerInstructions: config?["developer_instructions"]?.stringValue,
             desktopKeys: desktopKeys,
+            desktopSettings: CodexRuntimeDesktopSettings(
+                showInMenuBar: configBool(raytoneDesktop, snake: "show_in_menu_bar", camel: "showInMenuBar"),
+                showBottomPanel: configBool(raytoneDesktop, snake: "show_bottom_panel", camel: "showBottomPanel"),
+                preventSleepWhileRunning: configBool(raytoneDesktop, snake: "prevent_sleep_while_running", camel: "preventSleepWhileRunning"),
+                terminalPosition: configString(raytoneDesktop, snake: "terminal_position", camel: "terminalPosition"),
+                appearance: configString(raytoneDesktop, snake: "appearance", camel: "appearance"),
+                openTarget: configString(raytoneDesktop, snake: "open_target", camel: "openTarget"),
+                language: configString(raytoneDesktop, snake: "language", camel: "language")
+            ),
             layerCount: result["layers"]?.arrayValue?.count ?? 0,
             originKeys: originKeys
         )
+    }
+
+    private static func configBool(_ value: JSONValue?, snake: String, camel: String) -> Bool? {
+        value?[snake]?.boolValue ?? value?[camel]?.boolValue
+    }
+
+    private static func configString(_ value: JSONValue?, snake: String, camel: String) -> String? {
+        value?[snake]?.stringValue ?? value?[camel]?.stringValue
     }
 
     private static func runtimeAccount(from result: JSONValue) -> CodexRuntimeAccount {

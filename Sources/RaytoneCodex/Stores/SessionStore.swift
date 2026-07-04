@@ -43,6 +43,13 @@ final class SessionStore: ObservableObject {
     @Published var runtimeHooks: [CodexRuntimeHook] = []
     @Published var runtimeMCPServers: [CodexRuntimeMCPServer] = []
     @Published var runtimeConfig: CodexRuntimeConfig?
+    @Published var desktopShowInMenuBar = true
+    @Published var desktopShowBottomPanel = true
+    @Published var desktopPreventSleepWhileRunning = true
+    @Published var desktopTerminalPosition = "底部"
+    @Published var desktopAppearance = "跟随系统"
+    @Published var desktopOpenTarget = "iTerm2"
+    @Published var desktopLanguage = "自动检测"
     @Published var defaultPermissionsEnabled = true
     @Published var defaultFullAccessPermissionsEnabled = false
     @Published var runtimeAccount: CodexRuntimeAccount?
@@ -217,8 +224,20 @@ final class SessionStore: ObservableObject {
         runtimeConfig?.memoryDisableOnExternalContext ?? false
     }
 
+    var runtimeDesktopSettingsSummary: String {
+        [
+            "菜单栏 \(desktopShowInMenuBar ? "开" : "关")",
+            "面板 \(desktopShowBottomPanel ? "开" : "关")",
+            desktopTerminalPosition,
+            desktopAppearance
+        ].joined(separator: " · ")
+    }
+
     private func applyRuntimeConfig(_ config: CodexRuntimeConfig?, fallbackDefaultPermissions: String? = nil) {
         runtimeConfig = config
+        if let config {
+            applyRuntimeDesktopSettings(config.desktopSettings)
+        }
         applyRuntimeDefaultPermissionsProfile(
             config?.defaultPermissions ?? fallbackDefaultPermissions ?? runtimeRequirements?.defaultPermissions
         )
@@ -230,6 +249,16 @@ final class SessionStore: ObservableObject {
                 thread.approvalsReviewer = reviewer
             }
         }
+    }
+
+    private func applyRuntimeDesktopSettings(_ settings: CodexRuntimeDesktopSettings) {
+        desktopShowInMenuBar = settings.showInMenuBar ?? true
+        desktopShowBottomPanel = settings.showBottomPanel ?? true
+        desktopPreventSleepWhileRunning = settings.preventSleepWhileRunning ?? true
+        desktopTerminalPosition = settings.terminalPosition ?? "底部"
+        desktopAppearance = settings.appearance ?? "跟随系统"
+        desktopOpenTarget = settings.openTarget ?? "iTerm2"
+        desktopLanguage = settings.language ?? "自动检测"
     }
 
     private func applyRuntimeDefaultPermissionsProfile(_ profile: String?) {
@@ -891,6 +920,60 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = enabled ? "工具辅助对话将跳过记忆生成" : "工具辅助对话可生成记忆"
         } catch {
             runtimeCatalogStatusText = "记忆跳过规则写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func saveRuntimeShowInMenuBar(_ enabled: Bool) async {
+        desktopShowInMenuBar = enabled
+        await saveRuntimeDesktopSetting(key: "show_in_menu_bar", value: .bool(enabled), statusName: "菜单栏显示")
+    }
+
+    func saveRuntimeShowBottomPanel(_ enabled: Bool) async {
+        desktopShowBottomPanel = enabled
+        await saveRuntimeDesktopSetting(key: "show_bottom_panel", value: .bool(enabled), statusName: "底部面板")
+    }
+
+    func saveRuntimePreventSleepWhileRunning(_ enabled: Bool) async {
+        desktopPreventSleepWhileRunning = enabled
+        await saveRuntimeDesktopSetting(key: "prevent_sleep_while_running", value: .bool(enabled), statusName: "防止系统休眠")
+    }
+
+    func saveRuntimeTerminalPosition(_ position: String) async {
+        desktopTerminalPosition = position
+        await saveRuntimeDesktopSetting(key: "terminal_position", value: .string(position), statusName: "默认终端位置")
+    }
+
+    func saveRuntimeAppearance(_ appearance: String) async {
+        desktopAppearance = appearance
+        await saveRuntimeDesktopSetting(key: "appearance", value: .string(appearance), statusName: "主题")
+    }
+
+    func saveRuntimeOpenTarget(_ target: String) async {
+        desktopOpenTarget = target
+        await saveRuntimeDesktopSetting(key: "open_target", value: .string(target), statusName: "默认打开目标")
+    }
+
+    func saveRuntimeLanguage(_ language: String) async {
+        desktopLanguage = language
+        await saveRuntimeDesktopSetting(key: "language", value: .string(language), statusName: "语言")
+    }
+
+    private func saveRuntimeDesktopSetting(key: String, value: JSONValue, statusName: String) async {
+        runtimeCatalogStatusText = "正在写入 desktop.raytone.\(key)…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "desktop.raytone.\(key)",
+                value: value
+            )
+            applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
+            runtimeCatalogStatusText = "\(statusName) 已写入 desktop.raytone.\(key)"
+        } catch {
+            if let settings = runtimeConfig?.desktopSettings {
+                applyRuntimeDesktopSettings(settings)
+            }
+            runtimeCatalogStatusText = "\(statusName) 写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
     }

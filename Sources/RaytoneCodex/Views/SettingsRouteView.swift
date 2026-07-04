@@ -6,11 +6,6 @@ struct SettingsRouteView: View {
     @ObservedObject var store: SessionStore
 
     @State private var search = ""
-    @State private var showInMenuBar = true
-    @State private var bottomPanel = true
-    @State private var preventSleep = true
-    @State private var terminalPosition = "底部"
-    @State private var appearance = "跟随系统"
     @State private var chronicleEnabled = true
     @State private var providerAPIKeyDraft = ""
     @State private var providerStatusMessage = "未测试"
@@ -71,6 +66,61 @@ struct SettingsRouteView: View {
             set: { enabled in
                 Task { @MainActor in
                     await store.saveRuntimeSkipToolAssistedChats(enabled)
+                }
+            }
+        )
+    }
+
+    private var showInMenuBarBinding: Binding<Bool> {
+        Binding(
+            get: { store.desktopShowInMenuBar },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimeShowInMenuBar(enabled)
+                }
+            }
+        )
+    }
+
+    private var bottomPanelBinding: Binding<Bool> {
+        Binding(
+            get: { store.desktopShowBottomPanel },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimeShowBottomPanel(enabled)
+                }
+            }
+        )
+    }
+
+    private var preventSleepBinding: Binding<Bool> {
+        Binding(
+            get: { store.desktopPreventSleepWhileRunning },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimePreventSleepWhileRunning(enabled)
+                }
+            }
+        )
+    }
+
+    private var terminalPositionBinding: Binding<String> {
+        Binding(
+            get: { store.desktopTerminalPosition },
+            set: { position in
+                Task { @MainActor in
+                    await store.saveRuntimeTerminalPosition(position)
+                }
+            }
+        )
+    }
+
+    private var appearanceBinding: Binding<String> {
+        Binding(
+            get: { store.desktopAppearance },
+            set: { appearance in
+                Task { @MainActor in
+                    await store.saveRuntimeAppearance(appearance)
                 }
             }
         )
@@ -274,14 +324,26 @@ struct SettingsRouteView: View {
 
             SettingsSection(title: "常规") {
                 SettingsCard {
-                    SettingsValueRow(title: "默认打开目标", description: "默认打开文件和文件夹的位置") { menuValue("iTerm2", values: ["iTerm2", "Terminal", "Finder"]) }
-                    SettingsValueRow(title: "语言", description: "应用 UI 语言") { menuValue("自动检测", values: ["自动检测", "简体中文", "English"]) }
-                    SettingsToggleRow(title: "在菜单栏中显示", description: "关闭主窗口后，仍在 macOS 菜单栏中保留 Codex", isOn: $showInMenuBar)
-                    SettingsToggleRow(title: "底部面板", description: "在应用标题栏中显示底部面板控件", isOn: $bottomPanel)
-                    SettingsValueRow(title: "默认终端位置", description: "选择终端快捷方式和环境操作在何处打开终端标签页") {
-                        segmented(values: ["底部", "右侧"], selection: $terminalPosition)
+                    SettingsValueRow(title: "默认打开目标", description: "默认打开文件和文件夹的位置") {
+                        menuValue(store.desktopOpenTarget, values: ["iTerm2", "Terminal", "Finder"]) { value in
+                            Task { @MainActor in
+                                await store.saveRuntimeOpenTarget(value)
+                            }
+                        }
                     }
-                    SettingsToggleRow(title: "运行时防止系统休眠", description: "在 Codex 运行对话时，让电脑保持唤醒状态", isOn: $preventSleep)
+                    SettingsValueRow(title: "语言", description: "应用 UI 语言") {
+                        menuValue(store.desktopLanguage, values: ["自动检测", "简体中文", "English"]) { value in
+                            Task { @MainActor in
+                                await store.saveRuntimeLanguage(value)
+                            }
+                        }
+                    }
+                    SettingsToggleRow(title: "在菜单栏中显示", description: "关闭主窗口后，仍在 macOS 菜单栏中保留 Codex", isOn: showInMenuBarBinding)
+                    SettingsToggleRow(title: "底部面板", description: "在应用标题栏中显示底部面板控件", isOn: bottomPanelBinding)
+                    SettingsValueRow(title: "默认终端位置", description: "选择终端快捷方式和环境操作在何处打开终端标签页") {
+                        segmented(values: ["底部", "右侧"], selection: terminalPositionBinding)
+                    }
+                    SettingsToggleRow(title: "运行时防止系统休眠", description: "在 Codex 运行对话时，让电脑保持唤醒状态", isOn: preventSleepBinding)
                     SettingsValueRow(title: "速度", description: "写入 Codex 的 service_tier，用于新一轮模型请求") {
                         serviceTierMenu
                     }
@@ -803,6 +865,12 @@ struct SettingsRouteView: View {
                     configMetric("生成记忆", boolMetric(store.runtimeConfig?.memoryGenerateMemories))
                     configMetric("使用记忆", boolMetric(store.runtimeConfig?.memoryUseMemories))
                     configMetric("外部上下文跳过记忆", boolMetric(store.runtimeConfig?.memoryDisableOnExternalContext))
+                    configMetric("桌面设置", store.runtimeDesktopSettingsSummary)
+                    configMetric("菜单栏", boolMetric(store.runtimeConfig?.desktopSettings.showInMenuBar))
+                    configMetric("底部面板", boolMetric(store.runtimeConfig?.desktopSettings.showBottomPanel))
+                    configMetric("防止休眠", boolMetric(store.runtimeConfig?.desktopSettings.preventSleepWhileRunning))
+                    configMetric("终端位置", store.runtimeConfig?.desktopSettings.terminalPosition ?? "默认")
+                    configMetric("主题", store.runtimeConfig?.desktopSettings.appearance ?? "默认")
                     configMetric("配置层", "\(store.runtimeConfig?.layerCount ?? 0)")
                     configMetric("desktop 键", store.runtimeConfig?.desktopKeys.joined(separator: "、") ?? "无")
                 }
@@ -1378,7 +1446,7 @@ struct SettingsRouteView: View {
             paneTitle("外观", subtitle: "选择 RaytoneCodex 的显示方式")
             SettingsCard {
                 SettingsValueRow(title: "主题", description: "浅色、深色或跟随系统") {
-                    segmented(values: ["浅色", "深色", "跟随系统"], selection: $appearance)
+                    segmented(values: ["浅色", "深色", "跟随系统"], selection: appearanceBinding)
                 }
                 SettingsValueRow(title: "强调色", description: "使用系统强调色突出选择状态") {
                     HStack(spacing: 8) {
@@ -1580,10 +1648,16 @@ struct SettingsRouteView: View {
     }
 
     private func menuValue(_ title: String, values: [String]) -> some View {
+        menuValue(title, values: values) { value in
+            store.runtimeCatalogStatusText = "\(value) 已选择"
+        }
+    }
+
+    private func menuValue(_ title: String, values: [String], onSelect: @escaping (String) -> Void) -> some View {
         Menu {
             ForEach(values, id: \.self) { value in
                 Button(value) {
-                    store.runtimeCatalogStatusText = "\(value) 已选择"
+                    onSelect(value)
                 }
             }
         } label: {
