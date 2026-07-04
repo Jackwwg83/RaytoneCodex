@@ -71,6 +71,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeThreadSyncStatusText = "未同步"
     @Published var workspaceGitDiff: CodexRuntimeGitDiff?
     @Published var workspaceGitStatusText = ""
+    @Published var workspacePullRequestStatusText = "未刷新"
     @Published var workspaceWorktrees: [String] = []
     @Published var workspaceBranches: [String] = []
     @Published var workspaceBranchStatusText = "未刷新"
@@ -2050,6 +2051,26 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func refreshWorkspacePullRequestStatus() async {
+        workspacePullRequestStatusText = "正在读取 PR 状态…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.execCommand(
+                ["/bin/zsh", "-lc", Self.pullRequestStatusCommand],
+                cwd: URL(fileURLWithPath: workspacePath),
+                sandbox: .readOnly,
+                timeoutMs: 20_000
+            )
+            let output = [result.stdout, result.stderr]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            workspacePullRequestStatusText = output.isEmpty ? "没有 PR 状态输出" : output
+        } catch {
+            workspacePullRequestStatusText = "PR 状态读取失败：\(error.localizedDescription)"
+        }
+    }
+
     func refreshIntegrationRuntime(forceRefetchApps: Bool = false) async {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在读取 app-server 集成状态…"
@@ -3446,6 +3467,41 @@ final class SessionStore: ObservableObject {
             .standardizedFileURL
             .path
     }
+
+    private static let pullRequestStatusCommand = """
+    set +e
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "不是 Git 工作区"
+      exit 0
+    fi
+    branch=$(git branch --show-current 2>/dev/null)
+    if [ -z "$branch" ]; then
+      echo "detached HEAD，无法关联 PR"
+      exit 0
+    fi
+    if ! command -v gh >/dev/null 2>&1; then
+      echo "未安装 GitHub CLI，无法查询 PR"
+      exit 0
+    fi
+    if ! gh auth status -h github.com >/dev/null 2>&1; then
+      echo "GitHub CLI 未登录，无法查询 PR"
+      exit 0
+    fi
+    out=$(gh pr view "$branch" --json number,state,title,isDraft,reviewDecision,headRefName,baseRefName,url --jq 'def state_name: if .state == "OPEN" then "打开" elif .state == "MERGED" then "已合并" elif .state == "CLOSED" then "已关闭" else .state end; def review_name: if .reviewDecision == "APPROVED" then "已批准" elif .reviewDecision == "CHANGES_REQUESTED" then "需修改" elif .reviewDecision == "REVIEW_REQUIRED" then "待审查" else "未审查" end; "PR #\\(.number) \\(state_name)\\(if .isDraft then " · 草稿" else "" end) · \\(review_name) · \\(.headRefName)→\\(.baseRefName) · \\(.title)"' 2>&1)
+    status=$?
+    if [ $status -eq 0 ]; then
+      echo "$out"
+      exit 0
+    fi
+    case "$out" in
+      *"no pull requests found"*|*"no pull request"*|*"not found"*)
+        echo "当前分支 $branch 无 PR"
+        ;;
+      *)
+        printf "PR 状态不可用：%s\\n" "$out"
+        ;;
+    esac
+    """
 
     private static func promptReferencePath(for path: String, workspacePath: String) -> String {
         let workspace = URL(fileURLWithPath: workspacePath).standardizedFileURL.path

@@ -2395,16 +2395,23 @@ enum SmokeTestRunner {
             let diffSummary = SessionStore.diffSummary(store.workspaceGitDiff?.diff ?? "")
             let fallbackGitStatus = store.workspaceGitStatusText
 
+            await store.refreshWorkspacePullRequestStatus()
+            let pullRequestStatus = store.workspacePullRequestStatusText
+
             await store.refreshWorkspaceWorktrees()
             let worktreeStatus = store.runtimeCatalogStatusText
             let worktreeErrors = store.runtimeCatalogErrors
 
             let gitDataAvailable = store.workspaceGitDiff != nil || !fallbackGitStatus.isEmpty
+            let pullRequestStatusAvailable = !pullRequestStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                pullRequestStatus != "未刷新" &&
+                pullRequestStatus != "正在读取 PR 状态…"
             let ok = store.runtimeSnapshot.executable != nil &&
                 !branchStatus.hasPrefix("分支读取失败") &&
                 !gitStatus.hasPrefix("Git 差异读取失败") &&
                 !worktreeStatus.hasPrefix("工作树读取失败") &&
-                gitDataAvailable
+                gitDataAvailable &&
+                pullRequestStatusAvailable
 
             emitJSON([
                 "ok": ok,
@@ -2425,6 +2432,7 @@ enum SmokeTestRunner {
                     "deletions": diffSummary.deletions,
                     "fallbackStatus": fallbackGitStatus
                 ] as [String: Any],
+                "pullRequestStatus": pullRequestStatus,
                 "worktreeStatus": worktreeStatus,
                 "worktreeErrors": worktreeErrors,
                 "worktrees": store.workspaceWorktrees

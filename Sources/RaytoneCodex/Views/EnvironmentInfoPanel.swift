@@ -22,6 +22,7 @@ struct EnvironmentInfoPanel: View {
             didRefreshEnvironment = true
             await store.refreshWorkspaceBranches()
             await store.refreshWorkspaceGitDiff()
+            await store.refreshWorkspacePullRequestStatus()
             await store.refreshWorkspaceWorktrees()
         }
         .frame(width: Theme.Layout.inspectorWidth)
@@ -143,13 +144,7 @@ struct EnvironmentInfoPanel: View {
     }
 
     private var pullRequestStatusText: String {
-        if store.workspaceGitDiff?.sha?.isEmpty == false {
-            return "远端差异已读取"
-        }
-        if store.workspaceGitStatusText.isEmpty {
-            return "无法获取拉取请求状态"
-        }
-        return "本地 Git 状态已读取"
+        store.workspacePullRequestStatusText
     }
 
     private var progressSteps: [ProgressStep] {

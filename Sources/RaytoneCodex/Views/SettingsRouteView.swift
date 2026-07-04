@@ -1108,10 +1108,13 @@ struct SettingsRouteView: View {
     private var gitPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                paneTitle("Git", subtitle: "来自 app-server 旧协议 gitDiffToRemote")
+                paneTitle("Git", subtitle: "来自 app-server 的 gitDiffToRemote 与 command/exec")
                 Spacer(minLength: 0)
                 Button("刷新") {
-                    Task { await store.refreshWorkspaceGitDiff() }
+                    Task {
+                        await store.refreshWorkspaceGitDiff()
+                        await store.refreshWorkspacePullRequestStatus()
+                    }
                 }
                 .buttonStyle(ChipButtonStyle())
             }
@@ -1129,6 +1132,7 @@ struct SettingsRouteView: View {
                     metricRow("远端基准 SHA", store.workspaceGitDiff?.sha?.prefix(12).description ?? "未返回")
                     let parsed = SessionStore.diffSummary(store.workspaceGitDiff?.diff ?? "")
                     metricRow("差异", "\(parsed.files) 个文件 · +\(parsed.additions) −\(parsed.deletions)")
+                    metricRow("PR 状态", store.workspacePullRequestStatusText)
                     if !store.workspaceGitStatusText.isEmpty {
                         metricRow("本地状态", "command/exec 已读取")
                     }
