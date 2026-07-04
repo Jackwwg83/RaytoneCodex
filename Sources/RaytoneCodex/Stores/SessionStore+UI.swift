@@ -413,6 +413,35 @@ extension SessionStore {
         Task { await refreshIntegrationRuntime() }
     }
 
+    func recoverConnection(
+        from state: ConnectionState? = nil,
+        openBrowserForLogin: Bool = true
+    ) async {
+        let currentState = state ?? connectionState
+        switch currentState {
+        case .loginRequired:
+            route = .settings
+            settingsPane = .usageBilling
+            await startAccountChatGPTLogin(openBrowser: openBrowserForLogin)
+        case .providerKeyMissing, .providerUnauthorized:
+            route = .settings
+            settingsPane = .modelsProviders
+            providerConnectionStatusText = "请补充 Provider API Key 并测试连接"
+        case .sidecarUnavailable:
+            route = .settings
+            settingsPane = .modelsProviders
+            await refreshModelCatalog()
+        case .notInstalled:
+            route = .settings
+            settingsPane = .general
+            await refreshRuntime()
+        case .disconnected, .restartRequired, .updateRequired:
+            await refreshRuntime()
+        case .connecting, .connected:
+            break
+        }
+    }
+
     func promptEditActiveGoal() {
         guard let goal = selectedThread.activeGoal else { return }
 

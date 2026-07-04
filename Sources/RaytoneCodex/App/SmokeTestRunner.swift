@@ -28,6 +28,8 @@ enum SmokeTestRunner {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
             runAccountAuthSmoke()
+        } else if CommandLine.arguments.contains("--connection-recovery-smoke-test") {
+            runConnectionRecoverySmoke()
         } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
             runAccountAPIKeySmoke()
         } else if CommandLine.arguments.contains("--mention-smoke-test") {
@@ -4180,6 +4182,75 @@ enum SmokeTestRunner {
                 "cancelStatus": cancelStatus,
                 "cancelErrors": cancelErrors,
                 "activeLoginAfterCancel": store.activeAccountLogin?.loginID ?? ""
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runConnectionRecoverySmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            await store.recoverConnection(
+                from: .providerKeyMissing("DeepSeek"),
+                openBrowserForLogin: false
+            )
+            let providerRouteOK = store.route == .settings &&
+                store.settingsPane == .modelsProviders &&
+                store.providerConnectionStatusText.contains("Provider API Key")
+            let providerStatus = store.providerConnectionStatusText
+
+            fputs("connection-recovery-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("connection-recovery-smoke: recover loginRequired\n", stderr)
+            await store.recoverConnection(from: .loginRequired, openBrowserForLogin: false)
+            let login = store.activeAccountLogin
+            let loginStatus = store.runtimeCatalogStatusText
+            let loginErrors = store.runtimeCatalogErrors
+            let loginRouteOK = store.route == .settings && store.settingsPane == .usageBilling
+
+            fputs("connection-recovery-smoke: cancelAccountLogin\n", stderr)
+            await store.cancelAccountLogin()
+            let cancelStatus = store.runtimeCatalogStatusText
+            let cancelErrors = store.runtimeCatalogErrors
+
+            let localizedStateOK = ConnectionState.loginRequired.title == "需要登录" &&
+                ConnectionState.loginRequired.detail.contains("登录 Codex") &&
+                ConnectionState.providerKeyMissing("DeepSeek").detail.contains("模型与提供方")
+            let ok = store.runtimeSnapshot.executable != nil &&
+                providerRouteOK &&
+                loginRouteOK &&
+                login?.kind == "chatgpt" &&
+                login?.loginID?.isEmpty == false &&
+                login?.authURL != nil &&
+                loginErrors.isEmpty &&
+                !cancelStatus.hasPrefix("取消登录失败") &&
+                cancelErrors.isEmpty &&
+                localizedStateOK
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "providerRouteOK": providerRouteOK,
+                "providerStatus": providerStatus,
+                "loginRouteOK": loginRouteOK,
+                "loginKind": login?.kind ?? "",
+                "loginID": login?.loginID ?? "",
+                "authURLHost": login?.authURL?.host ?? "",
+                "loginStatus": loginStatus,
+                "loginErrors": loginErrors,
+                "cancelStatus": cancelStatus,
+                "cancelErrors": cancelErrors,
+                "localizedStateOK": localizedStateOK
             ])
             exit(ok ? 0 : 1)
         }

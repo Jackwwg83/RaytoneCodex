@@ -268,31 +268,31 @@ enum ConnectionState: Equatable {
 
     var title: String {
         switch self {
-        case .connecting: "Connecting"
-        case .connected: "Connected"
-        case .disconnected: "Disconnected"
-        case .loginRequired: "Sign-in required"
-        case .updateRequired: "Update required"
-        case .restartRequired: "Restart required"
-        case .notInstalled: "Codex CLI not found"
-        case .sidecarUnavailable: "Provider sidecar unavailable"
-        case .providerKeyMissing: "Provider API key required"
-        case .providerUnauthorized: "Provider authorization failed"
+        case .connecting: "正在连接"
+        case .connected: "已连接"
+        case .disconnected: "连接已断开"
+        case .loginRequired: "需要登录"
+        case .updateRequired: "需要更新"
+        case .restartRequired: "需要重启"
+        case .notInstalled: "未找到 Codex CLI"
+        case .sidecarUnavailable: "Provider sidecar 不可用"
+        case .providerKeyMissing: "需要 Provider API Key"
+        case .providerUnauthorized: "Provider 授权失败"
         }
     }
 
     var detail: String {
         switch self {
-        case .connecting: "Reaching the local Codex runtime…"
+        case .connecting: "正在连接本机 Codex runtime…"
         case let .connected(version): version
-        case .disconnected: "The app-server connection was lost."
-        case .loginRequired: "Sign in to Codex to start a session."
-        case .updateRequired: "A newer Codex runtime is required."
-        case .restartRequired: "Restart the runtime to apply changes."
-        case .notInstalled: "Bundle a Codex CLI or install Codex.app."
+        case .disconnected: "app-server 连接已丢失。"
+        case .loginRequired: "登录 Codex 后才能启动会话。"
+        case .updateRequired: "当前需要更新到较新的 Codex runtime。"
+        case .restartRequired: "重启 runtime 后配置才会生效。"
+        case .notInstalled: "请打包 Codex CLI，或安装 Codex.app。"
         case let .sidecarUnavailable(detail): detail
-        case let .providerKeyMissing(provider): "Add an API key for \(provider) in Models & Providers."
-        case let .providerUnauthorized(provider): "\(provider) rejected the API key. Update it and test again."
+        case let .providerKeyMissing(provider): "请在「模型与提供方」里补充 \(provider) 的 API Key。"
+        case let .providerUnauthorized(provider): "\(provider) 拒绝了当前 API Key，请更新后重新测试。"
         }
     }
 

@@ -14,7 +14,7 @@ struct ThreadView: View {
 
             if store.connectionState.showsBanner {
                 ConnectionBanner(state: store.connectionState) {
-                    Task { await store.refreshRuntime() }
+                    Task { await store.recoverConnection(from: store.connectionState) }
                 }
             }
 
