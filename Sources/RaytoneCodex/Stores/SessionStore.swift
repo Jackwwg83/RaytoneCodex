@@ -1840,12 +1840,12 @@ final class SessionStore: ObservableObject {
     }
 
     func saveInstructions(_ instructions: String) async {
-        runtimeCatalogStatusText = "正在写入 instructions…"
+        runtimeCatalogStatusText = "正在写入 developer_instructions…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            try await client.writeConfigValue(keyPath: "instructions", value: .string(instructions))
-            runtimeCatalogStatusText = "instructions 已写入 config.toml"
-            await refreshRuntimeCatalog(forceReloadSkills: false)
+            try await client.writeConfigValue(keyPath: "developer_instructions", value: .string(instructions))
+            runtimeConfig = try? await client.readConfig(cwd: workspacePath, includeLayers: true)
+            runtimeCatalogStatusText = "developer_instructions 已写入 config.toml"
         } catch {
             runtimeCatalogStatusText = "写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]

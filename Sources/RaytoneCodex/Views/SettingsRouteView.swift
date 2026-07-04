@@ -64,7 +64,9 @@ struct SettingsRouteView: View {
             default:
                 await store.refreshRuntimeCatalog()
             }
-            if let instructions = store.runtimeConfig?.instructions, !instructions.isEmpty {
+            if let instructions = store.runtimeConfig?.developerInstructions, !instructions.isEmpty {
+                customInstructions = instructions
+            } else if let instructions = store.runtimeConfig?.instructions, !instructions.isEmpty {
                 customInstructions = instructions
             }
         }

@@ -36,6 +36,8 @@ enum SmokeTestRunner {
             runModelConfigSmoke()
         } else if CommandLine.arguments.contains("--reasoning-config-smoke-test") {
             runReasoningConfigSmoke()
+        } else if CommandLine.arguments.contains("--instructions-config-smoke-test") {
+            runInstructionsConfigSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -798,6 +800,80 @@ enum SmokeTestRunner {
                     ],
                     "modelCatalogStatusText": store.modelCatalogStatusText,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runInstructionsConfigSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let marker = "Raytone developer instructions smoke \(UUID().uuidString.prefix(8))"
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexInstructionsConfigSmoke-\(UUID().uuidString)", isDirectory: true)
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                await store.saveInstructions(marker)
+                let config = store.runtimeConfig
+                await store.stopAppServerForTesting()
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let ok = config?.developerInstructions == marker &&
+                    config?.instructions != marker &&
+                    configText.contains("developer_instructions") &&
+                    configText.contains(marker) &&
+                    !configText.contains("\ninstructions =")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "developerInstructions": config?.developerInstructions ?? "",
+                    "systemInstructions": config?.instructions ?? "",
+                    "status": store.runtimeCatalogStatusText,
+                    "configText": configText
                 ])
                 exit(ok ? 0 : 1)
             } catch {
