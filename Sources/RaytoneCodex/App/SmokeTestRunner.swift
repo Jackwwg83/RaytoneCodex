@@ -1419,18 +1419,25 @@ enum SmokeTestRunner {
         Task { @MainActor in
             let store = SessionStore()
             store.workspacePath = workspacePath
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexProviderSidecarSmoke-\(UUID().uuidString)", isDirectory: true)
             let server: MockResponsesServer
             do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
                 server = try startMockModelsServer(models: [editedModel, "smoke-secondary-model"])
             } catch {
                 emitJSON([
                     "ok": false,
                     "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
                     "providerID": providerID,
                     "error": error.localizedDescription
                 ])
                 exit(1)
             }
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
             let editedBaseURL = "\(server.baseURL)/v1"
             store.providers.append(RaytoneProviderConfiguration(
                 id: providerID,
@@ -1459,6 +1466,9 @@ enum SmokeTestRunner {
                     contentsOfFile: store.providerConnectionProxyConfigPath,
                     encoding: .utf8
                 )) ?? ""
+                let persistedConfigURL = codexHome.appendingPathComponent("config.toml")
+                let persistedConfigText = (try? String(contentsOf: persistedConfigURL, encoding: .utf8)) ?? ""
+                let persistedProvider = store.runtimeConfig?.raytoneProviders.first { $0.id == providerID }
                 let ok = store.runtimeSnapshot.executable != nil &&
                     store.selectedProviderID == providerID &&
                     store.providerConnectionStatusText.contains("上游已验证") &&
@@ -1471,6 +1481,12 @@ enum SmokeTestRunner {
                     codexConfigText.contains("model = \"\(editedModel)\"") &&
                     codexConfigText.contains("wire_api = \"responses\"") &&
                     codexConfigText.contains("base_url = \"\(store.providerConnectionBaseURL)") &&
+                    store.runtimeConfig?.raytoneSelectedProviderID == providerID &&
+                    persistedProvider?.baseURL == editedBaseURL &&
+                    persistedProvider?.model == editedModel &&
+                    persistedConfigText.contains("selected_provider_id") &&
+                    persistedConfigText.contains("providers_json") &&
+                    persistedConfigText.contains(providerID) &&
                     proxyConfigText.contains("current_provider = \"\(providerID)\"") &&
                     proxyConfigText.contains("base_url = \"\(editedBaseURL)\"") &&
                     proxyConfigText.contains("model = \"\(editedModel)\"") &&
@@ -1493,6 +1509,7 @@ enum SmokeTestRunner {
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
                     "providerID": providerID,
                     "editedBaseURL": editedBaseURL,
                     "editedModel": editedModel,
@@ -1502,6 +1519,17 @@ enum SmokeTestRunner {
                     "baseURL": store.providerConnectionBaseURL,
                     "codexConfigPath": store.providerConnectionCodexConfigPath,
                     "proxyConfigPath": store.providerConnectionProxyConfigPath,
+                    "persistedConfigPath": persistedConfigURL.path,
+                    "persistedConfigText": persistedConfigText,
+                    "persistedSelectedProviderID": store.runtimeConfig?.raytoneSelectedProviderID ?? "",
+                    "persistedProvider": persistedProvider.map { provider in
+                        [
+                            "id": provider.id,
+                            "baseURL": provider.baseURL,
+                            "model": provider.model,
+                            "models": provider.models
+                        ] as [String: Any]
+                    } ?? NSNull(),
                     "upstreamVerified": upstreamVerified,
                     "upstreamRequestLog": upstreamRequestLog,
                     "codexConfigText": codexConfigText,
@@ -1518,6 +1546,7 @@ enum SmokeTestRunner {
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
                     "providerID": providerID,
                     "status": store.providerConnectionStatusText,
                     "error": error.localizedDescription

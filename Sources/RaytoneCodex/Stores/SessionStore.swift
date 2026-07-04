@@ -376,6 +376,7 @@ final class SessionStore: ObservableObject {
         runtimeConfig = config
         if let config {
             applyRuntimeDesktopSettings(config.desktopSettings)
+            applyRuntimeProviderSettings(config)
         }
         applyRuntimeDefaultPermissionsProfile(
             config?.defaultPermissions ?? fallbackDefaultPermissions ?? runtimeRequirements?.defaultPermissions
@@ -402,6 +403,36 @@ final class SessionStore: ObservableObject {
         desktopOpenTarget = settings.openTarget ?? "iTerm2"
         desktopLanguage = settings.language ?? "自动检测"
         updatePreventSleepAssertion()
+    }
+
+    private func applyRuntimeProviderSettings(_ config: CodexRuntimeConfig) {
+        if !config.raytoneProviders.isEmpty {
+            for provider in config.raytoneProviders {
+                if let index = providers.firstIndex(where: { $0.id == provider.id }) {
+                    providers[index] = provider
+                } else {
+                    providers.append(provider)
+                }
+            }
+        }
+
+        if let providerID = config.raytoneSelectedProviderID,
+           providers.contains(where: { $0.id == providerID }) {
+            selectedProviderID = providerID
+            if selectedProvider.usesSidecar {
+                model = selectedProvider.model
+            }
+        } else if let providerID = config.modelProvider,
+                  providers.contains(where: { $0.id == providerID }) {
+            selectedProviderID = providerID
+        }
+
+        if let runtimeModel = config.model, !selectedProvider.usesSidecar {
+            model = runtimeModel
+            if let index = providers.firstIndex(where: { $0.id == selectedProviderID }) {
+                providers[index].model = runtimeModel
+            }
+        }
     }
 
     private func updatePreventSleepAssertion() {
@@ -3173,12 +3204,21 @@ final class SessionStore: ObservableObject {
         guard providers.contains(where: { $0.id == providerID }) else { return }
         selectedProviderID = providerID
         model = selectedProvider.usesSidecar ? selectedProvider.model : model
-        Task { await resetAppServerForProviderChange() }
+        updateSelectedThread { thread in
+            thread.model = model
+        }
+        Task {
+            await persistRuntimeProviderSettings(statusName: "Provider 选择")
+            await resetAppServerForProviderChange()
+        }
     }
 
     func chooseProviderModel(providerID: String, model: String) {
         guard applyProviderModelSelection(providerID: providerID, model: model) != nil else { return }
-        Task { await resetAppServerForProviderChange() }
+        Task {
+            await persistRuntimeProviderSettings(statusName: "Provider 模型")
+            await resetAppServerForProviderChange()
+        }
     }
 
     func saveProviderEndpoint(providerID: String, baseURL: String, model selectedModel: String) async {
@@ -3220,6 +3260,7 @@ final class SessionStore: ObservableObject {
         providerConnectionStatusText = "已更新 \(providers[index].displayName) 端点"
         providerConnectionDetailText = "\(trimmedBaseURL) · \(trimmedModel)"
         modelCatalogStatusText = "\(providers[index].displayName) 将通过 sidecar 使用 \(trimmedModel)"
+        await persistRuntimeProviderSettings(statusName: "\(providers[index].displayName) 端点")
         await resetAppServerForProviderChange()
     }
 
@@ -3267,8 +3308,9 @@ final class SessionStore: ObservableObject {
         await resetAppServerForProviderChange()
 
         guard provider.usesSidecar == false else {
+            await persistRuntimeProviderSettings(statusName: "\(provider.displayName) 模型")
+            await resetAppServerForProviderChange()
             modelCatalogStatusText = "\(provider.displayName) 将通过 sidecar 会话使用 \(selectedModel)"
-            runtimeCatalogStatusText = "第三方 provider 使用独立 CODEX_HOME，不写入全局 Codex config.toml"
             return
         }
 
@@ -3315,6 +3357,7 @@ final class SessionStore: ObservableObject {
         let summary = enabled ? "auto" : "none"
 
         if provider.usesSidecar {
+            await persistRuntimeProviderSettings(statusName: "Provider Thinking")
             await resetAppServerForProviderChange()
             modelCatalogStatusText = enabled ? "Thinking 已开启，将写入下一次 sidecar Codex 会话" : "Thinking 已关闭，将写入下一次 sidecar Codex 会话"
             runtimeCatalogStatusText = "sidecar 会话将使用 model_reasoning_effort=\(effort)、model_reasoning_summary=\(summary)"
@@ -3405,12 +3448,70 @@ final class SessionStore: ObservableObject {
             providerConnectionStatusText = "上游已验证：\(provider.displayName)"
             providerConnectionDetailText = "\(upstream.modelsEndpoint) · \(upstream.modelCount) 个模型 · 当前 \(upstream.model)"
             runtimeCatalogStatusText = "Provider 测试通过：\(provider.displayName) via \(providerConnectionBaseURL)"
+            await persistRuntimeProviderSettings(statusName: "\(provider.displayName) 连接")
         } catch {
             providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
             providerConnectionDetailText = provider.apiKeyEnvironmentName.map { "Keychain 或 \($0)" } ?? "Keychain"
             runtimeCatalogStatusText = providerConnectionStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    private func persistRuntimeProviderSettings(statusName: String) async {
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.batchWriteConfig(edits: [
+                CodexConfigWriteEdit(
+                    keyPath: "desktop.raytone.selected_provider_id",
+                    value: .string(selectedProviderID)
+                ),
+                CodexConfigWriteEdit(
+                    keyPath: "desktop.raytone.providers_json",
+                    value: .string(Self.providersConfigJSONString(providers.filter(\.usesSidecar)))
+                )
+            ])
+            applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
+            runtimeCatalogStatusText = "\(statusName) 已写入 desktop.raytone"
+        } catch {
+            runtimeCatalogStatusText = "\(statusName) 写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    private static func providersConfigJSONString(_ providers: [RaytoneProviderConfiguration]) -> String {
+        let value = JSONValue.array(providers.map(providerConfigValue))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let text = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return text
+    }
+
+    private static func providerConfigValue(_ provider: RaytoneProviderConfiguration) -> JSONValue {
+        var object: [String: JSONValue] = [
+            "id": .string(provider.id),
+            "displayName": .string(provider.displayName),
+            "baseURL": .string(provider.baseURL),
+            "model": .string(provider.model),
+            "models": .array(provider.models.map(JSONValue.string)),
+            "kind": .string(provider.kind.rawValue)
+        ]
+        if let apiKeyEnvironmentName = provider.apiKeyEnvironmentName {
+            object["apiKeyEnvironmentName"] = .string(apiKeyEnvironmentName)
+        }
+        if let reasoning = provider.reasoning {
+            object["reasoning"] = .object([
+                "supportsThinking": .bool(reasoning.supportsThinking),
+                "supportsEffort": .bool(reasoning.supportsEffort),
+                "thinkingParam": .string(reasoning.thinkingParam),
+                "effortParam": .string(reasoning.effortParam),
+                "effortValueMode": reasoning.effortValueMode.map(JSONValue.string) ?? .null,
+                "outputFormat": .string(reasoning.outputFormat)
+            ])
+        }
+        return .object(object)
     }
 
     private func runPromptWithAppServer(_ trimmedPrompt: String, localImagePaths: [String] = []) async throws {

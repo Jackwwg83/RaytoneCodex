@@ -845,6 +845,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var developerInstructions: String?
     public var desktopKeys: [String]
     public var desktopSettings: CodexRuntimeDesktopSettings
+    public var raytoneSelectedProviderID: String?
+    public var raytoneProviders: [RaytoneProviderConfiguration]
     public var layerCount: Int
     public var originKeys: [String]
 
@@ -866,6 +868,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         developerInstructions: String?,
         desktopKeys: [String],
         desktopSettings: CodexRuntimeDesktopSettings,
+        raytoneSelectedProviderID: String?,
+        raytoneProviders: [RaytoneProviderConfiguration],
         layerCount: Int,
         originKeys: [String]
     ) {
@@ -886,6 +890,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.developerInstructions = developerInstructions
         self.desktopKeys = desktopKeys
         self.desktopSettings = desktopSettings
+        self.raytoneSelectedProviderID = raytoneSelectedProviderID
+        self.raytoneProviders = raytoneProviders
         self.layerCount = layerCount
         self.originKeys = originKeys
     }
@@ -2804,8 +2810,66 @@ public actor CodexAppServerClient {
                 openTarget: configString(raytoneDesktop, snake: "open_target", camel: "openTarget"),
                 language: configString(raytoneDesktop, snake: "language", camel: "language")
             ),
+            raytoneSelectedProviderID: configString(raytoneDesktop, snake: "selected_provider_id", camel: "selectedProviderID"),
+            raytoneProviders: providerConfigurations(
+                from: raytoneDesktop?["providers"],
+                jsonString: configString(raytoneDesktop, snake: "providers_json", camel: "providersJSON")
+            ),
             layerCount: result["layers"]?.arrayValue?.count ?? 0,
             originKeys: originKeys
+        )
+    }
+
+    private static func providerConfigurations(from value: JSONValue?, jsonString: String?) -> [RaytoneProviderConfiguration] {
+        if let jsonString,
+           let decoded = try? JSONValue(jsonString: jsonString),
+           let providers = decoded.arrayValue?.compactMap(providerConfiguration(from:)),
+           !providers.isEmpty {
+            return providers
+        }
+        return value?.arrayValue?.compactMap(providerConfiguration(from:)) ?? []
+    }
+
+    private static func providerConfiguration(from value: JSONValue) -> RaytoneProviderConfiguration? {
+        guard let object = value.objectValue,
+              let id = object["id"]?.stringValue,
+              let displayName = object["displayName"]?.stringValue ?? object["display_name"]?.stringValue,
+              let baseURL = object["baseURL"]?.stringValue ?? object["base_url"]?.stringValue,
+              let model = object["model"]?.stringValue,
+              let rawKind = object["kind"]?.stringValue,
+              let kind = RaytoneProviderKind(rawValue: rawKind) else {
+            return nil
+        }
+
+        return RaytoneProviderConfiguration(
+            id: id,
+            displayName: displayName,
+            baseURL: baseURL,
+            model: model,
+            models: object["models"]?.arrayValue?.compactMap(\.stringValue) ?? [model],
+            kind: kind,
+            apiKeyEnvironmentName: object["apiKeyEnvironmentName"]?.stringValue ?? object["api_key_environment_name"]?.stringValue,
+            reasoning: reasoningSettings(from: object["reasoning"])
+        )
+    }
+
+    private static func reasoningSettings(from value: JSONValue?) -> CodexChatReasoningSettings? {
+        guard let object = value?.objectValue,
+              let supportsThinking = object["supportsThinking"]?.boolValue ?? object["supports_thinking"]?.boolValue,
+              let supportsEffort = object["supportsEffort"]?.boolValue ?? object["supports_effort"]?.boolValue,
+              let thinkingParam = object["thinkingParam"]?.stringValue ?? object["thinking_param"]?.stringValue,
+              let effortParam = object["effortParam"]?.stringValue ?? object["effort_param"]?.stringValue,
+              let outputFormat = object["outputFormat"]?.stringValue ?? object["output_format"]?.stringValue else {
+            return nil
+        }
+
+        return CodexChatReasoningSettings(
+            supportsThinking: supportsThinking,
+            supportsEffort: supportsEffort,
+            thinkingParam: thinkingParam,
+            effortParam: effortParam,
+            effortValueMode: object["effortValueMode"]?.stringValue ?? object["effort_value_mode"]?.stringValue,
+            outputFormat: outputFormat
         )
     }
 
