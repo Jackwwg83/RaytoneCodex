@@ -104,6 +104,13 @@ struct ChatThread: Identifiable, Equatable {
 struct ActiveGoal: Equatable {
     var title: String
     var startedAt: Date
+    var runtimeBacked: Bool
+
+    init(title: String, startedAt: Date, runtimeBacked: Bool = false) {
+        self.title = title
+        self.startedAt = startedAt
+        self.runtimeBacked = runtimeBacked
+    }
 }
 
 struct BrowserNavigationCommand: Equatable {

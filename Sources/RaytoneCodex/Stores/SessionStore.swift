@@ -679,7 +679,9 @@ final class SessionStore: ObservableObject {
     }
 
     func pauseActiveGoal() async {
-        if let client = appServerClient,
+        let shouldUpdateRuntimeGoal = selectedThread.activeGoal?.runtimeBacked == true
+        if shouldUpdateRuntimeGoal,
+           let client = appServerClient,
            let threadID = selectedThread.appServerThreadID {
             do {
                 let goal = try await client.setThreadGoal(threadID: threadID, status: .paused)
@@ -697,10 +699,17 @@ final class SessionStore: ObservableObject {
 
         if isRunning {
             await interruptRunningTurn()
+        } else if !shouldUpdateRuntimeGoal {
+            clearSelectedThreadActiveGoal()
         }
     }
 
     func clearActiveGoal() async {
+        guard selectedThread.activeGoal?.runtimeBacked == true else {
+            clearSelectedThreadActiveGoal()
+            return
+        }
+
         guard let client = appServerClient,
               let threadID = selectedThread.appServerThreadID else {
             clearSelectedThreadActiveGoal()
@@ -2394,14 +2403,6 @@ final class SessionStore: ObservableObject {
         let client = try await ensureAppServerClient()
         let mentions = await pluginMentions(in: trimmedPrompt)
         let threadID = try await ensureAppServerThread(client: client, options: options)
-        if let goal = try? await client.setThreadGoal(
-            threadID: threadID,
-            objective: trimmedPrompt,
-            status: .active
-        ) {
-            applyRuntimeGoal(goal)
-            runtimeCatalogStatusText = "thread/goal/set：active"
-        }
 
         let turn = try await client.startTurn(
             threadID: threadID,
@@ -2439,14 +2440,6 @@ final class SessionStore: ObservableObject {
                 target = .custom(instructions: fallbackPrompt)
             } else {
                 target = .uncommittedChanges
-            }
-            if let goal = try? await client.setThreadGoal(
-                threadID: threadID,
-                objective: "审查当前变更",
-                status: .active
-            ) {
-                applyRuntimeGoal(goal)
-                runtimeCatalogStatusText = "thread/goal/set：active"
             }
 
             let review = try await client.startReview(
@@ -2789,12 +2782,14 @@ final class SessionStore: ObservableObject {
             activeAppServerTurnID = params?["turn"]?["id"]?.stringValue
             if let startedAt = params?["turn"]?["startedAt"]?.intValue {
                 updateSelectedThread { thread in
+                    let runtimeBacked = thread.activeGoal?.runtimeBacked == true
                     thread.activeGoal = ActiveGoal(
                         title: thread.items.compactMap { item in
                             if case let .userMessage(text) = item.kind { return text }
                             return nil
                         }.last ?? "运行 Codex",
-                        startedAt: Date(timeIntervalSince1970: TimeInterval(startedAt))
+                        startedAt: Date(timeIntervalSince1970: TimeInterval(startedAt)),
+                        runtimeBacked: runtimeBacked
                     )
                 }
             }
@@ -2802,6 +2797,7 @@ final class SessionStore: ObservableObject {
             isRunning = false
             activeAppServerTurnID = nil
             handleCompletedTurn(params?["turn"])
+            clearLocalActiveGoalIfNeeded()
         case "turn/plan/updated":
             updateProgressSteps(params?["plan"]?.arrayValue ?? [])
         case "turn/diff/updated":
@@ -2867,7 +2863,7 @@ final class SessionStore: ObservableObject {
             ? Date(timeIntervalSince1970: TimeInterval(startedAtSeconds))
             : Date()
         updateThread(appServerThreadID: goal.threadID) { thread in
-            thread.activeGoal = ActiveGoal(title: goal.objective, startedAt: startedAt)
+            thread.activeGoal = ActiveGoal(title: goal.objective, startedAt: startedAt, runtimeBacked: true)
             thread.updatedAt = Date()
         }
     }
@@ -2884,6 +2880,13 @@ final class SessionStore: ObservableObject {
             thread.activeGoal = nil
             thread.updatedAt = Date()
         }
+    }
+
+    private func clearLocalActiveGoalIfNeeded() {
+        guard selectedThread.activeGoal?.runtimeBacked == false else {
+            return
+        }
+        clearSelectedThreadActiveGoal()
     }
 
     private func handleAppServerRequest(id: CodexAppServerRequestID, method: String, params: JSONValue?) {

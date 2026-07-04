@@ -2024,10 +2024,10 @@ enum SmokeTestRunner {
             let ok = !createdThreadID.isEmpty &&
                 !store.isRunning &&
                 !usedExecFallback &&
-                initialAgentMessages.last == marker &&
+                initialAgentMessages == [marker] &&
                 historyThread != nil &&
                 loadedUserMessages.contains(prompt) &&
-                loadedAgentMessages.contains(marker)
+                loadedAgentMessages == [marker]
 
             emitJSON([
                 "ok": ok,
@@ -2041,6 +2041,7 @@ enum SmokeTestRunner {
                 "historySyncStatus": reloaded.runtimeThreadSyncStatusText,
                 "historyThreadFound": historyThread != nil,
                 "loadedTranscriptItemCount": loadedItems.count,
+                "initialAgentMessages": initialAgentMessages,
                 "loadedUserMessages": loadedUserMessages,
                 "loadedAgentMessages": loadedAgentMessages
             ])
