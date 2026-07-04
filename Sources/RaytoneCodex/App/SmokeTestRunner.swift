@@ -34,6 +34,8 @@ enum SmokeTestRunner {
             runMentionSmoke()
         } else if CommandLine.arguments.contains("--runtime-pages-smoke-test") {
             runRuntimePagesSmoke()
+        } else if CommandLine.arguments.contains("--sample-data-gate-smoke-test") {
+            runSampleDataGateSmoke()
         } else if CommandLine.arguments.contains("--usage-activity-smoke-test") {
             runUsageActivitySmoke()
         } else if CommandLine.arguments.contains("--settings-project-smoke-test") {
@@ -3835,6 +3837,36 @@ enum SmokeTestRunner {
                 "weekly": weekly,
                 "cumulative": cumulative,
                 "lifetimeTokens": store.runtimeTokenUsage?.lifetimeTokens ?? 0
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSampleDataGateSmoke() {
+        Task { @MainActor in
+            let expectSamples = CommandLine.arguments.contains("--expect-samples")
+            let store = SessionStore()
+            store.installSampleWorkspaceIfNeeded()
+
+            let projectNames = store.projects.map(\.name)
+            let threadTitles = store.threads.map(\.title)
+            let hasSampleProjects = projectNames.contains { $0 != "RaytoneCodex" }
+            let hasSampleThreads = threadTitles.contains("验证 Mac 客户端 UI smoke") ||
+                threadTitles.contains("运行核心检查") ||
+                threadTitles.contains("检查登录回调页面")
+            let hasSamples = hasSampleProjects || hasSampleThreads
+            let ok = expectSamples ? hasSamples : !hasSamples
+
+            emitJSON([
+                "ok": ok,
+                "expectSamples": expectSamples,
+                "sampleWorkspaceEnabled": SessionStore.sampleWorkspaceEnabled,
+                "projectCount": store.projects.count,
+                "threadCount": store.threads.count,
+                "projectNames": projectNames,
+                "threadTitles": threadTitles
             ])
             exit(ok ? 0 : 1)
         }

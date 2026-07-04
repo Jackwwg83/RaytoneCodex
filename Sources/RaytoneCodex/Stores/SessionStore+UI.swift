@@ -444,9 +444,13 @@ extension SessionStore {
         threads[index].updatedAt = Date()
     }
 
-    /// One-time seeding of extra sample projects so the sidebar mirrors a real
-    /// Codex workspace. Idempotent — guarded by a sentinel project name.
+    /// One-time seeding of extra sample projects for UI screenshots and smoke
+    /// fixtures. Normal app launches stay grounded in real runtime history.
     func installSampleWorkspaceIfNeeded() {
+        guard Self.sampleWorkspaceEnabled else {
+            return
+        }
+
         let bundles = SampleData.extraWorkspace()
         // Idempotent: if the sample workspace is already present, do nothing.
         if let firstName = bundles.first?.project.name,

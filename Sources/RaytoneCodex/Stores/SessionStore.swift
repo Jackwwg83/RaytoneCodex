@@ -125,6 +125,14 @@ final class SessionStore: ObservableObject {
     private static let workspacePermissionsProfile = ":workspace"
     private static let dangerFullAccessPermissionsProfile = ":danger-full-access"
 
+    nonisolated static var sampleWorkspaceEnabled: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["RAYTONE_CODEX_ENABLE_SAMPLE_DATA"] == "1" {
+            return true
+        }
+        return environment["RAYTONE_CODEX_UI_SCREEN"]?.isEmpty == false
+    }
+
     private let service: CodexCLIService
     private let proxyService = RaytoneProxyService()
     private var appServerClient: CodexAppServerClient?
@@ -168,10 +176,6 @@ final class SessionStore: ObservableObject {
             approvalsReviewer: .user,
             personality: .friendly
         )
-        let demoThread = SampleData.demoThread(projectID: primaryProject.id)
-        let debugThread = SampleData.debugThread(projectID: primaryProject.id)
-        let secondary = SampleData.secondaryBundle(workspacePath: workspacePath)
-
         self.workspacePath = workspacePath
         self.filePanelPath = workspacePath
         self.model = localThread.model
@@ -179,8 +183,16 @@ final class SessionStore: ObservableObject {
         self.approval = localThread.approval
         self.approvalsReviewer = localThread.approvalsReviewer
         self.personality = localThread.personality
-        self.projects = [primaryProject, secondary.project]
-        self.threads = [localThread, demoThread, debugThread] + secondary.threads
+        if Self.sampleWorkspaceEnabled {
+            let demoThread = SampleData.demoThread(projectID: primaryProject.id)
+            let debugThread = SampleData.debugThread(projectID: primaryProject.id)
+            let secondary = SampleData.secondaryBundle(workspacePath: workspacePath)
+            self.projects = [primaryProject, secondary.project]
+            self.threads = [localThread, demoThread, debugThread] + secondary.threads
+        } else {
+            self.projects = [primaryProject]
+            self.threads = [localThread]
+        }
         self.selectedThreadID = localThread.id
     }
 
