@@ -781,6 +781,46 @@ public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
     }
 }
 
+public enum CodexRuntimeGoalStatus: String, Equatable, Sendable {
+    case active
+    case paused
+    case blocked
+    case usageLimited
+    case budgetLimited
+    case complete
+}
+
+public struct CodexRuntimeGoal: Equatable, Sendable {
+    public var threadID: String
+    public var objective: String
+    public var status: CodexRuntimeGoalStatus
+    public var tokenBudget: Int?
+    public var tokensUsed: Int
+    public var timeUsedSeconds: Int
+    public var createdAt: Int
+    public var updatedAt: Int
+
+    public init(
+        threadID: String,
+        objective: String,
+        status: CodexRuntimeGoalStatus,
+        tokenBudget: Int?,
+        tokensUsed: Int,
+        timeUsedSeconds: Int,
+        createdAt: Int,
+        updatedAt: Int
+    ) {
+        self.threadID = threadID
+        self.objective = objective
+        self.status = status
+        self.tokenBudget = tokenBudget
+        self.tokensUsed = tokensUsed
+        self.timeUsedSeconds = timeUsedSeconds
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct CodexRuntimeGitDiff: Equatable, Sendable {
     public var sha: String?
     public var diff: String
@@ -1469,6 +1509,46 @@ public actor CodexAppServerClient {
             "threadId": .string(threadID),
             "name": .string(name)
         ]))
+    }
+
+    public func setThreadGoal(
+        threadID: String,
+        objective: String? = nil,
+        status: CodexRuntimeGoalStatus? = nil,
+        tokenBudget: Int? = nil
+    ) async throws -> CodexRuntimeGoal {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID)
+        ]
+        if let objective {
+            params["objective"] = .string(objective)
+        }
+        if let status {
+            params["status"] = .string(status.rawValue)
+        }
+        if let tokenBudget {
+            params["tokenBudget"] = .number(Double(tokenBudget))
+        }
+
+        let result = try await request(method: "thread/goal/set", params: .object(params))
+        guard let goal = Self.runtimeGoal(from: result["goal"]) else {
+            throw CodexAppServerError.invalidResponse("Missing thread/goal/set goal.")
+        }
+        return goal
+    }
+
+    public func getThreadGoal(threadID: String) async throws -> CodexRuntimeGoal? {
+        let result = try await request(method: "thread/goal/get", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return Self.runtimeGoal(from: result["goal"])
+    }
+
+    public func clearThreadGoal(threadID: String) async throws -> Bool {
+        let result = try await request(method: "thread/goal/clear", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return result["cleared"]?.boolValue ?? false
     }
 
     public func forkThread(id threadID: String, options: CodexAppServerOptions) async throws -> CodexAppServerThread {
@@ -2163,6 +2243,25 @@ public actor CodexAppServerClient {
             gitBranch: gitInfo?["branch"]?.stringValue,
             gitSHA: gitInfo?["sha"]?.stringValue,
             gitOriginURL: gitInfo?["originUrl"]?.stringValue
+        )
+    }
+
+    public static func runtimeGoal(from value: JSONValue?) -> CodexRuntimeGoal? {
+        guard let value,
+              let threadID = value["threadId"]?.stringValue,
+              let objective = value["objective"]?.stringValue else {
+            return nil
+        }
+        let statusRaw = value["status"]?.stringValue ?? CodexRuntimeGoalStatus.active.rawValue
+        return CodexRuntimeGoal(
+            threadID: threadID,
+            objective: objective,
+            status: CodexRuntimeGoalStatus(rawValue: statusRaw) ?? .active,
+            tokenBudget: value["tokenBudget"]?.intValue,
+            tokensUsed: value["tokensUsed"]?.intValue ?? 0,
+            timeUsedSeconds: value["timeUsedSeconds"]?.intValue ?? 0,
+            createdAt: value["createdAt"]?.intValue ?? 0,
+            updatedAt: value["updatedAt"]?.intValue ?? 0
         )
     }
 

@@ -50,6 +50,8 @@ enum SmokeTestRunner {
             runWorkModeSmoke()
         } else if CommandLine.arguments.contains("--desktop-settings-smoke-test") {
             runDesktopSettingsSmoke()
+        } else if CommandLine.arguments.contains("--goal-smoke-test") {
+            runGoalSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -1509,6 +1511,95 @@ enum SmokeTestRunner {
         }
     }
 
+    private static func runGoalSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task {
+            let service = CodexCLIService()
+            let runtime = await service.inspectRuntime()
+            guard let executable = runtime.executable else {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "none",
+                    "runtimePath": "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "error": "Codex runtime executable was not found"
+                ])
+                exit(1)
+            }
+
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexGoalSmoke-\(UUID().uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                let client = CodexAppServerClient(
+                    executable: executable,
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    environmentOverrides: [
+                        "CODEX_HOME": codexHome.path
+                    ]
+                )
+                try await client.initialize()
+                let thread = try await client.startThread(options: CodexAppServerOptions(
+                    workspaceURL: URL(fileURLWithPath: workspacePath),
+                    sandbox: .readOnly,
+                    approvalPolicy: .never,
+                    approvalsReviewer: .user
+                ))
+
+                let activeGoal = try await client.setThreadGoal(
+                    threadID: thread.id,
+                    objective: "RaytoneCodex goal smoke",
+                    status: .active,
+                    tokenBudget: 1234
+                )
+                let readGoal = try await client.getThreadGoal(threadID: thread.id)
+                let pausedGoal = try await client.setThreadGoal(threadID: thread.id, status: .paused)
+                let cleared = try await client.clearThreadGoal(threadID: thread.id)
+                let afterClear = try await client.getThreadGoal(threadID: thread.id)
+                await client.stop()
+
+                let ok = activeGoal.threadID == thread.id &&
+                    activeGoal.objective == "RaytoneCodex goal smoke" &&
+                    activeGoal.status == .active &&
+                    activeGoal.tokenBudget == 1234 &&
+                    readGoal?.objective == activeGoal.objective &&
+                    pausedGoal.status == .paused &&
+                    cleared &&
+                    afterClear == nil
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "threadID": thread.id,
+                    "activeGoal": goalPayload(activeGoal),
+                    "readGoal": readGoal.map(goalPayload) ?? NSNull(),
+                    "pausedGoal": goalPayload(pausedGoal),
+                    "cleared": cleared,
+                    "afterClear": afterClear.map(goalPayload) ?? NSNull()
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAccessModeSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
@@ -2502,6 +2593,19 @@ enum SmokeTestRunner {
             return
         }
         print(json)
+    }
+
+    private static func goalPayload(_ goal: CodexRuntimeGoal) -> [String: Any] {
+        [
+            "threadID": goal.threadID,
+            "objective": goal.objective,
+            "status": goal.status.rawValue,
+            "tokenBudget": goal.tokenBudget.map { $0 as Any } ?? NSNull(),
+            "tokensUsed": goal.tokensUsed,
+            "timeUsedSeconds": goal.timeUsedSeconds,
+            "createdAt": goal.createdAt,
+            "updatedAt": goal.updatedAt
+        ]
     }
 
     private static func jsonObject(from value: JSONValue) -> Any {

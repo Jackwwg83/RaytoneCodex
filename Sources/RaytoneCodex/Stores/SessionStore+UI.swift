@@ -137,7 +137,7 @@ extension SessionStore {
         prompt = goal.title
     }
 
-    func clearActiveGoal() {
+    func clearActiveGoalLocally() {
         guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }) else {
             return
         }

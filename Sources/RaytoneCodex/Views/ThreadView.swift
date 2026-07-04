@@ -74,8 +74,8 @@ struct ThreadView: View {
                 ActiveGoalBar(
                     goal: activeGoal,
                     onEdit: { store.editActiveGoalInComposer() },
-                    onPause: { Task { await store.interruptRunningTurn() } },
-                    onDelete: { store.clearActiveGoal() },
+                    onPause: { Task { await store.pauseActiveGoal() } },
+                    onDelete: { Task { await store.clearActiveGoal() } },
                     onExpand: {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             showInspector = true

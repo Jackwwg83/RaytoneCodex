@@ -675,6 +675,49 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func pauseActiveGoal() async {
+        if let client = appServerClient,
+           let threadID = selectedThread.appServerThreadID {
+            do {
+                let goal = try await client.setThreadGoal(threadID: threadID, status: .paused)
+                applyRuntimeGoal(goal)
+                runtimeCatalogStatusText = "thread/goal/set：paused"
+            } catch {
+                updateSelectedThread { thread in
+                    thread.items.append(TranscriptItem(kind: .notice(Notice(
+                        level: .warning,
+                        text: "无法暂停目标：\(error.localizedDescription)"
+                    ))))
+                }
+            }
+        }
+
+        if isRunning {
+            await interruptRunningTurn()
+        }
+    }
+
+    func clearActiveGoal() async {
+        guard let client = appServerClient,
+              let threadID = selectedThread.appServerThreadID else {
+            clearSelectedThreadActiveGoal()
+            return
+        }
+
+        do {
+            let cleared = try await client.clearThreadGoal(threadID: threadID)
+            clearRuntimeGoal(threadID: threadID)
+            runtimeCatalogStatusText = cleared ? "thread/goal/clear：已清除" : "thread/goal/clear：没有活动目标"
+        } catch {
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "无法清除目标：\(error.localizedDescription)"
+                ))))
+            }
+        }
+    }
+
     func respondToAppServerApproval(itemID: UUID, decision: ApprovalRequest.Decision) async {
         guard let requestID = pendingApprovalRequestIDs.removeValue(forKey: itemID),
               let client = appServerClient else {
@@ -2316,6 +2359,14 @@ final class SessionStore: ObservableObject {
         let client = try await ensureAppServerClient()
         let mentions = await pluginMentions(in: trimmedPrompt)
         let threadID = try await ensureAppServerThread(client: client, options: options)
+        if let goal = try? await client.setThreadGoal(
+            threadID: threadID,
+            objective: trimmedPrompt,
+            status: .active
+        ) {
+            applyRuntimeGoal(goal)
+            runtimeCatalogStatusText = "thread/goal/set：active"
+        }
 
         let turn = try await client.startTurn(
             threadID: threadID,
@@ -2353,6 +2404,14 @@ final class SessionStore: ObservableObject {
                 target = .custom(instructions: fallbackPrompt)
             } else {
                 target = .uncommittedChanges
+            }
+            if let goal = try? await client.setThreadGoal(
+                threadID: threadID,
+                objective: "审查当前变更",
+                status: .active
+            ) {
+                applyRuntimeGoal(goal)
+                runtimeCatalogStatusText = "thread/goal/set：active"
             }
 
             let review = try await client.startReview(
@@ -2716,6 +2775,16 @@ final class SessionStore: ObservableObject {
             }
         case "thread/settings/updated":
             handleThreadSettingsUpdated(params)
+        case "thread/goal/updated":
+            if let goal = CodexAppServerClient.runtimeGoal(from: params?["goal"]) {
+                applyRuntimeGoal(goal)
+                runtimeCatalogStatusText = "thread/goal/updated：\(goal.status.rawValue)"
+            }
+        case "thread/goal/cleared":
+            if let threadID = params?["threadId"]?.stringValue {
+                clearRuntimeGoal(threadID: threadID)
+                runtimeCatalogStatusText = "thread/goal/cleared"
+            }
         case "item/started", "item/completed":
             if let item = params?["item"] {
                 upsertAppServerItem(item)
@@ -2754,6 +2823,31 @@ final class SessionStore: ObservableObject {
                 thread.personality = updatedPersonality
             }
             runtimeCatalogStatusText = "thread/settings/updated：个性 \(Self.personalityName(updatedPersonality))"
+        }
+    }
+
+    private func applyRuntimeGoal(_ goal: CodexRuntimeGoal) {
+        let startedAtSeconds = goal.createdAt > 0 ? goal.createdAt : goal.updatedAt
+        let startedAt = startedAtSeconds > 0
+            ? Date(timeIntervalSince1970: TimeInterval(startedAtSeconds))
+            : Date()
+        updateThread(appServerThreadID: goal.threadID) { thread in
+            thread.activeGoal = ActiveGoal(title: goal.objective, startedAt: startedAt)
+            thread.updatedAt = Date()
+        }
+    }
+
+    private func clearRuntimeGoal(threadID: String) {
+        updateThread(appServerThreadID: threadID) { thread in
+            thread.activeGoal = nil
+            thread.updatedAt = Date()
+        }
+    }
+
+    private func clearSelectedThreadActiveGoal() {
+        updateSelectedThread { thread in
+            thread.activeGoal = nil
+            thread.updatedAt = Date()
         }
     }
 
