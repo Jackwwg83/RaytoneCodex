@@ -20,7 +20,6 @@ struct SettingsRouteView: View {
     @State private var skipToolChats = false
     @State private var providerAPIKeyDraft = ""
     @State private var providerStatusMessage = "未测试"
-    @State private var providerThinkingEnabled = true
     @State private var instructionsStatus = ""
     @State private var profileStatus = ""
     @State private var customInstructions = """
@@ -501,6 +500,21 @@ struct SettingsRouteView: View {
                         .lineLimit(1)
                 }
 
+                SettingsValueRow(title: "Thinking", description: "写入 Codex 的 model_reasoning_effort / model_reasoning_summary") {
+                    Toggle("", isOn: Binding(
+                        get: { store.providerThinkingEnabled(provider) },
+                        set: { enabled in
+                            Task {
+                                await store.saveRuntimeThinkingEnabled(providerID: provider.id, enabled: enabled)
+                                providerStatusMessage = store.modelCatalogStatusText
+                            }
+                        }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(provider.usesSidecar && provider.reasoning == nil)
+                }
+
                 HStack(spacing: 8) {
                     Button("刷新模型列表") {
                         store.selectProvider(provider.id)
@@ -525,12 +539,6 @@ struct SettingsRouteView: View {
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 12))
                             .frame(width: 210)
-                    }
-                    SettingsValueRow(title: "Thinking", description: "按 provider 的 reasoning 字段映射到 Chat Completions") {
-                        Toggle("", isOn: $providerThinkingEnabled)
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .disabled(provider.reasoning == nil)
                     }
                     HStack(spacing: 8) {
                         Button("保存 Key") {
@@ -727,6 +735,7 @@ struct SettingsRouteView: View {
                     configMetric("审批路由", store.runtimeConfig?.approvalsReviewer ?? "用户")
                     configMetric("沙盒", store.runtimeConfig?.sandboxMode ?? "默认")
                     configMetric("推理强度", store.runtimeConfig?.reasoningEffort ?? "默认")
+                    configMetric("推理摘要", store.runtimeConfig?.reasoningSummary ?? "默认")
                     configMetric("配置层", "\(store.runtimeConfig?.layerCount ?? 0)")
                     configMetric("desktop 键", store.runtimeConfig?.desktopKeys.joined(separator: "、") ?? "无")
                 }

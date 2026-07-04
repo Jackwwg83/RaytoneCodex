@@ -143,17 +143,24 @@ public actor RaytoneProxyService {
         sidecarBaseURL: URL
     ) throws {
         let providerID = "raytone-\(provider.id)"
-        let config = """
-        model = "\(Self.tomlEscape(provider.model))"
-        model_provider = "\(Self.tomlEscape(providerID))"
-
-        [model_providers.\(providerID)]
-        name = "\(Self.tomlEscape(provider.displayName)) (via Raytone)"
-        base_url = "\(Self.tomlEscape(sidecarBaseURL.absoluteString))"
-        wire_api = "responses"
-        requires_openai_auth = false
-        supports_websockets = false
-        """
+        var lines = [
+            "model = \"\(Self.tomlEscape(provider.model))\"",
+            "model_provider = \"\(Self.tomlEscape(providerID))\""
+        ]
+        if let reasoning = provider.reasoning {
+            lines.append("model_reasoning_effort = \"\(reasoning.supportsThinking ? "medium" : "none")\"")
+            lines.append("model_reasoning_summary = \"\(reasoning.supportsThinking ? "auto" : "none")\"")
+        }
+        lines.append(contentsOf: [
+            "",
+            "[model_providers.\(providerID)]",
+            "name = \"\(Self.tomlEscape(provider.displayName)) (via Raytone)\"",
+            "base_url = \"\(Self.tomlEscape(sidecarBaseURL.absoluteString))\"",
+            "wire_api = \"responses\"",
+            "requires_openai_auth = false",
+            "supports_websockets = false"
+        ])
+        let config = lines.joined(separator: "\n") + "\n"
         try config.write(to: codexHomeURL.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
     }
 
@@ -245,4 +252,3 @@ public actor RaytoneProxyService {
             .replacingOccurrences(of: "\n", with: "\\n")
     }
 }
-

@@ -177,6 +177,12 @@ final class SessionStore: ObservableObject {
         selectedProvider.usesSidecar ? "\(selectedProvider.displayName) › \(selectedProvider.model)" : (model.isEmpty ? selectedProvider.model : model)
     }
 
+    var runtimeThinkingEnabled: Bool {
+        let effort = runtimeConfig?.reasoningEffort?.lowercased()
+        let summary = runtimeConfig?.reasoningSummary?.lowercased()
+        return effort != "none" && summary != "none"
+    }
+
     var execApprovalDisplayName: String {
         Self.approvalName(approval)
     }
@@ -1938,6 +1944,55 @@ final class SessionStore: ObservableObject {
         } catch {
             modelCatalogStatusText = "模型写入失败：\(error.localizedDescription)"
             runtimeCatalogStatusText = "模型写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func providerThinkingEnabled(_ provider: RaytoneProviderConfiguration) -> Bool {
+        if let reasoning = provider.reasoning {
+            return reasoning.supportsThinking
+        }
+        return runtimeThinkingEnabled
+    }
+
+    func saveRuntimeThinkingEnabled(providerID: String, enabled: Bool) async {
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            modelCatalogStatusText = "未找到 provider：\(providerID)"
+            return
+        }
+
+        var provider = providers[index]
+        if var reasoning = provider.reasoning {
+            reasoning.supportsThinking = enabled
+            provider.reasoning = reasoning
+            providers[index] = provider
+        }
+
+        let effort = enabled ? "medium" : "none"
+        let summary = enabled ? "auto" : "none"
+
+        if provider.usesSidecar {
+            await resetAppServerForProviderChange()
+            modelCatalogStatusText = enabled ? "Thinking 已开启，将写入下一次 sidecar Codex 会话" : "Thinking 已关闭，将写入下一次 sidecar Codex 会话"
+            runtimeCatalogStatusText = "sidecar 会话将使用 model_reasoning_effort=\(effort)、model_reasoning_summary=\(summary)"
+            return
+        }
+
+        modelCatalogStatusText = "正在写入 model_reasoning_*…"
+        runtimeCatalogStatusText = "正在写入 model_reasoning_*…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.batchWriteConfig(edits: [
+                CodexConfigWriteEdit(keyPath: "model_reasoning_effort", value: .string(effort)),
+                CodexConfigWriteEdit(keyPath: "model_reasoning_summary", value: .string(summary))
+            ])
+            let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
+            runtimeConfig = config
+            modelCatalogStatusText = "model_reasoning_* 已写入 config.toml"
+            runtimeCatalogStatusText = enabled ? "Thinking 已开启：\(effort) / \(summary)" : "Thinking 已关闭：none / none"
+        } catch {
+            modelCatalogStatusText = "Thinking 写入失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = "Thinking 写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
     }

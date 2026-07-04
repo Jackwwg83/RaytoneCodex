@@ -32,6 +32,8 @@ enum SmokeTestRunner {
             runPersonalitySmoke()
         } else if CommandLine.arguments.contains("--model-config-smoke-test") {
             runModelConfigSmoke()
+        } else if CommandLine.arguments.contains("--reasoning-config-smoke-test") {
+            runReasoningConfigSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -654,6 +656,94 @@ enum SmokeTestRunner {
                     "modelCatalogStatusText": store.modelCatalogStatusText,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText,
                     "configText": configText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runReasoningConfigSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexReasoningConfigSmoke-\(UUID().uuidString)", isDirectory: true)
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                await store.saveRuntimeThinkingEnabled(providerID: "openai", enabled: false)
+                let offConfig = store.runtimeConfig
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let offConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+
+                await store.saveRuntimeThinkingEnabled(providerID: "openai", enabled: true)
+                let onConfig = store.runtimeConfig
+                let onConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let ok = offConfig?.reasoningEffort == "none" &&
+                    offConfig?.reasoningSummary == "none" &&
+                    offConfigText.contains("model_reasoning_effort = \"none\"") &&
+                    offConfigText.contains("model_reasoning_summary = \"none\"") &&
+                    onConfig?.reasoningEffort == "medium" &&
+                    onConfig?.reasoningSummary == "auto" &&
+                    onConfigText.contains("model_reasoning_effort = \"medium\"") &&
+                    onConfigText.contains("model_reasoning_summary = \"auto\"")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "off": [
+                        "reasoningEffort": offConfig?.reasoningEffort ?? "",
+                        "reasoningSummary": offConfig?.reasoningSummary ?? "",
+                        "configText": offConfigText
+                    ],
+                    "on": [
+                        "reasoningEffort": onConfig?.reasoningEffort ?? "",
+                        "reasoningSummary": onConfig?.reasoningSummary ?? "",
+                        "configText": onConfigText
+                    ],
+                    "modelCatalogStatusText": store.modelCatalogStatusText,
+                    "runtimeCatalogStatusText": store.runtimeCatalogStatusText
                 ])
                 exit(ok ? 0 : 1)
             } catch {
