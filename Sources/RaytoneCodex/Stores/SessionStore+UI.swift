@@ -24,6 +24,39 @@ extension SessionStore {
         selectThread(thread)
     }
 
+    /// Switch the empty hero composer to a different project without leaving a
+    /// stranded local thread behind. If the current selection is already a real
+    /// conversation, create a fresh thread in the target project instead.
+    func selectProjectForNewThread(_ projectID: UUID) {
+        guard let project = projects.first(where: { $0.id == projectID }) else {
+            return
+        }
+
+        if let index = threads.firstIndex(where: { $0.id == selectedThreadID }),
+           threads[index].items.isEmpty,
+           threads[index].appServerThreadID == nil {
+            threads[index].projectID = projectID
+            threads[index].updatedAt = Date()
+            selectedThreadID = threads[index].id
+            workspacePath = project.path
+            filePanelPath = project.path
+            route = .thread
+            toolPanel = .launcher
+            Task {
+                await refreshWorkspaceBranches()
+                await loadFilePanelDirectory(project.path)
+            }
+            return
+        }
+
+        newThread(in: projectID)
+        filePanelPath = project.path
+        Task {
+            await refreshWorkspaceBranches()
+            await loadFilePanelDirectory(project.path)
+        }
+    }
+
     /// Remove a thread. Keeps at least one thread alive and reselects if needed.
     func deleteThread(_ id: UUID) {
         guard threads.count > 1 else { return }

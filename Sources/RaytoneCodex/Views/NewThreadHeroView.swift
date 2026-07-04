@@ -221,10 +221,10 @@ struct NewThreadHeroView: View {
         HStack(spacing: 8) {
             pillMenu(symbol: "folder", title: store.selectedProject.name) {
                 ForEach(store.projects) { project in
-                    Button(project.name) {
-                        if let thread = store.threads.first(where: { $0.projectID == project.id }) {
-                            store.selectThread(thread)
-                        }
+                    Button {
+                        store.selectProjectForNewThread(project.id)
+                    } label: {
+                        Label(project.name, systemImage: project.id == store.selectedProject.id ? "checkmark" : "folder")
                     }
                 }
             }

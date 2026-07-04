@@ -42,6 +42,8 @@ enum SmokeTestRunner {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
+        } else if CommandLine.arguments.contains("--project-switch-smoke-test") {
+            runProjectSwitchSmoke()
         } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
             runRemoteControlSmoke()
         } else if CommandLine.arguments.contains("--realtime-voices-smoke-test") {
@@ -4373,6 +4375,71 @@ enum SmokeTestRunner {
                 "remoteControl": remoteControlPayload(store.runtimeRemoteControlStatus)
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runProjectSwitchSmoke() {
+        Task { @MainActor in
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexProjectSwitchSmoke-\(UUID().uuidString)", isDirectory: true)
+            let firstProject = temporaryRoot.appendingPathComponent("first", isDirectory: true)
+            let secondProject = temporaryRoot.appendingPathComponent("second", isDirectory: true)
+
+            do {
+                try FileManager.default.createDirectory(at: firstProject, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: secondProject, withIntermediateDirectories: true)
+                try "one\n".write(to: firstProject.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+                try "two\n".write(to: secondProject.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+
+                let store = SessionStore()
+                let first = Project(name: "第一个项目", path: firstProject.path)
+                let second = Project(name: "第二个项目", path: secondProject.path)
+                store.projects = [first, second]
+                store.threads = [
+                    ChatThread(title: "新对话", projectID: first.id, items: [])
+                ]
+                store.selectedThreadID = store.threads[0].id
+                store.workspacePath = first.path
+                store.filePanelPath = first.path
+
+                store.selectProjectForNewThread(second.id)
+                let deadline = Date().addingTimeInterval(20)
+                while Date() < deadline && !store.fileEntries.contains(where: { $0.name == "README.md" }) {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+
+                let selected = store.selectedProject
+                let selectedThread = store.selectedThread
+                let fileNames = store.fileEntries.map(\.name)
+                let ok = selected.id == second.id &&
+                    selectedThread.projectID == second.id &&
+                    selectedThread.items.isEmpty &&
+                    store.workspacePath == second.path &&
+                    store.filePanelPath == second.path &&
+                    fileNames.contains("README.md")
+
+                emitJSON([
+                    "ok": ok,
+                    "selectedProject": selected.name,
+                    "selectedThreadProjectMatches": selectedThread.projectID == second.id,
+                    "workspacePath": store.workspacePath,
+                    "filePanelPath": store.filePanelPath,
+                    "filePanelStatus": store.filePanelStatusText,
+                    "fileEntries": fileNames,
+                    "route": "\(store.route)"
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "error": error.localizedDescription
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(1)
+            }
         }
 
         dispatchMain()
