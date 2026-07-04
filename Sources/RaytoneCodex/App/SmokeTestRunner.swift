@@ -40,6 +40,8 @@ enum SmokeTestRunner {
             runInstructionsConfigSmoke()
         } else if CommandLine.arguments.contains("--default-permissions-smoke-test") {
             runDefaultPermissionsSmoke()
+        } else if CommandLine.arguments.contains("--auto-review-smoke-test") {
+            runAutoReviewSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -984,6 +986,97 @@ enum SmokeTestRunner {
                     "workspace": workspaceState,
                     "readOnly": readOnlyState,
                     "fullAccess": fullAccessState,
+                    "runtimeCatalogStatusText": store.runtimeCatalogStatusText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAutoReviewSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAutoReviewSmoke-\(UUID().uuidString)", isDirectory: true)
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                await store.refreshRuntime()
+                let runtime = store.runtimeSnapshot
+                guard runtime.executable != nil else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "Codex runtime executable was not found"
+                    ])
+                    exit(1)
+                }
+
+                let configURL = codexHome.appendingPathComponent("config.toml")
+
+                await store.saveRuntimeAutoReviewEnabled(true)
+                let enabledConfig = store.runtimeConfig
+                let enabledConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let enabledState: [String: Any] = [
+                    "storeApprovalsReviewer": store.approvalsReviewer.rawValue,
+                    "configApprovalsReviewer": enabledConfig?.approvalsReviewer ?? "",
+                    "accessMode": store.accessMode.shortTitle,
+                    "configText": enabledConfigText
+                ]
+
+                await store.saveRuntimeAutoReviewEnabled(false)
+                let disabledConfig = store.runtimeConfig
+                let disabledConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let disabledState: [String: Any] = [
+                    "storeApprovalsReviewer": store.approvalsReviewer.rawValue,
+                    "configApprovalsReviewer": disabledConfig?.approvalsReviewer ?? "",
+                    "accessMode": store.accessMode.shortTitle,
+                    "configText": disabledConfigText
+                ]
+
+                await store.stopAppServerForTesting()
+
+                let ok = enabledConfig?.approvalsReviewer == CodexApprovalsReviewer.autoReview.rawValue &&
+                    enabledConfigText.contains("approvals_reviewer = \"auto_review\"") &&
+                    enabledState["storeApprovalsReviewer"] as? String == CodexApprovalsReviewer.autoReview.rawValue &&
+                    disabledConfig?.approvalsReviewer == CodexApprovalsReviewer.user.rawValue &&
+                    disabledConfigText.contains("approvals_reviewer = \"user\"") &&
+                    disabledState["storeApprovalsReviewer"] as? String == CodexApprovalsReviewer.user.rawValue
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                    "runtimePath": runtime.executable?.url.path ?? "",
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "configPath": configURL.path,
+                    "enabled": enabledState,
+                    "disabled": disabledState,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText
                 ])
                 exit(ok ? 0 : 1)

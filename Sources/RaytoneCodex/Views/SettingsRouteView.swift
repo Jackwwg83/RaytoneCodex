@@ -7,7 +7,6 @@ struct SettingsRouteView: View {
 
     @State private var search = ""
     @State private var workMode = "coding"
-    @State private var autoReview = true
     @State private var showInMenuBar = true
     @State private var bottomPanel = true
     @State private var preventSleep = true
@@ -42,6 +41,17 @@ struct SettingsRouteView: View {
             set: { enabled in
                 Task { @MainActor in
                     await store.saveRuntimeDefaultPermissions(fullAccess: enabled)
+                }
+            }
+        )
+    }
+
+    private var autoReviewBinding: Binding<Bool> {
+        Binding(
+            get: { store.approvalsReviewer == .autoReview },
+            set: { enabled in
+                Task { @MainActor in
+                    await store.saveRuntimeAutoReviewEnabled(enabled)
                 }
             }
         )
@@ -238,7 +248,7 @@ struct SettingsRouteView: View {
             SettingsSection(title: "权限") {
                 SettingsCard {
                     SettingsToggleRow(title: "默认权限", description: "默认情况下，Codex 可以读取并编辑其工作区中的文件。必要时，它可以请求额外的访问权限", isOn: defaultPermissionsBinding)
-                    SettingsToggleRow(title: "自动审核", description: "Codex 会自动审核额外访问权限请求。自动审核可能会出错。了解更多有关高风险的信息。", isOn: $autoReview)
+                    SettingsToggleRow(title: "自动审核", description: "Codex 会自动审核额外访问权限请求。自动审核可能会出错。了解更多有关高风险的信息。", isOn: autoReviewBinding)
                     SettingsToggleRow(title: "完全访问权限", description: "当 Codex 以完全访问权限运行时，无需你批准。这会显著增加数据丢失、泄露或意外行为的风险。了解更多。", isOn: fullAccessPermissionsBinding)
                 }
             }

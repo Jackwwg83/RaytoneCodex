@@ -204,6 +204,14 @@ final class SessionStore: ObservableObject {
         applyRuntimeDefaultPermissionsProfile(
             config?.defaultPermissions ?? fallbackDefaultPermissions ?? runtimeRequirements?.defaultPermissions
         )
+        if let rawReviewer = config?.approvalsReviewer,
+           let reviewer = CodexApprovalsReviewer(rawValue: rawReviewer) {
+            approvalsReviewer = reviewer
+            accessMode = Self.accessMode(for: approval, sandbox: sandbox, approvalsReviewer: reviewer)
+            updateSelectedThread { thread in
+                thread.approvalsReviewer = reviewer
+            }
+        }
     }
 
     private func applyRuntimeDefaultPermissionsProfile(_ profile: String?) {
@@ -797,6 +805,10 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "approvals_reviewer 写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    func saveRuntimeAutoReviewEnabled(_ enabled: Bool) async {
+        await saveRuntimeApprovalsReviewer(enabled ? .autoReview : .user)
     }
 
     func saveRuntimePersonality(_ newPersonality: CodexPersonality) async {
