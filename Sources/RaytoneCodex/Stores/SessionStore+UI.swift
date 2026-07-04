@@ -238,6 +238,42 @@ extension SessionStore {
         ]
     }
 
+    func tokenUsageActivityValues(scale: String) -> [Int] {
+        let dailyValues = (runtimeTokenUsage?.dailyBuckets ?? [])
+            .sorted { $0.startDate < $1.startDate }
+            .map(\.tokens)
+
+        switch scale {
+        case "每周":
+            return Self.weeklyUsageValues(from: dailyValues)
+        case "累计":
+            return Self.cumulativeUsageValues(from: Self.weeklyUsageValues(from: dailyValues))
+        default:
+            return Array(dailyValues.suffix(371))
+        }
+    }
+
+    private static func weeklyUsageValues(from dailyValues: [Int]) -> [Int] {
+        guard !dailyValues.isEmpty else { return [] }
+        let recent = Array(dailyValues.suffix(371))
+        var values: [Int] = []
+        var index = 0
+        while index < recent.count {
+            let end = min(index + 7, recent.count)
+            values.append(recent[index..<end].reduce(0, +))
+            index = end
+        }
+        return Array(values.suffix(53))
+    }
+
+    private static func cumulativeUsageValues(from values: [Int]) -> [Int] {
+        var running = 0
+        return values.map { value in
+            running += value
+            return running
+        }
+    }
+
     var messagingConnectionCount: Int {
         messagingConnectionNames.count
     }

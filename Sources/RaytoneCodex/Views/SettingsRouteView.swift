@@ -15,6 +15,7 @@ struct SettingsRouteView: View {
     @State private var providerStatusMessage = "未测试"
     @State private var instructionsStatus = ""
     @State private var profileStatus = ""
+    @State private var usageActivityScale = "每日"
     @State private var customInstructions = """
     Prefer concise, actionable engineering updates.
     Keep implementation notes tied to real files and runtime evidence.
@@ -953,8 +954,12 @@ struct SettingsRouteView: View {
         SettingsSection(title: "Token 活动") {
             SettingsCard {
                 HStack {
+                    Text(usageActivityCaption)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
                     Spacer(minLength: 0)
-                    segmented(values: ["每日", "每周", "累计"], selection: .constant("每日"))
+                    segmented(values: ["每日", "每周", "累计"], selection: $usageActivityScale)
                 }
                 heatmap
                 HStack {
@@ -971,12 +976,12 @@ struct SettingsRouteView: View {
 
     private var heatmap: some View {
         VStack(spacing: 3) {
-            ForEach(0..<7, id: \.self) { row in
+            ForEach(0..<heatmapRows, id: \.self) { row in
                 HStack(spacing: 3) {
                     ForEach(0..<53, id: \.self) { column in
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
                             .fill(Theme.accent.opacity(heatLevel(row: row, column: column)))
-                            .frame(width: 9, height: 9)
+                            .frame(width: 9, height: usageActivityScale == "每日" ? 9 : 18)
                     }
                 }
             }
@@ -985,16 +990,29 @@ struct SettingsRouteView: View {
         .padding(.top, 8)
     }
 
-    private func heatLevel(row: Int, column: Int) -> Double {
-        let index = column * 7 + row
-        if let buckets = store.runtimeTokenUsage?.dailyBuckets,
-           !buckets.isEmpty,
-           index < buckets.count {
-            let maxTokens = max(buckets.map(\.tokens).max() ?? 1, 1)
-            let ratio = Double(buckets[index].tokens) / Double(maxTokens)
-            return buckets[index].tokens == 0 ? 0.08 : 0.12 + min(ratio, 1.0) * 0.65
+    private var heatmapRows: Int {
+        usageActivityScale == "每日" ? 7 : 1
+    }
+
+    private var usageActivityCaption: String {
+        let values = store.tokenUsageActivityValues(scale: usageActivityScale)
+        guard !values.isEmpty else {
+            return "\(usageActivityScale) · account/usage/read 未返回活动桶"
         }
-        return 0.08
+        let total = values.reduce(0, +)
+        return "\(usageActivityScale) · \(values.count) 个桶 · \(tokenText(total))"
+    }
+
+    private func heatLevel(row: Int, column: Int) -> Double {
+        let values = store.tokenUsageActivityValues(scale: usageActivityScale)
+        let index = usageActivityScale == "每日" ? column * 7 + row : column
+        guard !values.isEmpty,
+              index < values.count else {
+            return 0.08
+        }
+        let maxTokens = max(values.max() ?? 1, 1)
+        let ratio = Double(values[index]) / Double(maxTokens)
+        return values[index] == 0 ? 0.08 : 0.12 + min(ratio, 1.0) * 0.65
     }
 
     private var insightCard: some View {

@@ -134,8 +134,11 @@ struct ComposerView: View {
                     Label("默认 OpenAI：\(store.modelMenuTitle(providerID: "openai", model: defaultOpenAIModel))", systemImage: "sparkles")
                 }
             } else {
-                Button("默认 OpenAI") {}
-                    .disabled(true)
+                Button {
+                    Task { await store.refreshModelCatalog() }
+                } label: {
+                    Label("读取 OpenAI 模型", systemImage: "arrow.clockwise")
+                }
             }
             Button {
                 Task { await store.refreshModelCatalog() }

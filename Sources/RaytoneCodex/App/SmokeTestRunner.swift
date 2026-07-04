@@ -34,6 +34,8 @@ enum SmokeTestRunner {
             runMentionSmoke()
         } else if CommandLine.arguments.contains("--runtime-pages-smoke-test") {
             runRuntimePagesSmoke()
+        } else if CommandLine.arguments.contains("--usage-activity-smoke-test") {
+            runUsageActivitySmoke()
         } else if CommandLine.arguments.contains("--automation-smoke-test") {
             runAutomationSmoke()
         } else if CommandLine.arguments.contains("--automation-hook-smoke-test") {
@@ -3794,6 +3796,45 @@ enum SmokeTestRunner {
                 ] as [String: Any]
             ])
             exit(hardFailure ? 1 : 0)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runUsageActivitySmoke() {
+        Task { @MainActor in
+            let store = SessionStore()
+            let buckets = (1...14).map { day in
+                CodexRuntimeTokenUsageBucket(
+                    startDate: String(format: "2026-07-%02d", day),
+                    tokens: day
+                )
+            }
+            store.runtimeTokenUsage = CodexRuntimeTokenUsage(
+                lifetimeTokens: buckets.map(\.tokens).reduce(0, +),
+                peakDailyTokens: buckets.map(\.tokens).max(),
+                longestRunningTurnSec: 42,
+                currentStreakDays: 14,
+                longestStreakDays: 14,
+                dailyBuckets: buckets
+            )
+
+            let daily = store.tokenUsageActivityValues(scale: "每日")
+            let weekly = store.tokenUsageActivityValues(scale: "每周")
+            let cumulative = store.tokenUsageActivityValues(scale: "累计")
+            let ok = daily == Array(1...14) &&
+                weekly == [28, 77] &&
+                cumulative == [28, 105]
+
+            emitJSON([
+                "ok": ok,
+                "source": "synthetic CodexRuntimeTokenUsage.dailyBuckets",
+                "daily": daily,
+                "weekly": weekly,
+                "cumulative": cumulative,
+                "lifetimeTokens": store.runtimeTokenUsage?.lifetimeTokens ?? 0
+            ])
+            exit(ok ? 0 : 1)
         }
 
         dispatchMain()
