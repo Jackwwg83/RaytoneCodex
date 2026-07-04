@@ -895,6 +895,8 @@ enum SmokeTestRunner {
     private static func runProviderSidecarSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
         let providerID = "smoke-\(UUID().uuidString.prefix(8))"
+        let editedBaseURL = "http://127.0.0.1:65534/v1"
+        let editedModel = "smoke-edited-model"
 
         Task { @MainActor in
             let store = SessionStore()
@@ -909,6 +911,11 @@ enum SmokeTestRunner {
             ))
 
             do {
+                await store.saveProviderEndpoint(
+                    providerID: providerID,
+                    baseURL: editedBaseURL,
+                    model: editedModel
+                )
                 try store.saveProviderAPIKey("raytone-smoke-key", providerID: providerID)
                 await store.refreshRuntime()
                 await store.testProviderConnection(providerID: providerID)
@@ -925,10 +932,15 @@ enum SmokeTestRunner {
                     store.selectedProviderID == providerID &&
                     store.providerConnectionStatusText.contains("sidecar 已就绪") &&
                     store.providerConnectionBaseURL.contains("127.0.0.1") &&
+                    store.selectedProvider.baseURL == editedBaseURL &&
+                    store.selectedProvider.model == editedModel &&
                     codexConfigText.contains("model_provider = \"raytone-\(providerID)\"") &&
+                    codexConfigText.contains("model = \"\(editedModel)\"") &&
                     codexConfigText.contains("wire_api = \"responses\"") &&
                     codexConfigText.contains("base_url = \"\(store.providerConnectionBaseURL)") &&
                     proxyConfigText.contains("current_provider = \"\(providerID)\"") &&
+                    proxyConfigText.contains("base_url = \"\(editedBaseURL)\"") &&
+                    proxyConfigText.contains("model = \"\(editedModel)\"") &&
                     proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"")
 
                 await store.stopAppServerForTesting()
@@ -941,6 +953,8 @@ enum SmokeTestRunner {
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
                     "providerID": providerID,
+                    "editedBaseURL": editedBaseURL,
+                    "editedModel": editedModel,
                     "status": store.providerConnectionStatusText,
                     "detail": store.providerConnectionDetailText,
                     "sidecar": store.sidecarStatusText,

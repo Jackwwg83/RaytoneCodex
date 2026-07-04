@@ -2457,6 +2457,48 @@ final class SessionStore: ObservableObject {
         Task { await resetAppServerForProviderChange() }
     }
 
+    func saveProviderEndpoint(providerID: String, baseURL: String, model selectedModel: String) async {
+        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModel = selectedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBaseURL.isEmpty else {
+            providerConnectionStatusText = "Base URL 不能为空"
+            return
+        }
+        guard let endpointURL = URL(string: trimmedBaseURL),
+              endpointURL.scheme?.isEmpty == false,
+              endpointURL.host?.isEmpty == false else {
+            providerConnectionStatusText = "Base URL 格式无效"
+            return
+        }
+        guard !trimmedModel.isEmpty else {
+            providerConnectionStatusText = "模型不能为空"
+            return
+        }
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            providerConnectionStatusText = "未找到 provider：\(providerID)"
+            return
+        }
+        guard providers[index].usesSidecar else {
+            providerConnectionStatusText = "OpenAI provider 使用 Codex 原生 model/list"
+            return
+        }
+
+        providers[index].baseURL = trimmedBaseURL
+        providers[index].model = trimmedModel
+        if !providers[index].models.contains(trimmedModel) {
+            providers[index].models.insert(trimmedModel, at: 0)
+        }
+        selectedProviderID = providerID
+        model = trimmedModel
+        updateSelectedThread { thread in
+            thread.model = trimmedModel
+        }
+        providerConnectionStatusText = "已更新 \(providers[index].displayName) 端点"
+        providerConnectionDetailText = "\(trimmedBaseURL) · \(trimmedModel)"
+        modelCatalogStatusText = "\(providers[index].displayName) 将通过 sidecar 使用 \(trimmedModel)"
+        await resetAppServerForProviderChange()
+    }
+
     func codexModelMetadata(id: String) -> CodexAppServerModel? {
         codexModelCatalog.first { $0.id == id || $0.model == id }
     }

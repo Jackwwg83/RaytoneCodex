@@ -7,6 +7,9 @@ struct SettingsRouteView: View {
 
     @State private var search = ""
     @State private var providerAPIKeyDraft = ""
+    @State private var providerBaseURLDraft = ""
+    @State private var providerModelDraft = ""
+    @State private var providerEndpointDraftProviderID = ""
     @State private var providerStatusMessage = "未测试"
     @State private var instructionsStatus = ""
     @State private var profileStatus = ""
@@ -559,6 +562,7 @@ struct SettingsRouteView: View {
         Button {
             store.selectProvider(provider.id)
             providerAPIKeyDraft = ""
+            syncProviderEndpointDrafts(provider)
             providerStatusMessage = store.hasProviderAPIKey(provider) ? "Key 已就绪" : "未配置"
         } label: {
             HStack(spacing: 10) {
@@ -609,30 +613,44 @@ struct SettingsRouteView: View {
                 }
                 .padding(.bottom, 12)
 
-                SettingsValueRow(title: "模型", description: "当前 provider 的默认模型") {
-                    Menu {
-                        ForEach(provider.models, id: \.self) { model in
-                            Button {
-                                Task {
-                                    await store.saveRuntimeModelSelection(providerID: provider.id, model: model)
-                                    providerStatusMessage = store.modelCatalogStatusText
+                SettingsValueRow(title: "模型", description: provider.usesSidecar ? "sidecar 请求使用的 Chat Completions 模型名" : "当前 provider 的默认模型") {
+                    if provider.usesSidecar {
+                        TextField("模型", text: $providerModelDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12))
+                            .frame(width: 210)
+                    } else {
+                        Menu {
+                            ForEach(provider.models, id: \.self) { model in
+                                Button {
+                                    Task {
+                                        await store.saveRuntimeModelSelection(providerID: provider.id, model: model)
+                                        providerStatusMessage = store.modelCatalogStatusText
+                                    }
+                                } label: {
+                                    Text(store.modelMenuTitle(providerID: provider.id, model: model))
                                 }
-                            } label: {
-                                Text(store.modelMenuTitle(providerID: provider.id, model: model))
                             }
+                        } label: {
+                            menuLabel(store.modelMenuTitle(providerID: provider.id, model: provider.model))
                         }
-                    } label: {
-                        menuLabel(store.modelMenuTitle(providerID: provider.id, model: provider.model))
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
                 }
 
-                SettingsValueRow(title: "Base URL", description: "用户可在后续版本中编辑；当前按官方预设填充") {
-                    Text(provider.baseURL)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
+                SettingsValueRow(title: "Base URL", description: provider.usesSidecar ? "raytone-proxy 会把 Responses 请求转发到这个端点" : "Codex 原生 OpenAI 端点") {
+                    if provider.usesSidecar {
+                        TextField("https://api.example.com/v1", text: $providerBaseURLDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .font(Theme.mono(11.5))
+                            .frame(width: 260)
+                    } else {
+                        Text(provider.baseURL)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
 
                 SettingsValueRow(title: "Thinking", description: "写入 Codex 的 model_reasoning_effort / model_reasoning_summary") {
@@ -651,8 +669,28 @@ struct SettingsRouteView: View {
                 }
 
                 HStack(spacing: 8) {
+                    if provider.usesSidecar {
+                        Button("保存端点") {
+                            Task {
+                                await store.saveProviderEndpoint(
+                                    providerID: provider.id,
+                                    baseURL: providerBaseURLDraft,
+                                    model: providerModelDraft
+                                )
+                                providerStatusMessage = store.providerConnectionStatusText
+                                syncProviderEndpointDrafts(store.selectedProvider)
+                            }
+                        }
+                        .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                        .disabled(
+                            providerBaseURLDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                providerModelDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        )
+                    }
+
                     Button("刷新模型列表") {
                         store.selectProvider(provider.id)
+                        syncProviderEndpointDrafts(provider)
                         Task {
                             await store.refreshModelCatalog()
                             providerStatusMessage = store.modelCatalogStatusText
@@ -715,6 +753,20 @@ struct SettingsRouteView: View {
                 }
             }
         }
+        .onAppear {
+            if providerEndpointDraftProviderID != provider.id {
+                syncProviderEndpointDrafts(provider)
+            }
+        }
+        .onChange(of: provider.id) { _, _ in
+            syncProviderEndpointDrafts(provider)
+        }
+    }
+
+    private func syncProviderEndpointDrafts(_ provider: RaytoneProviderConfiguration) {
+        providerEndpointDraftProviderID = provider.id
+        providerBaseURLDraft = provider.baseURL
+        providerModelDraft = provider.model
     }
 
     private func statusBadge(_ text: String, ok: Bool) -> some View {
