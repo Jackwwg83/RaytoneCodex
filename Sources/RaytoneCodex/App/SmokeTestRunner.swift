@@ -2634,16 +2634,24 @@ enum SmokeTestRunner {
             let worktreeStatus = store.runtimeCatalogStatusText
             let worktreeErrors = store.runtimeCatalogErrors
 
+            await store.runGitCommitPushPreflightInTerminal()
+            let terminalRun = store.terminalRuns.last
+            let terminalOutput = terminalRun?.output ?? ""
+
             let gitDataAvailable = store.workspaceGitDiff != nil || !fallbackGitStatus.isEmpty
             let pullRequestStatusAvailable = !pullRequestStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                 pullRequestStatus != "未刷新" &&
                 pullRequestStatus != "正在读取 PR 状态…"
+            let terminalPreflightOk = terminalRun?.exitCode == 0 &&
+                terminalOutput.contains("== Git 状态 ==") &&
+                terminalOutput.contains("== 安全建议 ==")
             let ok = store.runtimeSnapshot.executable != nil &&
                 !branchStatus.hasPrefix("分支读取失败") &&
                 !gitStatus.hasPrefix("Git 差异读取失败") &&
                 !worktreeStatus.hasPrefix("工作树读取失败") &&
                 gitDataAvailable &&
-                pullRequestStatusAvailable
+                pullRequestStatusAvailable &&
+                terminalPreflightOk
 
             emitJSON([
                 "ok": ok,
@@ -2667,7 +2675,12 @@ enum SmokeTestRunner {
                 "pullRequestStatus": pullRequestStatus,
                 "worktreeStatus": worktreeStatus,
                 "worktreeErrors": worktreeErrors,
-                "worktrees": store.workspaceWorktrees
+                "worktrees": store.workspaceWorktrees,
+                "terminalPreflight": [
+                    "exitCode": Int(terminalRun?.exitCode ?? -999),
+                    "command": terminalRun?.command ?? "",
+                    "outputPreview": String(terminalOutput.prefix(1200))
+                ] as [String: Any]
             ])
             exit(ok ? 0 : 1)
         }

@@ -2233,6 +2233,47 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func refreshWorkspaceEnvironment() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在刷新工作区环境…"
+        runtimeCatalogErrors = []
+
+        await refreshWorkspaceBranches()
+        await refreshWorkspaceGitDiff()
+        await refreshWorkspacePullRequestStatus()
+        await refreshWorkspaceWorktrees()
+
+        let diff = workspaceGitDiff.map { Self.diffSummary($0.diff) }
+        let statusCount = workspaceGitStatusText
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .filter { !$0.hasPrefix("##") }
+            .count
+        let changeText: String
+        if let diff {
+            changeText = "\(diff.files) 个文件 · +\(diff.additions) −\(diff.deletions)"
+        } else if statusCount > 0 {
+            changeText = "Git 状态 \(statusCount) 项"
+        } else {
+            changeText = "无变更"
+        }
+        runtimeCatalogStatusText = "环境已刷新：\(workspaceBranches.count) 个分支 · \(changeText) · \(workspaceWorktrees.count) 个工作树"
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func runGitCommitPushPreflightInTerminal() async {
+        showInspector = true
+        openToolPanel(.terminal)
+        terminalCommand = Self.gitCommitPushPreflightCommand
+        await runTerminalCommand()
+    }
+
+    func runGitDiffInTerminal() async {
+        showInspector = true
+        openToolPanel(.terminal)
+        terminalCommand = "git status --short --branch && git diff --stat && git diff -- ."
+        await runTerminalCommand()
+    }
+
     func refreshIntegrationRuntime(forceRefetchApps: Bool = false) async {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在读取 app-server 集成状态…"
@@ -3705,6 +3746,29 @@ final class SessionStore: ObservableObject {
         printf "PR 状态不可用：%s\\n" "$out"
         ;;
     esac
+    """
+
+    private static let gitCommitPushPreflightCommand = """
+    set +e
+    echo "== Git 状态 =="
+    git status --short --branch
+    echo
+    echo "== 变更统计 =="
+    git diff --stat
+    echo
+    echo "== 最近提交 =="
+    git log --oneline --decorate -5
+    echo
+    echo "== 安全建议 =="
+    branch=$(git branch --show-current 2>/dev/null)
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+    if [ -z "$branch" ]; then
+      echo "当前是 detached HEAD；请先切到分支，再提交或推送。"
+    elif [ -z "$upstream" ]; then
+      echo "确认变更后可手动执行：git add -A && git commit -m '<message>' && git push -u origin $branch"
+    else
+      echo "确认变更后可手动执行：git add -A && git commit -m '<message>' && git push"
+    fi
     """
 
     private static func promptReferencePath(for path: String, workspacePath: String) -> String {

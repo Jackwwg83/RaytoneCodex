@@ -38,6 +38,15 @@ struct EnvironmentInfoPanel: View {
                 .foregroundStyle(Theme.textPrimary)
             Spacer(minLength: 0)
             Button {
+                Task { await store.refreshWorkspaceEnvironment() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .buttonStyle(GhostIconButtonStyle())
+            .disabled(store.runtimeCatalogIsRefreshing)
+            .help("刷新环境")
+            Button {
                 store.route = .settings
                 store.settingsPane = .environments
             } label: {
@@ -62,15 +71,78 @@ struct EnvironmentInfoPanel: View {
     }
 
     private var environmentRows: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            EnvironmentInfoRow(symbol: "plus.forwardslash.minus", title: "变更", trailing: changesText)
+        VStack(alignment: .leading, spacing: 6) {
+            EnvironmentInfoActionRow(symbol: "plus.forwardslash.minus", title: "变更", detail: changesText) {
+                Button("审查") {
+                    Task { await store.runReviewOfCurrentChanges(displayedPrompt: "审查当前环境变更") }
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(store.isRunning || changesText == "无")
+                Button {
+                    Task { await store.runGitDiffInTerminal() }
+                } label: {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help("在终端查看 diff")
+            }
             EnvironmentInfoRow(symbol: "desktopcomputer", title: "本地", trailing: Project.abbreviate(store.workspacePath))
-            EnvironmentInfoRow(symbol: "arrow.triangle.branch", title: branchTitle, trailing: branchStatusText)
+            EnvironmentInfoActionRow(symbol: "arrow.triangle.branch", title: branchTitle, detail: branchStatusText) {
+                branchMenu
+                Button {
+                    store.promptCreateWorkspaceBranch()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help("新建分支")
+            }
+            EnvironmentInfoActionRow(symbol: "tray.and.arrow.up", title: "提交或推送", detail: commitPushText) {
+                Button("预检") {
+                    Task { await store.runGitCommitPushPreflightInTerminal() }
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+            }
             EnvironmentInfoRow(symbol: "cpu", title: store.modelDisplayName, trailing: nil)
             EnvironmentInfoRow(symbol: "shippingbox", title: "Sidecar", trailing: store.sidecarStatusText)
             EnvironmentInfoRow(symbol: "rectangle.split.3x1", title: "工作树", trailing: worktreeText)
-            EnvironmentInfoRow(symbol: "chevron.left.forwardslash.chevron.right", title: pullRequestStatusText, trailing: nil, secondary: true)
+            EnvironmentInfoActionRow(symbol: "chevron.left.forwardslash.chevron.right", title: "PR 状态", detail: pullRequestStatusText, secondary: true) {
+                Button {
+                    Task { await store.refreshWorkspacePullRequestStatus() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help("刷新 PR 状态")
+            }
         }
+    }
+
+    private var branchMenu: some View {
+        Menu {
+            if store.workspaceBranches.isEmpty {
+                Text("暂无分支")
+            } else {
+                ForEach(store.workspaceBranches, id: \.self) { branch in
+                    Button(branchTitle == branch ? "✓ \(branch)" : branch) {
+                        Task { await store.checkoutWorkspaceBranch(branch) }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("切换分支")
     }
 
     private var progressSection: some View {
@@ -147,6 +219,10 @@ struct EnvironmentInfoPanel: View {
         store.workspacePullRequestStatusText
     }
 
+    private var commitPushText: String {
+        changesText == "无" ? "无待提交变更" : "先预检，再手动确认提交/推送"
+    }
+
     private var progressSteps: [ProgressStep] {
         if !store.selectedThread.progressSteps.isEmpty {
             return store.selectedThread.progressSteps
@@ -216,6 +292,49 @@ private struct EnvironmentInfoRow: View {
         }
         .padding(.horizontal, 10)
         .frame(height: 32)
+        .background(Theme.fillHover.opacity(secondary ? 0 : 1))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+    }
+}
+
+private struct EnvironmentInfoActionRow<Actions: View>: View {
+    let symbol: String
+    let title: String
+    let detail: String?
+    var secondary = false
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(secondary ? Theme.textTertiary : Theme.textSecondary)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(secondary ? Theme.textTertiary : Theme.textPrimary)
+                    .lineLimit(1)
+                if let detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                actions()
+            }
+            .fixedSize()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(minHeight: 42)
         .background(Theme.fillHover.opacity(secondary ? 0 : 1))
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
     }
