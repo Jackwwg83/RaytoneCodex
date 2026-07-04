@@ -871,9 +871,29 @@ enum SmokeTestRunner {
                 parsedShareContext?.creatorName == "Raytone" &&
                 parsedShareContext?.sharePrincipals.first?.principalType == "workspace" &&
                 parsedShareContext?.sharePrincipals.first?.role == "reader"
+            let checkoutFixture = try? JSONValue(jsonString: """
+            {
+              "remotePluginId": "plugins_raytone_shared",
+              "pluginId": "raytone-demo@codex-curated",
+              "pluginName": "raytone-demo",
+              "pluginPath": "/Users/example/plugins/raytone-demo",
+              "marketplaceName": "codex-curated",
+              "marketplacePath": "/Users/example/.agents/plugins/marketplace.json",
+              "remoteVersion": "1.2.3"
+            }
+            """)
+            let parsedCheckout = checkoutFixture.flatMap { try? CodexAppServerClient.pluginShareCheckoutResult(from: $0) }
+            let checkoutParserOK = parsedCheckout?.remotePluginID == "plugins_raytone_shared" &&
+                parsedCheckout?.pluginID == "raytone-demo@codex-curated" &&
+                parsedCheckout?.pluginName == "raytone-demo" &&
+                parsedCheckout?.pluginPath.hasSuffix("/plugins/raytone-demo") == true &&
+                parsedCheckout?.marketplaceName == "codex-curated" &&
+                parsedCheckout?.marketplacePath.hasSuffix("/marketplace.json") == true &&
+                parsedCheckout?.remoteVersion == "1.2.3"
             let ok = store.runtimeSnapshot.executable != nil &&
                 hasConfig &&
                 shareContextParserOK &&
+                checkoutParserOK &&
                 !store.runtimeCatalogStatusText.hasPrefix("app-server 读取失败") &&
                 !mcpReloadStatus.hasPrefix("MCP 重载失败")
 
@@ -908,6 +928,14 @@ enum SmokeTestRunner {
                     "discoverability": parsedShareContext?.discoverability ?? "",
                     "creatorName": parsedShareContext?.creatorName ?? "",
                     "principalCount": parsedShareContext?.sharePrincipals.count ?? 0
+                ] as [String: Any],
+                "shareCheckoutParser": [
+                    "ok": checkoutParserOK,
+                    "remotePluginId": parsedCheckout?.remotePluginID ?? "",
+                    "pluginId": parsedCheckout?.pluginID ?? "",
+                    "pluginName": parsedCheckout?.pluginName ?? "",
+                    "marketplaceName": parsedCheckout?.marketplaceName ?? "",
+                    "remoteVersion": parsedCheckout?.remoteVersion ?? ""
                 ] as [String: Any],
                 "skillCount": store.runtimeSkills.count,
                 "skillsPreview": Array(store.runtimeSkills.prefix(8).map { skill in

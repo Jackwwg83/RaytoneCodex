@@ -3537,6 +3537,88 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func checkoutSharedPlugin(_ plugin: CodexRuntimePlugin) async {
+        guard let remotePluginID = plugin.shareContext?.remotePluginID else {
+            runtimeCatalogStatusText = "plugin/share/checkout：缺少 remotePluginId"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            return
+        }
+
+        runtimeCatalogStatusText = "正在检出共享插件 \(plugin.displayName)…"
+        runtimePluginDetailStatusText = runtimeCatalogStatusText
+        runtimeCatalogErrors = []
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.checkoutSharedPlugin(remotePluginID: remotePluginID)
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+            if let refreshed = runtimePlugins.first(where: {
+                $0.shareContext?.remotePluginID == remotePluginID ||
+                    $0.id == result.pluginID ||
+                    $0.name == result.pluginName
+            }) {
+                await readRuntimePluginDetail(refreshed)
+            }
+            runtimeCatalogStatusText = "plugin/share/checkout：已检出 \(result.pluginName) 到 \(Project.abbreviate(result.pluginPath))"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+        } catch {
+            runtimeCatalogStatusText = "plugin/share/checkout 失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func deleteSharedPlugin(_ plugin: CodexRuntimePlugin) async {
+        guard let remotePluginID = plugin.shareContext?.remotePluginID else {
+            runtimeCatalogStatusText = "plugin/share/delete：缺少 remotePluginId"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            return
+        }
+
+        guard confirmDeleteSharedPlugin(plugin, remotePluginID: remotePluginID) else {
+            runtimeCatalogStatusText = "plugin/share/delete：已取消"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            return
+        }
+
+        runtimeCatalogStatusText = "正在删除共享插件 \(plugin.displayName)…"
+        runtimePluginDetailStatusText = runtimeCatalogStatusText
+        runtimeCatalogErrors = []
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.deleteSharedPlugin(remotePluginID: remotePluginID)
+            runtimePluginDetail = nil
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+            runtimeCatalogStatusText = "plugin/share/delete：已删除 \(remotePluginID)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+        } catch {
+            runtimeCatalogStatusText = "plugin/share/delete 失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func openPluginShareURL(_ plugin: CodexRuntimePlugin) {
+        guard let shareURL = plugin.shareContext?.shareURL,
+              let url = URL(string: shareURL) else {
+            runtimePluginDetailStatusText = "共享链接不可用"
+            runtimeCatalogStatusText = runtimePluginDetailStatusText
+            return
+        }
+        NSWorkspace.shared.open(url)
+        runtimePluginDetailStatusText = "已打开共享链接"
+        runtimeCatalogStatusText = runtimePluginDetailStatusText
+    }
+
+    private func confirmDeleteSharedPlugin(_ plugin: CodexRuntimePlugin, remotePluginID: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "删除共享插件？"
+        alert.informativeText = "将通过 app-server 删除 \(plugin.displayName) 的远端分享 \(remotePluginID)。如果当前账号没有权限，Codex 会返回真实失败原因。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     func readRuntimePluginDetail(_ plugin: CodexRuntimePlugin) async {
         runtimeCatalogIsRefreshing = true
         runtimePluginDetailStatusText = "正在读取 \(plugin.displayName)…"

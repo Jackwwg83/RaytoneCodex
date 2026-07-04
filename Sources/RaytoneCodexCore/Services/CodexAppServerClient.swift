@@ -425,6 +425,34 @@ public struct CodexRuntimePluginShareContext: Equatable, Sendable {
     }
 }
 
+public struct CodexRuntimePluginShareCheckoutResult: Equatable, Sendable {
+    public var remotePluginID: String
+    public var pluginID: String
+    public var pluginName: String
+    public var pluginPath: String
+    public var marketplaceName: String
+    public var marketplacePath: String
+    public var remoteVersion: String?
+
+    public init(
+        remotePluginID: String,
+        pluginID: String,
+        pluginName: String,
+        pluginPath: String,
+        marketplaceName: String,
+        marketplacePath: String,
+        remoteVersion: String?
+    ) {
+        self.remotePluginID = remotePluginID
+        self.pluginID = pluginID
+        self.pluginName = pluginName
+        self.pluginPath = pluginPath
+        self.marketplaceName = marketplaceName
+        self.marketplacePath = marketplacePath
+        self.remoteVersion = remoteVersion
+    }
+}
+
 public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
     public var id: String
     public var name: String
@@ -1774,6 +1802,19 @@ public actor CodexAppServerClient {
         return Self.sharedPluginCatalog(from: result)
     }
 
+    public func checkoutSharedPlugin(remotePluginID: String) async throws -> CodexRuntimePluginShareCheckoutResult {
+        let result = try await request(method: "plugin/share/checkout", params: .object([
+            "remotePluginId": .string(remotePluginID)
+        ]))
+        return try Self.pluginShareCheckoutResult(from: result)
+    }
+
+    public func deleteSharedPlugin(remotePluginID: String) async throws {
+        _ = try await request(method: "plugin/share/delete", params: .object([
+            "remotePluginId": .string(remotePluginID)
+        ]))
+    }
+
     public func readPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginDetail {
         var params: [String: JSONValue] = [
             "pluginName": .string(plugin.name)
@@ -2759,7 +2800,7 @@ public actor CodexAppServerClient {
         let marketplaceName = object["marketplaceName"]?.stringValue ?? fallback.marketplaceName
         let marketplacePath = object["marketplacePath"]?.pathString ?? fallback.marketplacePath
         let summary = object["summary"]?.objectValue
-        let plugin = summary.flatMap {
+        var plugin = summary.flatMap {
             runtimePlugin(
                 from: $0,
                 marketplaceName: marketplaceName,
@@ -2767,6 +2808,9 @@ public actor CodexAppServerClient {
                 marketplacePath: marketplacePath
             )
         } ?? fallback
+        if plugin.shareContext == nil {
+            plugin.shareContext = fallback.shareContext
+        }
 
         return CodexRuntimePluginDetail(
             plugin: plugin,
@@ -2843,6 +2887,27 @@ public actor CodexAppServerClient {
             creatorAccountUserID: object["creatorAccountUserId"]?.stringValue,
             creatorName: object["creatorName"]?.stringValue,
             sharePrincipals: principals
+        )
+    }
+
+    public static func pluginShareCheckoutResult(from result: JSONValue) throws -> CodexRuntimePluginShareCheckoutResult {
+        guard let remotePluginID = result["remotePluginId"]?.stringValue,
+              let pluginID = result["pluginId"]?.stringValue,
+              let pluginName = result["pluginName"]?.stringValue,
+              let pluginPath = result["pluginPath"]?.pathString,
+              let marketplaceName = result["marketplaceName"]?.stringValue,
+              let marketplacePath = result["marketplacePath"]?.pathString else {
+            throw CodexAppServerError.invalidResponse("Missing plugin/share/checkout response fields.")
+        }
+
+        return CodexRuntimePluginShareCheckoutResult(
+            remotePluginID: remotePluginID,
+            pluginID: pluginID,
+            pluginName: pluginName,
+            pluginPath: pluginPath,
+            marketplaceName: marketplaceName,
+            marketplacePath: marketplacePath,
+            remoteVersion: result["remoteVersion"]?.stringValue
         )
     }
 

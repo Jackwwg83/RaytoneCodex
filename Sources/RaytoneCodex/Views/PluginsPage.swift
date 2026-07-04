@@ -422,6 +422,10 @@ struct PluginsPage: View {
                     pluginDetailMetric("App", detail.apps.count)
                 }
 
+                if let shareContext = detail.plugin.shareContext {
+                    pluginShareActions(detail.plugin, shareContext: shareContext)
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
                     if let shareContext = detail.plugin.shareContext {
                         pluginDetailList("共享", rows: pluginShareRows(shareContext))
@@ -448,6 +452,38 @@ struct PluginsPage: View {
                     .stroke(Theme.borderSoft, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        }
+    }
+
+    private func pluginShareActions(
+        _ plugin: CodexRuntimePlugin,
+        shareContext: CodexRuntimePluginShareContext
+    ) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                Task { await store.checkoutSharedPlugin(plugin) }
+            } label: {
+                Label("检出共享插件", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(ChipButtonStyle(prominent: true))
+
+            if shareContext.shareURL != nil {
+                Button {
+                    store.openPluginShareURL(plugin)
+                } label: {
+                    Label("打开链接", systemImage: "arrow.up.forward")
+                }
+                .buttonStyle(ChipButtonStyle())
+            }
+
+            Spacer(minLength: 0)
+
+            Button {
+                Task { await store.deleteSharedPlugin(plugin) }
+            } label: {
+                Label("删除分享", systemImage: "trash")
+            }
+            .buttonStyle(ChipButtonStyle(tint: Theme.danger))
         }
     }
 
@@ -595,7 +631,7 @@ private struct RuntimePluginRow: View {
             .disabled(plugin.installPolicy == "NOT_AVAILABLE")
         }
         .padding(.horizontal, 12)
-        .frame(height: 72)
+        .frame(height: plugin.shareContext == nil ? 72 : 84)
         .background(Theme.transcript)
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
