@@ -29,6 +29,10 @@ final class SessionStore: ObservableObject {
     @Published var fileEntries: [WorkspaceFileEntry] = []
     @Published var filePreview: FilePreview?
     @Published var filePanelStatusText = "未加载"
+    @Published var fileSearchQuery = ""
+    @Published var fileSearchResults: [WorkspaceFileEntry] = []
+    @Published var fileSearchStatusText = ""
+    @Published var fileSearchIsRunning = false
     @Published var terminalCommand = "pwd && ls -la"
     @Published var terminalRuns: [TerminalCommandRecord] = []
     @Published var terminalIsRunning = false
@@ -759,6 +763,49 @@ final class SessionStore: ObservableObject {
                 ))))
             }
         }
+    }
+
+    func searchWorkspaceFiles() async {
+        let query = fileSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            fileSearchResults = []
+            fileSearchStatusText = ""
+            return
+        }
+
+        fileSearchIsRunning = true
+        fileSearchStatusText = "正在搜索…"
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let results = try await client.fuzzyFileSearch(query: query, roots: [workspacePath])
+            fileSearchResults = results.map {
+                WorkspaceFileEntry(
+                    name: $0.fileName,
+                    path: $0.path,
+                    isDirectory: $0.isDirectory,
+                    isFile: $0.isFile
+                )
+            }
+            fileSearchStatusText = fileSearchResults.isEmpty ? "未找到匹配文件" : "\(fileSearchResults.count) 个匹配"
+        } catch {
+            fileSearchResults = []
+            fileSearchStatusText = "搜索失败：\(error.localizedDescription)"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "文件搜索无法通过 app-server 完成：\(error.localizedDescription)"
+                ))))
+            }
+        }
+
+        fileSearchIsRunning = false
+    }
+
+    func clearFileSearch() {
+        fileSearchQuery = ""
+        fileSearchResults = []
+        fileSearchStatusText = ""
     }
 
     func openParentDirectoryInFilePanel() async {

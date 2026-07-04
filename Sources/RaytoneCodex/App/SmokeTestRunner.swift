@@ -10,6 +10,8 @@ enum SmokeTestRunner {
             runSessionSmoke()
         } else if CommandLine.arguments.contains("--tools-smoke-test") {
             runToolsSmoke()
+        } else if CommandLine.arguments.contains("--file-search-smoke-test") {
+            runFileSearchSmoke()
         } else if CommandLine.arguments.contains("--catalog-smoke-test") {
             runCatalogSmoke()
         } else if CommandLine.arguments.contains("--mention-smoke-test") {
@@ -219,6 +221,99 @@ enum SmokeTestRunner {
                 "terminalOutput": lastRun?.output ?? ""
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runFileSearchSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexFileSearchSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexFileSearchCodexHome-\(UUID().uuidString)", isDirectory: true)
+
+            do {
+                let sourceDirectory = workspaceURL.appendingPathComponent("Sources/Nested", isDirectory: true)
+                let docsDirectory = workspaceURL.appendingPathComponent("docs", isDirectory: true)
+                try fileManager.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: docsDirectory, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+
+                let targetURL = sourceDirectory.appendingPathComponent("NeedleRuntimeFile.swift")
+                let targetText = "let raytoneSearchNeedle = \"fuzzy-file-search-runtime-proof\"\n"
+                try targetText.write(to: targetURL, atomically: true, encoding: .utf8)
+                try "not the target\n".write(
+                    to: docsDirectory.appendingPathComponent("notes.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "FileSearchSmoke"
+                }
+
+                await store.refreshRuntime()
+                store.fileSearchQuery = "NeedleRuntime"
+                await store.searchWorkspaceFiles()
+
+                let targetResult = store.fileSearchResults.first { $0.path == targetURL.path }
+                if let targetResult {
+                    await store.openFileEntry(targetResult)
+                }
+
+                let preview = store.filePreview
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    targetResult != nil &&
+                    preview?.path == targetURL.path &&
+                    preview?.text.contains("fuzzy-file-search-runtime-proof") == true
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "query": store.fileSearchQuery,
+                    "searchStatus": store.fileSearchStatusText,
+                    "resultCount": store.fileSearchResults.count,
+                    "results": store.fileSearchResults.prefix(8).map { result in
+                        [
+                            "name": result.name,
+                            "path": result.path,
+                            "isDirectory": result.isDirectory,
+                            "isFile": result.isFile
+                        ] as [String: Any]
+                    },
+                    "openedPreview": [
+                        "path": preview?.path ?? "",
+                        "fileName": preview?.fileName ?? "",
+                        "textPreview": String((preview?.text ?? "").prefix(200)),
+                        "isTruncated": preview?.isTruncated ?? false
+                    ] as [String: Any]
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()

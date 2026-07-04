@@ -190,6 +190,43 @@ public struct CodexDirectoryEntry: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexFuzzyFileSearchResult: Equatable, Sendable, Identifiable {
+    public enum MatchType: String, Sendable {
+        case file
+        case directory
+    }
+
+    public var id: String { path }
+    public var root: String
+    public var relativePath: String
+    public var path: String
+    public var matchType: MatchType
+    public var fileName: String
+    public var score: Int
+    public var indices: [Int]
+
+    public var isDirectory: Bool { matchType == .directory }
+    public var isFile: Bool { matchType == .file }
+
+    public init(
+        root: String,
+        relativePath: String,
+        path: String,
+        matchType: MatchType,
+        fileName: String,
+        score: Int,
+        indices: [Int]
+    ) {
+        self.root = root
+        self.relativePath = relativePath
+        self.path = path
+        self.matchType = matchType
+        self.fileName = fileName
+        self.score = score
+        self.indices = indices
+    }
+}
+
 public struct CodexCommandExecResult: Equatable, Sendable {
     public var stdout: String
     public var stderr: String
@@ -1330,6 +1367,27 @@ public actor CodexAppServerClient {
         }
     }
 
+    public func fuzzyFileSearch(
+        query: String,
+        roots: [String],
+        cancellationToken: String? = nil
+    ) async throws -> [CodexFuzzyFileSearchResult] {
+        var params: [String: JSONValue] = [
+            "query": .string(query),
+            "roots": .array(roots.map(JSONValue.string))
+        ]
+        if let cancellationToken {
+            params["cancellationToken"] = .string(cancellationToken)
+        }
+
+        let result = try await request(method: "fuzzyFileSearch", params: .object(params))
+        guard let files = result["files"]?.arrayValue else {
+            throw CodexAppServerError.invalidResponse("Missing fuzzyFileSearch files.")
+        }
+
+        return files.compactMap(Self.fuzzyFileSearchResult(from:))
+    }
+
     public func readFile(path: String) async throws -> Data {
         let result = try await request(method: "fs/readFile", params: .object([
             "path": .string(path)
@@ -1903,6 +1961,34 @@ public actor CodexAppServerClient {
         return CodexRuntimePermissionProfileCatalog(
             profiles: profiles.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending },
             nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    private static func fuzzyFileSearchResult(from value: JSONValue) -> CodexFuzzyFileSearchResult? {
+        guard let root = value["root"]?.stringValue,
+              let relativePath = value["path"]?.stringValue else {
+            return nil
+        }
+
+        let matchTypeValue = value["match_type"]?.stringValue
+            ?? value["matchType"]?.stringValue
+            ?? "file"
+        let matchType = CodexFuzzyFileSearchResult.MatchType(rawValue: matchTypeValue) ?? .file
+        let fileName = value["file_name"]?.stringValue
+            ?? value["fileName"]?.stringValue
+            ?? URL(fileURLWithPath: relativePath).lastPathComponent
+        let absolutePath = relativePath.hasPrefix("/")
+            ? relativePath
+            : URL(fileURLWithPath: root).appendingPathComponent(relativePath).path
+
+        return CodexFuzzyFileSearchResult(
+            root: root,
+            relativePath: relativePath,
+            path: absolutePath,
+            matchType: matchType,
+            fileName: fileName,
+            score: value["score"]?.intValue ?? 0,
+            indices: value["indices"]?.arrayValue?.compactMap(\.intValue) ?? []
         )
     }
 }

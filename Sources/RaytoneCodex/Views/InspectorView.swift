@@ -205,6 +205,45 @@ private struct FilesToolPanel: View {
                 Text(store.filePanelStatusText)
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textTertiary)
+
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                    TextField("搜索文件", text: $store.fileSearchQuery)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .onSubmit {
+                            Task { await store.searchWorkspaceFiles() }
+                        }
+                    if store.fileSearchIsRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.55)
+                            .frame(width: 16, height: 16)
+                    }
+                    if !store.fileSearchQuery.isEmpty {
+                        Button {
+                            store.clearFileSearch()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.textTertiary)
+                        .help("清空搜索")
+                    }
+                }
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+
+                if !store.fileSearchStatusText.isEmpty {
+                    Text(store.fileSearchStatusText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                }
             }
             .padding(12)
             .background(Theme.panel)
@@ -212,31 +251,24 @@ private struct FilesToolPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(store.fileEntries) { entry in
-                        Button {
-                            Task { await store.openFileEntry(entry) }
-                        } label: {
-                            HStack(spacing: 9) {
-                                Image(systemName: entry.symbol)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(entry.isDirectory ? Theme.info : Theme.textSecondary)
-                                    .frame(width: 18)
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(entry.name)
-                                        .font(.system(size: 12.5, weight: .medium))
-                                        .foregroundStyle(Theme.textPrimary)
-                                        .lineLimit(1)
-                                    Text(entry.subtitle)
-                                        .font(.system(size: 10.5))
-                                        .foregroundStyle(Theme.textTertiary)
-                                }
-                                Spacer(minLength: 0)
+                    if isShowingSearch {
+                        ForEach(store.fileSearchResults) { entry in
+                            Button {
+                                Task { await store.openFileEntry(entry) }
+                            } label: {
+                                fileRow(entry, subtitle: Project.abbreviate(entry.path))
                             }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+                    } else {
+                        ForEach(store.fileEntries) { entry in
+                            Button {
+                                Task { await store.openFileEntry(entry) }
+                            } label: {
+                                fileRow(entry, subtitle: entry.subtitle)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
 
                     if let preview = store.filePreview {
@@ -288,6 +320,34 @@ private struct FilesToolPanel: View {
         .frame(maxHeight: .infinity)
         .background(Theme.panel)
         .overlay(alignment: .leading) { Hairline(axis: .vertical) }
+    }
+
+    private var isShowingSearch: Bool {
+        !store.fileSearchStatusText.isEmpty || !store.fileSearchResults.isEmpty
+    }
+
+    private func fileRow(_ entry: WorkspaceFileEntry, subtitle: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: entry.symbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(entry.isDirectory ? Theme.info : Theme.textSecondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.name)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
     }
 
     private var closeButton: some View {
