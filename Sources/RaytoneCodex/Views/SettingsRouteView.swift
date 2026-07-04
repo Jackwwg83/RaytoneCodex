@@ -2034,12 +2034,6 @@ struct SettingsRouteView: View {
         .menuIndicator(.hidden)
     }
 
-    private func menuValue(_ title: String, values: [String]) -> some View {
-        menuValue(title, values: values) { value in
-            store.runtimeCatalogStatusText = "\(value) 已选择"
-        }
-    }
-
     private func menuValue(_ title: String, values: [String], onSelect: @escaping (String) -> Void) -> some View {
         Menu {
             ForEach(values, id: \.self) { value in
