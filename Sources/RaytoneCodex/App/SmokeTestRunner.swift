@@ -36,6 +36,8 @@ enum SmokeTestRunner {
             runRuntimePagesSmoke()
         } else if CommandLine.arguments.contains("--usage-activity-smoke-test") {
             runUsageActivitySmoke()
+        } else if CommandLine.arguments.contains("--settings-project-smoke-test") {
+            runSettingsProjectSmoke()
         } else if CommandLine.arguments.contains("--automation-smoke-test") {
             runAutomationSmoke()
         } else if CommandLine.arguments.contains("--automation-hook-smoke-test") {
@@ -3835,6 +3837,82 @@ enum SmokeTestRunner {
                 "lifetimeTokens": store.runtimeTokenUsage?.lifetimeTokens ?? 0
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSettingsProjectSmoke() {
+        Task { @MainActor in
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexSettingsProjectSmoke-\(UUID().uuidString)", isDirectory: true)
+            let firstProjectURL = temporaryRoot.appendingPathComponent("first", isDirectory: true)
+            let secondProjectURL = temporaryRoot.appendingPathComponent("second", isDirectory: true)
+
+            do {
+                try FileManager.default.createDirectory(at: firstProjectURL, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: secondProjectURL, withIntermediateDirectories: true)
+                try "first\n".write(to: firstProjectURL.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+                try "second\n".write(to: secondProjectURL.appendingPathComponent("SETTINGS.md"), atomically: true, encoding: .utf8)
+
+                let firstProject = Project(name: "设置项目一", path: firstProjectURL.path)
+                let secondProject = Project(name: "设置项目二", path: secondProjectURL.path)
+                let store = SessionStore()
+                store.projects = [firstProject, secondProject]
+                store.threads = [
+                    ChatThread(title: "设置项目一对话", projectID: firstProject.id, items: []),
+                    ChatThread(title: "设置项目二对话", projectID: secondProject.id, items: [])
+                ]
+                store.selectedThreadID = store.threads[0].id
+                store.workspacePath = firstProject.path
+                store.filePanelPath = firstProject.path
+                store.route = .settings
+                store.settingsPane = .configuration
+
+                store.selectProjectForSettings(secondProject.id)
+
+                let deadline = Date().addingTimeInterval(25)
+                while Date() < deadline {
+                    let hasFile = store.fileEntries.contains { $0.name == "SETTINGS.md" }
+                    let configSettled = store.runtimeCatalogStatusText.hasPrefix("config/read：") ||
+                        store.runtimeCatalogStatusText.hasPrefix("config/read 失败")
+                    if hasFile && configSettled {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+
+                let fileNames = store.fileEntries.map(\.name)
+                let ok = store.route == .settings &&
+                    store.settingsPane == .configuration &&
+                    store.selectedProject.id == secondProject.id &&
+                    store.workspacePath == secondProject.path &&
+                    store.filePanelPath == secondProject.path &&
+                    fileNames.contains("SETTINGS.md") &&
+                    store.runtimeCatalogStatusText.hasPrefix("config/read：")
+
+                emitJSON([
+                    "ok": ok,
+                    "route": "\(store.route)",
+                    "settingsPane": "\(store.settingsPane)",
+                    "selectedProject": store.selectedProject.name,
+                    "workspacePath": store.workspacePath,
+                    "filePanelPath": store.filePanelPath,
+                    "filePanelStatus": store.filePanelStatusText,
+                    "fileEntries": fileNames,
+                    "runtimeStatus": store.runtimeCatalogStatusText,
+                    "runtimeErrors": store.runtimeCatalogErrors
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "error": error.localizedDescription
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(1)
+            }
         }
 
         dispatchMain()

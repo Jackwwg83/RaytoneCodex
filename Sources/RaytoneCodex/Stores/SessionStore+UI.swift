@@ -57,6 +57,32 @@ extension SessionStore {
         }
     }
 
+    func selectProjectForSettings(_ projectID: UUID) {
+        guard let project = projects.first(where: { $0.id == projectID }) else {
+            return
+        }
+        let previousRoute = route
+        let previousSettingsPane = settingsPane
+
+        if let thread = threads.first(where: { $0.projectID == projectID }) {
+            selectThread(thread)
+        } else {
+            newThread(in: projectID)
+        }
+
+        route = previousRoute
+        settingsPane = previousSettingsPane
+        workspacePath = project.path
+        filePanelPath = project.path
+        runtimeCatalogStatusText = "正在切换到 \(project.name)…"
+
+        Task {
+            await refreshWorkspaceBranches()
+            await loadFilePanelDirectory(project.path)
+            await refreshRuntimeConfiguration()
+        }
+    }
+
     /// Remove a thread. Keeps at least one thread alive and reselects if needed.
     func deleteThread(_ id: UUID) {
         guard threads.count > 1 else { return }

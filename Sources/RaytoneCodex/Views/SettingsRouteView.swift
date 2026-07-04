@@ -1055,7 +1055,7 @@ struct SettingsRouteView: View {
             SettingsSection(title: "自定义 config.toml 设置") {
                 SettingsCard {
                     HStack {
-                        menuValue(store.selectedProject.name, values: store.projects.map(\.name))
+                        projectMenuValue
                         Spacer(minLength: 0)
                         Button("打开 config.toml ↗") {
                             store.openCodexConfigFile()
@@ -1151,6 +1151,23 @@ struct SettingsRouteView: View {
                 }
             }
         }
+    }
+
+    private var projectMenuValue: some View {
+        Menu {
+            ForEach(store.projects) { project in
+                Button {
+                    store.selectProjectForSettings(project.id)
+                } label: {
+                    Label(project.name, systemImage: project.id == store.selectedProject.id ? "checkmark" : "folder")
+                }
+            }
+        } label: {
+            menuLabel(store.selectedProject.name)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 
     private var personalizationPane: some View {
