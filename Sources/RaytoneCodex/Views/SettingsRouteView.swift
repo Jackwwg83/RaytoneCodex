@@ -2181,7 +2181,7 @@ struct SettingsRouteView: View {
                     shortcutRow("新建对话", "⌘N", "创建本地线程并切回主对话")
                     shortcutRow("运行", "⌘↩", "发送 Composer 内容到 Codex app-server")
                     shortcutRow("刷新运行时", "⌘R", "重新检测内置 Codex CLI")
-                    shortcutRow("删除对话", "⌘⌫", "删除当前本地线程")
+                    shortcutRow("删除对话", "⌘⌫", "归档当前 Codex 线程并从列表移除")
                     shortcutRow("切换工具面板", "⌥⌘I", "显示或隐藏右侧工具面板")
                     shortcutRow("文件 / 浏览器 / 终端", "⌘P / ⌘T / ⌃`", "打开对应工具")
                     shortcutRow("设置", "⌘,", "进入设置页")
