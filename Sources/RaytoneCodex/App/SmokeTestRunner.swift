@@ -98,6 +98,8 @@ enum SmokeTestRunner {
             runModelProviderCapabilitiesSmoke()
         } else if CommandLine.arguments.contains("--external-agent-config-smoke-test") {
             runExternalAgentConfigSmoke()
+        } else if CommandLine.arguments.contains("--external-agent-real-smoke-test") {
+            runExternalAgentRealSmoke()
         } else if CommandLine.arguments.contains("--model-config-smoke-test") {
             runModelConfigSmoke()
         } else if CommandLine.arguments.contains("--provider-sidecar-smoke-test") {
@@ -2293,6 +2295,131 @@ enum SmokeTestRunner {
                     "workspacePath": workspaceURL.path,
                     "fakeExecutable": scriptURL.path,
                     "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runExternalAgentRealSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexExternalAgentRealSmoke-\(UUID().uuidString)", isDirectory: true)
+            let homeURL = rootURL.appendingPathComponent("home", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let claudeURL = homeURL.appendingPathComponent(".claude", isDirectory: true)
+            let sourceSkillURL = claudeURL
+                .appendingPathComponent("skills/raytone-claude-skill/SKILL.md")
+            let targetAgentsURL = codexHomeURL.appendingPathComponent("AGENTS.md")
+            let targetSkillURL = rootURL
+                .appendingPathComponent(".agents/skills/raytone-claude-skill/SKILL.md")
+            let agentsMarker = "RAYTONE_EXTERNAL_AGENT_AGENTS_MARKER"
+            let skillMarker = "RAYTONE_EXTERNAL_AGENT_SKILL_MARKER"
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(
+                    at: sourceSkillURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try """
+                # Claude Instructions
+
+                \(agentsMarker)
+
+                请把迁移后的说明改写为 Codex AGENTS.md。
+                """.write(
+                    to: claudeURL.appendingPathComponent("CLAUDE.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try """
+                ---
+                name: raytone-claude-skill
+                shortDescription: Migrated Claude skill fixture.
+                ---
+
+                # Raytone Claude Skill
+
+                \(skillMarker)
+                """.write(to: sourceSkillURL, atomically: true, encoding: .utf8)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path,
+                    "HOME": homeURL.path,
+                    "USERPROFILE": homeURL.path
+                ]
+
+                fputs("external-agent-real-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("external-agent-real-smoke: detectExternalAgentConfig\n", stderr)
+                await store.detectExternalAgentConfig()
+                let detectedItems = store.externalAgentMigrationItems
+                let detectTypes = Set(detectedItems.map(\.itemType))
+                let detectStatus = store.externalAgentMigrationStatusText
+
+                fputs("external-agent-real-smoke: importExternalAgentConfig\n", stderr)
+                await store.importExternalAgentConfig(detectedItems)
+                let deadline = Date().addingTimeInterval(15)
+                while Date() < deadline && store.externalAgentMigrationIsImporting {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let importCompletionObserved = !store.externalAgentMigrationIsImporting
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                let finalStatus = store.externalAgentMigrationStatusText
+                let targetAgentsText = (try? String(contentsOf: targetAgentsURL, encoding: .utf8)) ?? ""
+                let targetSkillText = (try? String(contentsOf: targetSkillURL, encoding: .utf8)) ?? ""
+                let remainingItems = store.externalAgentMigrationItems
+                await store.stopAppServerForTesting()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    detectTypes.contains("AGENTS_MD") &&
+                    detectTypes.contains("SKILLS") &&
+                    importCompletionObserved &&
+                    targetAgentsText.contains(agentsMarker) &&
+                    targetSkillText.contains(skillMarker) &&
+                    remainingItems.isEmpty
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "rootPath": rootURL.path,
+                    "homePath": homeURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "workspacePath": workspaceURL.path,
+                    "detectedCount": detectedItems.count,
+                    "detectedTypes": detectedItems.map(\.itemType),
+                    "detectStatus": detectStatus,
+                    "importCompletionObserved": importCompletionObserved,
+                    "finalStatus": finalStatus,
+                    "remainingDetectedCount": remainingItems.count,
+                    "targetAgentsPath": targetAgentsURL.path,
+                    "targetAgentsContainsMarker": targetAgentsText.contains(agentsMarker),
+                    "targetSkillPath": targetSkillURL.path,
+                    "targetSkillContainsMarker": targetSkillText.contains(skillMarker),
+                    "runtimeCatalogErrors": store.runtimeCatalogErrors
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "rootPath": rootURL.path,
+                    "homePath": homeURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "workspacePath": workspaceURL.path,
                     "error": error.localizedDescription
                 ])
                 exit(1)

@@ -2722,8 +2722,10 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             try await client.importExternalAgentConfig(items: selectedItems)
-            externalAgentMigrationStatusText = "externalAgentConfig/import：已提交 \(selectedItems.count) 项，等待完成通知"
-            runtimeCatalogStatusText = externalAgentMigrationStatusText
+            if externalAgentMigrationIsImporting {
+                externalAgentMigrationStatusText = "externalAgentConfig/import：已提交 \(selectedItems.count) 项，等待完成通知"
+                runtimeCatalogStatusText = externalAgentMigrationStatusText
+            }
         } catch {
             externalAgentMigrationIsImporting = false
             externalAgentMigrationStatusText = "externalAgentConfig/import 失败：\(error.localizedDescription)"
@@ -2731,6 +2733,23 @@ final class SessionStore: ObservableObject {
             runtimeCatalogErrors = [error.localizedDescription]
         }
         runtimeCatalogIsRefreshing = false
+    }
+
+    private func refreshExternalAgentMigrationItemsAfterImport() async {
+        let countText = externalAgentImportedItemCount > 0 ? "\(externalAgentImportedItemCount) 项" : "所选项目"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.detectExternalAgentConfig(includeHome: true, cwds: [workspacePath])
+            externalAgentMigrationItems = result.items
+            let remainingText = result.items.isEmpty ? "无剩余项" : "剩余 \(result.items.count) 项"
+            externalAgentMigrationStatusText = "externalAgentConfig/import/completed：已完成 \(countText) · \(remainingText)"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
+            runtimeCatalogErrors = []
+        } catch {
+            externalAgentMigrationStatusText = "externalAgentConfig/import/completed：已完成 \(countText)；剩余项刷新失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
     }
 
     func refreshRuntimeExperimentalFeatures() async {
@@ -6017,7 +6036,10 @@ final class SessionStore: ObservableObject {
             externalAgentMigrationStatusText = "externalAgentConfig/import/completed：已完成 \(countText)"
             runtimeCatalogStatusText = externalAgentMigrationStatusText
             runtimeCatalogErrors = []
-            Task { await refreshRuntimeCatalog(forceReloadSkills: true) }
+            Task {
+                await refreshExternalAgentMigrationItemsAfterImport()
+                await refreshRuntimeCatalog(forceReloadSkills: true)
+            }
         case "fs/changed":
             handleFileSystemChanged(params)
         case "command/exec/outputDelta":
