@@ -766,6 +766,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
     public var tools: [CodexRuntimeMCPTool]
     public var toolNames: [String]
     public var resources: [CodexRuntimeMCPResource]
+    public var resourceTemplates: [CodexRuntimeMCPResourceTemplate]
     public var resourceCount: Int
     public var resourceTemplateCount: Int
 
@@ -777,6 +778,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         tools: [CodexRuntimeMCPTool] = [],
         toolNames: [String],
         resources: [CodexRuntimeMCPResource] = [],
+        resourceTemplates: [CodexRuntimeMCPResourceTemplate] = [],
         resourceCount: Int,
         resourceTemplateCount: Int
     ) {
@@ -787,6 +789,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         self.tools = tools
         self.toolNames = toolNames
         self.resources = resources
+        self.resourceTemplates = resourceTemplates
         self.resourceCount = resourceCount
         self.resourceTemplateCount = resourceTemplateCount
     }
@@ -838,6 +841,34 @@ public struct CodexRuntimeMCPResource: Equatable, Sendable, Identifiable {
 
     public var displayName: String {
         title?.isEmpty == false ? title! : name
+    }
+}
+
+public struct CodexRuntimeMCPResourceTemplate: Equatable, Sendable, Identifiable {
+    public var id: String { uriTemplate }
+    public var name: String
+    public var title: String?
+    public var uriTemplate: String
+    public var description: String?
+    public var mimeType: String?
+
+    public init(name: String, title: String?, uriTemplate: String, description: String?, mimeType: String?) {
+        self.name = name
+        self.title = title
+        self.uriTemplate = uriTemplate
+        self.description = description
+        self.mimeType = mimeType
+    }
+
+    public var displayName: String {
+        title?.isEmpty == false ? title! : name
+    }
+
+    public var displayDescription: String {
+        guard let description, !description.isEmpty else {
+            return uriTemplate
+        }
+        return description
     }
 }
 
@@ -3586,6 +3617,7 @@ public actor CodexAppServerClient {
             .sorted { $0.name < $1.name }
             let toolNames = tools.map(\.name)
             let resources = server["resources"]?.arrayValue?.compactMap(Self.mcpResource(from:)) ?? []
+            let resourceTemplates = server["resourceTemplates"]?.arrayValue?.compactMap(Self.mcpResourceTemplate(from:)) ?? []
             return CodexRuntimeMCPServer(
                 name: name,
                 title: info?["title"]?.stringValue ?? info?["name"]?.stringValue ?? name,
@@ -3594,8 +3626,9 @@ public actor CodexAppServerClient {
                 tools: tools,
                 toolNames: toolNames,
                 resources: resources,
+                resourceTemplates: resourceTemplates,
                 resourceCount: server["resources"]?.arrayValue?.count ?? 0,
-                resourceTemplateCount: server["resourceTemplates"]?.arrayValue?.count ?? 0
+                resourceTemplateCount: resourceTemplates.count
             )
         } ?? []
 
@@ -3637,6 +3670,21 @@ public actor CodexAppServerClient {
             description: object["description"]?.stringValue,
             mimeType: object["mimeType"]?.stringValue,
             size: object["size"]?.intValue
+        )
+    }
+
+    private static func mcpResourceTemplate(from value: JSONValue) -> CodexRuntimeMCPResourceTemplate? {
+        guard let object = value.objectValue,
+              let name = object["name"]?.stringValue,
+              let uriTemplate = object["uriTemplate"]?.stringValue ?? object["uri_template"]?.stringValue else {
+            return nil
+        }
+        return CodexRuntimeMCPResourceTemplate(
+            name: name,
+            title: object["title"]?.stringValue,
+            uriTemplate: uriTemplate,
+            description: object["description"]?.stringValue,
+            mimeType: object["mimeType"]?.stringValue ?? object["mime_type"]?.stringValue
         )
     }
 

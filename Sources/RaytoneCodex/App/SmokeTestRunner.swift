@@ -1130,6 +1130,8 @@ enum SmokeTestRunner {
         let marker = "Raytone MCP resource smoke OK \(UUID().uuidString.prefix(8))"
         let serverName = "raytone_resource"
         let resourceURI = "raytone://resource/smoke"
+        let resourceTemplateURI = "\(resourceURI)/{name}"
+        let concreteTemplateURI = "\(resourceURI)/from-template"
 
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -1140,7 +1142,11 @@ enum SmokeTestRunner {
 
             do {
                 try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
-                try mcpResourceSmokeServerScript(marker: marker, resourceURI: resourceURI)
+                try mcpResourceSmokeServerScript(
+                    marker: marker,
+                    resourceURI: resourceURI,
+                    resourceTemplateURI: resourceTemplateURI
+                )
                     .write(to: serverURL, atomically: true, encoding: .utf8)
 
                 let escapedServerPath = serverURL.path
@@ -1196,13 +1202,41 @@ enum SmokeTestRunner {
 
                 fputs("mcp-resource-smoke: readMCPResource\n", stderr)
                 await store.readMCPResource(resource, from: server)
-                let preview = store.mcpResourcePreview?.textPreview ?? ""
+                let resourcePreview = store.mcpResourcePreview?.textPreview ?? ""
+
+                guard let template = server.resourceTemplates.first(where: { $0.uriTemplate == resourceTemplateURI }) else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHomeURL.path,
+                        "serverName": serverName,
+                        "resourceURI": resourceURI,
+                        "resourceTemplateURI": resourceTemplateURI,
+                        "status": store.runtimeCatalogStatusText,
+                        "serverResourceTemplateCount": server.resourceTemplateCount,
+                        "templates": server.resourceTemplates.map(\.uriTemplate)
+                    ])
+                    exit(1)
+                }
+
+                let templateKey = store.mcpResourceTemplateKey(template, server: server)
+                store.mcpResourceTemplateURIText[templateKey] = concreteTemplateURI
+                fputs("mcp-resource-smoke: readMCPResourceTemplate\n", stderr)
+                await store.readMCPResourceTemplate(template, from: server)
+                let templatePreview = store.mcpResourcePreview?.textPreview ?? ""
                 let ok = store.runtimeSnapshot.executable != nil &&
                     server.resourceCount == 1 &&
+                    server.resourceTemplateCount == 1 &&
+                    server.resourceTemplates.count == 1 &&
                     resource.displayName == "Raytone MCP Smoke Resource" &&
+                    template.displayName == "Raytone MCP Smoke Template" &&
                     store.mcpResourcePreview?.server == serverName &&
-                    store.mcpResourcePreview?.requestedURI == resourceURI &&
-                    preview.contains(marker) &&
+                    resourcePreview.contains(marker) &&
+                    store.mcpResourcePreview?.requestedURI == concreteTemplateURI &&
+                    templatePreview.contains(marker) &&
                     store.mcpResourceStatusText.hasPrefix("mcpServer/resource/read")
 
                 emitJSON([
@@ -1222,9 +1256,17 @@ enum SmokeTestRunner {
                         "uri": resource.uri,
                         "mimeType": resource.mimeType ?? ""
                     ] as [String: Any],
+                    "resourceTemplate": [
+                        "name": template.name,
+                        "displayName": template.displayName,
+                        "uriTemplate": template.uriTemplate,
+                        "concreteURI": concreteTemplateURI,
+                        "mimeType": template.mimeType ?? ""
+                    ] as [String: Any],
                     "readStatus": store.mcpResourceStatusText,
                     "contentCount": store.mcpResourcePreview?.contents.count ?? 0,
-                    "preview": preview
+                    "resourcePreview": resourcePreview,
+                    "templatePreview": templatePreview
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -8968,15 +9010,21 @@ enum SmokeTestRunner {
         return CommandLine.arguments[valueIndex]
     }
 
-    private static func mcpResourceSmokeServerScript(marker: String, resourceURI: String) -> String {
+    private static func mcpResourceSmokeServerScript(
+        marker: String,
+        resourceURI: String,
+        resourceTemplateURI: String
+    ) -> String {
         let markerLiteral = String(reflecting: marker)
         let resourceURILiteral = String(reflecting: resourceURI)
+        let resourceTemplateURILiteral = String(reflecting: resourceTemplateURI)
         return """
         import json
         import sys
 
         MARKER = \(markerLiteral)
         RESOURCE_URI = \(resourceURILiteral)
+        RESOURCE_TEMPLATE_URI = \(resourceTemplateURILiteral)
 
         def read_message():
             line = sys.stdin.buffer.readline()
@@ -9015,7 +9063,15 @@ enum SmokeTestRunner {
                     }]
                 }
             if method == "resources/templates/list":
-                return {"resourceTemplates": []}
+                return {
+                    "resourceTemplates": [{
+                        "uriTemplate": RESOURCE_TEMPLATE_URI,
+                        "name": "raytone-smoke-template",
+                        "title": "Raytone MCP Smoke Template",
+                        "description": "A template that resolves to a local smoke resource.",
+                        "mimeType": "text/plain"
+                    }]
+                }
             if method == "resources/read":
                 return {
                     "contents": [{

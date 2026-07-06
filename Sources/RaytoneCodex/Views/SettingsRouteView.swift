@@ -1587,6 +1587,13 @@ struct SettingsRouteView: View {
                                         }
                                     }
                                 }
+                                if !server.resourceTemplates.isEmpty {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        ForEach(server.resourceTemplates.prefix(4)) { template in
+                                            mcpResourceTemplateRow(template, server: server)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -2964,6 +2971,17 @@ struct SettingsRouteView: View {
         )
     }
 
+    private func mcpResourceTemplateURIBinding(
+        _ template: CodexRuntimeMCPResourceTemplate,
+        server: CodexRuntimeMCPServer
+    ) -> Binding<String> {
+        let key = store.mcpResourceTemplateKey(template, server: server)
+        return Binding(
+            get: { store.mcpResourceTemplateURIText[key] ?? template.uriTemplate },
+            set: { store.mcpResourceTemplateURIText[key] = $0 }
+        )
+    }
+
     private func mcpToolRow(_ tool: CodexRuntimeMCPTool, server: CodexRuntimeMCPServer) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -3047,6 +3065,56 @@ struct SettingsRouteView: View {
             }
             .buttonStyle(ChipButtonStyle())
             .disabled(store.runtimeCatalogIsRefreshing)
+        }
+        .padding(9)
+        .background(Theme.fillSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+    }
+
+    private func mcpResourceTemplateRow(
+        _ template: CodexRuntimeMCPResourceTemplate,
+        server: CodexRuntimeMCPServer
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "curlybraces")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(template.displayName)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(template.displayDescription)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Button("读取") {
+                    Task { await store.readMCPResourceTemplate(template, from: server) }
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(store.runtimeCatalogIsRefreshing)
+            }
+            HStack(spacing: 8) {
+                TextField("具体资源 URI", text: mcpResourceTemplateURIBinding(template, server: server))
+                    .font(Theme.mono(11))
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                if let mimeType = template.mimeType, !mimeType.isEmpty {
+                    statusBadge(mimeType, ok: true)
+                }
+            }
+            Text(template.uriTemplate)
+                .font(Theme.mono(10.5))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
         .padding(9)
         .background(Theme.fillSubtle)

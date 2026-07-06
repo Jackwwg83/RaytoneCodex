@@ -83,6 +83,7 @@ final class SessionStore: ObservableObject {
     @Published var mcpResourcePreview: CodexMCPResourceReadResult?
     @Published var mcpResourceStatusText = "未读取"
     @Published var mcpToolArgumentText: [String: String] = [:]
+    @Published var mcpResourceTemplateURIText: [String: String] = [:]
     @Published var mcpToolCallPreview: CodexMCPToolCallResult?
     @Published var mcpToolCallStatusText = "未调用"
     @Published var runtimeConfig: CodexRuntimeConfig?
@@ -2917,6 +2918,48 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = mcpResourceStatusText
         } catch {
             mcpResourceStatusText = "资源读取失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = mcpResourceStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func mcpResourceTemplateKey(_ template: CodexRuntimeMCPResourceTemplate, server: CodexRuntimeMCPServer) -> String {
+        "\(server.name)::\(template.uriTemplate)"
+    }
+
+    func readMCPResourceTemplate(_ template: CodexRuntimeMCPResourceTemplate, from server: CodexRuntimeMCPServer) async {
+        let key = mcpResourceTemplateKey(template, server: server)
+        let candidateURI = (mcpResourceTemplateURIText[key] ?? template.uriTemplate)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidateURI.isEmpty else {
+            mcpResourceStatusText = "资源模板 URI 不能为空"
+            runtimeCatalogStatusText = mcpResourceStatusText
+            return
+        }
+        guard !candidateURI.contains("{"), !candidateURI.contains("}") else {
+            mcpResourceStatusText = "请先把模板参数替换为实际 URI：\(template.uriTemplate)"
+            runtimeCatalogStatusText = mcpResourceStatusText
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        mcpResourceStatusText = "正在通过模板读取 \(template.displayName)…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.readMCPResource(
+                server: server.name,
+                uri: candidateURI,
+                threadID: selectedThread.appServerThreadID
+            )
+            mcpResourcePreview = result
+            mcpResourceStatusText = "mcpServer/resource/read：模板 \(template.name) · \(result.contents.count) 段内容"
+            runtimeCatalogStatusText = mcpResourceStatusText
+        } catch {
+            mcpResourceStatusText = "资源模板读取失败：\(error.localizedDescription)"
             runtimeCatalogStatusText = mcpResourceStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
