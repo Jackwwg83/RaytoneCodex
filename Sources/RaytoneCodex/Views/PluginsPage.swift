@@ -499,7 +499,10 @@ struct PluginsPage: View {
                         pluginDetailList("共享", rows: pluginShareRows(shareContext))
                     }
                     if !detail.skills.isEmpty {
-                        pluginDetailList("技能", rows: detail.skills.map { "\($0.displayName) · \($0.enabled ? "启用" : "停用")" })
+                        pluginSkillList(detail.skills)
+                    }
+                    if store.runtimePluginSkillPreview != nil {
+                        pluginSkillPreviewCard
                     }
                     if !detail.mcpServers.isEmpty {
                         pluginDetailList("MCP 服务器", rows: detail.mcpServers)
@@ -521,6 +524,93 @@ struct PluginsPage: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
+    }
+
+    private func pluginSkillList(_ skills: [CodexRuntimePluginSkill]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("技能")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            ForEach(Array(skills.prefix(4))) { skill in
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(skill.displayName) · \(skill.enabled ? "启用" : "停用")")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                        Text(skill.path.map(Project.abbreviate) ?? "plugin/read 未返回 path")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        Task { await store.readRuntimePluginSkillPreview(skill) }
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: 24, height: 24)
+                            .background(Theme.fill)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(skill.path == nil)
+                    .help("读取技能内容")
+                }
+            }
+        }
+    }
+
+    private var pluginSkillPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("插件技能内容")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(store.runtimePluginSkillPreviewStatusText)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    store.clearRuntimePluginSkillPreview()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .background(Theme.fill)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let skill = store.runtimePluginSkillPreview {
+                Text(skill.path.map(Project.abbreviate) ?? skill.name)
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            ScrollView {
+                Text(store.runtimePluginSkillPreviewText.isEmpty ? "尚未读取到内容。" : store.runtimePluginSkillPreviewText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .frame(maxHeight: 180)
+            .background(Theme.transcript)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .padding(.top, 2)
     }
 
     private func pluginShareActions(

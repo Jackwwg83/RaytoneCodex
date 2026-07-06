@@ -1419,6 +1419,15 @@ enum SmokeTestRunner {
                 fputs("plugin-read-smoke: readRuntimePluginDetail\n", stderr)
                 await store.readRuntimePluginDetail(plugin)
                 let detail = store.runtimePluginDetail
+                let previewSkill = detail?.skills.first { $0.name == "\(pluginName):thread-summarizer" }
+                fputs("plugin-read-smoke: readRuntimePluginSkillPreview\n", stderr)
+                let skillPreviewOK: Bool
+                if let previewSkill {
+                    skillPreviewOK = await store.readRuntimePluginSkillPreview(previewSkill)
+                } else {
+                    skillPreviewOK = false
+                }
+                let skillPreviewText = store.runtimePluginSkillPreviewText
                 fputs("plugin-read-smoke: usePluginInComposer\n", stderr)
                 let trialPrepared = await store.usePluginInComposer(plugin)
                 let trialPrompt = store.prompt
@@ -1431,7 +1440,10 @@ enum SmokeTestRunner {
                     detail?.skills.contains(where: { $0.name == "\(pluginName):thread-summarizer" && !$0.enabled }) == true &&
                     detail?.mcpServers.contains("demo") == true &&
                     detail?.hooks.contains(where: { $0.eventName == "preToolUse" }) == true &&
-                    store.runtimePluginDetailStatusText.hasPrefix("plugin/read") &&
+                    skillPreviewOK &&
+                    previewSkill?.path?.isEmpty == false &&
+                    store.runtimePluginSkillPreviewStatusText.hasPrefix("plugin/read + fs/readFile") &&
+                    skillPreviewText.contains("# Thread Summarizer") &&
                     trialPrepared &&
                     trialPrompt.contains("@\(pluginName)") &&
                     trialPrompt.contains("技能：") &&
@@ -1456,6 +1468,9 @@ enum SmokeTestRunner {
                     ] as [String: Any],
                     "detailStatus": store.runtimePluginDetailStatusText,
                     "description": detail?.description ?? "",
+                    "skillPreviewStatus": store.runtimePluginSkillPreviewStatusText,
+                    "skillPreviewPath": previewSkill?.path ?? "",
+                    "skillPreviewContainsHeading": skillPreviewText.contains("# Thread Summarizer"),
                     "trialPrepared": trialPrepared,
                     "trialPrompt": trialPrompt,
                     "trialMentions": store.lastMentionInputPreview,
@@ -1463,7 +1478,8 @@ enum SmokeTestRunner {
                         [
                             "name": skill.name,
                             "displayName": skill.displayName,
-                            "enabled": skill.enabled
+                            "enabled": skill.enabled,
+                            "path": skill.path ?? ""
                         ] as [String: Any]
                     } ?? [],
                     "mcpServers": detail?.mcpServers ?? [],

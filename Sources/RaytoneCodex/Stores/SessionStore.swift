@@ -63,6 +63,9 @@ final class SessionStore: ObservableObject {
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
     @Published var runtimePluginDetail: CodexRuntimePluginDetail?
     @Published var runtimePluginDetailStatusText = "未读取"
+    @Published var runtimePluginSkillPreview: CodexRuntimePluginSkill?
+    @Published var runtimePluginSkillPreviewText = ""
+    @Published var runtimePluginSkillPreviewStatusText = "未读取"
     @Published var runtimePluginInstallResult: CodexRuntimePluginInstallResult?
     @Published var runtimeSharedPluginCount = 0
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
@@ -4715,6 +4718,7 @@ final class SessionStore: ObservableObject {
     func readRuntimePluginDetail(_ plugin: CodexRuntimePlugin) async {
         runtimeCatalogIsRefreshing = true
         runtimePluginDetailStatusText = "正在读取 \(plugin.displayName)…"
+        clearRuntimePluginSkillPreview()
         runtimeCatalogErrors = []
 
         do {
@@ -4730,6 +4734,43 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    @discardableResult
+    func readRuntimePluginSkillPreview(_ skill: CodexRuntimePluginSkill) async -> Bool {
+        runtimePluginSkillPreview = skill
+        runtimePluginSkillPreviewText = ""
+        runtimeCatalogErrors = []
+
+        guard let path = skill.path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            runtimePluginSkillPreviewStatusText = "plugin/read 没有返回 \(skill.displayName) 的 skill path"
+            runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
+            return false
+        }
+
+        runtimePluginSkillPreviewStatusText = "正在通过 fs/readFile 读取 \(skill.displayName)…"
+        runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let data = try await client.readFile(path: path)
+            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+            runtimePluginSkillPreviewText = text
+            runtimePluginSkillPreviewStatusText = "plugin/read + fs/readFile：\(skill.displayName) · \(data.count) 字节"
+            runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
+            return true
+        } catch {
+            runtimePluginSkillPreviewStatusText = "插件技能读取失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            return false
+        }
+    }
+
+    func clearRuntimePluginSkillPreview() {
+        runtimePluginSkillPreview = nil
+        runtimePluginSkillPreviewText = ""
+        runtimePluginSkillPreviewStatusText = "未读取"
     }
 
     func toggleSkill(_ skill: CodexRuntimeSkill) async {
