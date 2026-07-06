@@ -1057,6 +1057,7 @@ final class SessionStore: ObservableObject {
 
         do {
             try await client.interrupt(threadID: threadID, turnID: turnID)
+            runtimeCatalogStatusText = "turn/interrupt：已发送"
         } catch {
             updateSelectedThread { thread in
                 thread.items.append(TranscriptItem(kind: .notice(Notice(

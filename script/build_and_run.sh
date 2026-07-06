@@ -1719,6 +1719,14 @@ case "$MODE" in
       --dynamic-tool-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --interrupt-smoke|interrupt-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --interrupt-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --auth-attestation-smoke|auth-attestation-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -2072,7 +2080,7 @@ case "$MODE" in
     run_package_audit
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--thread-bootstrap-actions-smoke|--thread-lifecycle-smoke|--tools-smoke|--terminal-stream-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--connection-recovery-smoke|--account-api-key-smoke|--add-credits-nudge-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--mcp-elicitation-smoke|--tool-user-input-smoke|--approval-compat-smoke|--dynamic-tool-smoke|--auth-attestation-smoke|--runtime-pages-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-notification-smoke|--file-change-stream-smoke|--runtime-diagnostics-smoke|--process-stream-smoke|--app-server-notification-smoke|--hook-controls-smoke|--integration-pages-smoke|--project-switch-smoke|--workspace-switch-smoke|--remote-control-smoke|--remote-control-mode-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--provider-onboarding-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--thread-memory-mode-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--thread-bootstrap-actions-smoke|--thread-lifecycle-smoke|--tools-smoke|--terminal-stream-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--connection-recovery-smoke|--account-api-key-smoke|--add-credits-nudge-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--mcp-elicitation-smoke|--tool-user-input-smoke|--approval-compat-smoke|--dynamic-tool-smoke|--interrupt-smoke|--auth-attestation-smoke|--runtime-pages-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-notification-smoke|--file-change-stream-smoke|--runtime-diagnostics-smoke|--process-stream-smoke|--app-server-notification-smoke|--hook-controls-smoke|--integration-pages-smoke|--project-switch-smoke|--workspace-switch-smoke|--remote-control-smoke|--remote-control-mode-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--provider-onboarding-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--thread-memory-mode-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
     exit 2
     ;;
 esac

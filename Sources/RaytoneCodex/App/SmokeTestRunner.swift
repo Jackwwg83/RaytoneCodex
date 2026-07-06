@@ -35,6 +35,8 @@ enum SmokeTestRunner {
             runApprovalCompatSmoke()
         } else if CommandLine.arguments.contains("--dynamic-tool-smoke-test") {
             runDynamicToolSmoke()
+        } else if CommandLine.arguments.contains("--interrupt-smoke-test") {
+            runInterruptSmoke()
         } else if CommandLine.arguments.contains("--auth-attestation-smoke-test") {
             runAuthAttestationSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
@@ -1825,6 +1827,90 @@ enum SmokeTestRunner {
                     "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
                     "dynamicCommandOutputPreview": String(output.prefix(1200)),
                     "requestLogPreview": String(logText.prefix(2400))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runInterruptSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexInterruptSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeInterruptAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-interrupt"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_INTERRUPT_LOG": logURL.path
+                ]
+                store.prompt = "启动一个可中断轮次"
+
+                await store.runPrompt()
+
+                let runningDeadline = Date().addingTimeInterval(4)
+                while !store.isRunning && Date() < runningDeadline {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let wasRunningBeforeInterrupt = store.isRunning
+                await store.interruptRunningTurn()
+
+                let interruptDeadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < interruptDeadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""method":"turn/interrupt""#) && !store.isRunning {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let ok = wasRunningBeforeInterrupt &&
+                    !store.isRunning &&
+                    store.selectedThread.activeGoal == nil &&
+                    store.runtimeCatalogStatusText == "turn/interrupt：已发送" &&
+                    logText.contains(#""method":"turn/start""#) &&
+                    logText.contains(#""method":"turn/interrupt""#) &&
+                    logText.contains(#""threadId":"thread-smoke""#) &&
+                    logText.contains(#""turnId":"turn-smoke""#) &&
+                    logText.contains(#""turnCompletedAfterInterrupt":true"#)
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "wasRunningBeforeInterrupt": wasRunningBeforeInterrupt,
+                    "isRunning": store.isRunning,
+                    "activeGoalCleared": store.selectedThread.activeGoal == nil,
+                    "runtimeStatus": store.runtimeCatalogStatusText,
+                    "requestLogPreview": String(logText.prefix(2200))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -11343,6 +11429,84 @@ enum SmokeTestRunner {
                     }
                 })
                 send_dynamic_tool_request()
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeInterruptAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_INTERRUPT_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-smoke",
+                        "sessionId": "session-smoke",
+                        "preview": "Interrupt smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-smoke", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-smoke",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+            elif method == "turn/interrupt":
+                params = request.get("params") or {}
+                log({"turnInterrupt": params})
+                send_result(request_id, {"status": "interrupted"})
+                send_notification("turn/completed", {
+                    "turn": {"id": params.get("turnId", "turn-smoke"), "status": "interrupted"}
+                })
+                log({"turnCompletedAfterInterrupt": True})
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
