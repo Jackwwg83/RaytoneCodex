@@ -68,6 +68,8 @@ enum SmokeTestRunner {
             runWorkspaceSwitchSmoke()
         } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
             runRemoteControlSmoke()
+        } else if CommandLine.arguments.contains("--remote-control-mode-smoke-test") {
+            runRemoteControlModeSmoke()
         } else if CommandLine.arguments.contains("--remote-control-revoke-smoke-test") {
             runRemoteControlRevokeSmoke()
         } else if CommandLine.arguments.contains("--realtime-voices-smoke-test") {
@@ -5625,6 +5627,113 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runRemoteControlModeSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexRemoteModeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let logURL = workspaceURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = workspaceURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeRemoteControlAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-remote-control-mode"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_REMOTE_REVOKE_LOG": logURL.path
+                ]
+
+                store.chooseWorkspaceExecutionMode(.cloudPending)
+                let cloudDeadline = Date().addingTimeInterval(8)
+                while Date() < cloudDeadline &&
+                    (store.runtimeCatalogIsRefreshing || store.runtimeRemoteControlPairing == nil) {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let cloudStatus = store.runtimeCatalogStatusText
+                let cloudMode = store.workspaceExecutionMode.title
+                let pairing = store.runtimeRemoteControlPairing
+                let claimed = store.runtimeRemoteControlPairingClaimed
+
+                store.chooseWorkspaceExecutionMode(.local)
+                let localDeadline = Date().addingTimeInterval(8)
+                while Date() < localDeadline &&
+                    (store.runtimeCatalogIsRefreshing || store.runtimeRemoteControlStatus?.status != "disabled") {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let localStatus = store.runtimeCatalogStatusText
+                let localMode = store.workspaceExecutionMode.title
+                let disabledStatus = store.runtimeRemoteControlStatus
+
+                await store.stopAppServerForTesting()
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                func logContains(_ method: String) -> Bool {
+                    logText.contains(#""method": "\#(method)""#) ||
+                        logText.contains(#""method":"\#(method)""#)
+                }
+
+                let ok = cloudMode == WorkspaceExecutionMode.cloudPending.title &&
+                    localMode == WorkspaceExecutionMode.local.title &&
+                    pairing?.pairingCode == "PAIR-SMOKE" &&
+                    pairing?.manualPairingCode == "MANUAL-SMOKE" &&
+                    pairing?.environmentID == "env-smoke" &&
+                    claimed == false &&
+                    disabledStatus?.status == "disabled" &&
+                    logContains("remoteControl/enable") &&
+                    logContains("remoteControl/pairing/start") &&
+                    logContains("remoteControl/pairing/status") &&
+                    logContains("remoteControl/disable")
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "cloud": [
+                        "workspaceExecutionMode": cloudMode,
+                        "status": cloudStatus,
+                        "pairingCode": pairing?.pairingCode ?? "",
+                        "manualPairingCode": pairing?.manualPairingCode ?? "",
+                        "environmentID": pairing?.environmentID ?? "",
+                        "claimed": claimed ?? false,
+                        "claimedWasReturned": claimed != nil
+                    ] as [String: Any],
+                    "local": [
+                        "workspaceExecutionMode": localMode,
+                        "status": localStatus,
+                        "remoteControl": remoteControlPayload(disabledStatus)
+                    ] as [String: Any],
+                    "methodEvidence": [
+                        "remoteControl/enable": logContains("remoteControl/enable"),
+                        "remoteControl/pairing/start": logContains("remoteControl/pairing/start"),
+                        "remoteControl/pairing/status": logContains("remoteControl/pairing/status"),
+                        "remoteControl/disable": logContains("remoteControl/disable")
+                    ] as [String: Any],
+                    "requestLogPreview": String(logText.prefix(1800))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runRemoteControlRevokeSmoke() {
         Task {
             let fileManager = FileManager.default
@@ -6328,6 +6437,7 @@ enum SmokeTestRunner {
         import sys
 
         log_path = os.environ.get("RAYTONE_REMOTE_REVOKE_LOG")
+        status = "connected"
         clients = [
             {
                 "clientId": "client-smoke",
@@ -6383,11 +6493,37 @@ enum SmokeTestRunner {
                 send_result(request_id, {})
             elif method == "remoteControl/status/read":
                 send_result(request_id, {
-                    "status": "connected",
+                    "status": status,
+                    "serverName": "raytone-fake-remote",
+                    "installationId": "install-smoke",
+                    "environmentId": "env-smoke" if status != "disabled" else None,
+                })
+            elif method == "remoteControl/enable":
+                status = "connected"
+                send_result(request_id, {
+                    "status": status,
                     "serverName": "raytone-fake-remote",
                     "installationId": "install-smoke",
                     "environmentId": "env-smoke",
                 })
+            elif method == "remoteControl/disable":
+                status = "disabled"
+                send_result(request_id, {
+                    "status": status,
+                    "serverName": "raytone-fake-remote",
+                    "installationId": "install-smoke",
+                    "environmentId": None,
+                })
+            elif method == "remoteControl/pairing/start":
+                status = "connected"
+                send_result(request_id, {
+                    "pairingCode": "PAIR-SMOKE",
+                    "manualPairingCode": "MANUAL-SMOKE" if params.get("manualCode") else None,
+                    "environmentId": "env-smoke",
+                    "expiresAt": 1783303700,
+                })
+            elif method == "remoteControl/pairing/status":
+                send_result(request_id, {"claimed": False})
             elif method == "remoteControl/client/list":
                 send_result(request_id, {"data": clients, "nextCursor": None})
             elif method == "remoteControl/client/revoke":

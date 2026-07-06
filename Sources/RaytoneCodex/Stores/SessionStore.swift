@@ -3677,7 +3677,7 @@ final class SessionStore: ObservableObject {
         case .cloudPending:
             route = .settings
             settingsPane = .connections
-            Task { await enableRemoteControlMode() }
+            Task { await startRemoteControlPairing(manualCode: true) }
         }
     }
 
