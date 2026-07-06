@@ -7320,6 +7320,7 @@ enum SmokeTestRunner {
                 let matchingRun = commandRuns.first { run in
                     run.command.contains(marker) || run.output.contains(marker)
                 }
+                await store.cleanThreadBackgroundTerminals()
                 let sourceFacts = store.environmentSourceFacts.map { fact in
                     [
                         "title": fact.title,
@@ -7331,6 +7332,10 @@ enum SmokeTestRunner {
                 let threadShellSourceFactActive = store.environmentSourceFacts.contains { fact in
                     fact.source == "thread/shellCommand" && fact.active
                 }
+                let backgroundTerminalCleanSourceFactActive = store.environmentSourceFacts.contains { fact in
+                    fact.source == "thread/backgroundTerminals/clean" && fact.active
+                }
+                let backgroundTerminalCleanStatus = store.backgroundTerminalCleanStatusText
 
                 await store.stopAppServerForTesting()
                 mockServer?.stop()
@@ -7340,7 +7345,9 @@ enum SmokeTestRunner {
                     matchingRun?.output.contains(marker) == true &&
                     matchingRun?.exitCode == 0 &&
                     store.threadShellCommandStatusText.hasPrefix("thread/shellCommand") &&
+                    backgroundTerminalCleanStatus.hasPrefix("thread/backgroundTerminals/clean") &&
                     threadShellSourceFactActive &&
+                    backgroundTerminalCleanSourceFactActive &&
                     store.terminalRuns.isEmpty
 
                 emitJSON([
@@ -7352,7 +7359,9 @@ enum SmokeTestRunner {
                     "codexHomePath": codexHomeURL.path,
                     "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
                     "threadShellStatus": store.threadShellCommandStatusText,
+                    "backgroundTerminalCleanStatus": backgroundTerminalCleanStatus,
                     "threadShellSourceFactActive": threadShellSourceFactActive,
+                    "backgroundTerminalCleanSourceFactActive": backgroundTerminalCleanSourceFactActive,
                     "terminalRunCount": store.terminalRuns.count,
                     "commandRuns": commandRuns.map { run in
                         [
@@ -7362,7 +7371,7 @@ enum SmokeTestRunner {
                         ] as [String: Any]
                     },
                     "environmentSourceFacts": sourceFacts,
-                    "source": "thread/shellCommand"
+                    "source": "thread/shellCommand + thread/backgroundTerminals/clean"
                 ])
                 exit(ok ? 0 : 1)
             } catch {

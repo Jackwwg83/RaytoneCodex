@@ -308,6 +308,7 @@ extension SessionStore {
             : "\(loadedRuntimeThreadIDs.count) 个 · \(selectedThreadLoaded ? "当前线程已加载" : "当前线程未加载")"
         let threadMetadataActive = runtimeThreadMetadataStatusText.hasPrefix("thread/metadata/update")
         let threadShellActive = threadShellCommandStatusText.hasPrefix("thread/shellCommand")
+        let backgroundTerminalCleanActive = backgroundTerminalCleanStatusText.hasPrefix("thread/backgroundTerminals/clean")
         let sideChatRuntimeActive = sideChatStatusText.hasPrefix("thread/inject_items") ||
             sideChatStatusText.hasPrefix("正在通过 thread/inject_items") ||
             sideChatStatusText.hasPrefix("正在通过 turn/") ||
@@ -346,6 +347,13 @@ extension SessionStore {
                 detail: threadShellCommandStatusText,
                 source: "thread/shellCommand",
                 active: threadShellActive
+            ),
+            EnvironmentSourceFact(
+                symbol: "eraser",
+                title: "后台终端",
+                detail: backgroundTerminalCleanStatusText,
+                source: "thread/backgroundTerminals/clean",
+                active: backgroundTerminalCleanActive
             ),
             EnvironmentSourceFact(
                 symbol: "plus.bubble",

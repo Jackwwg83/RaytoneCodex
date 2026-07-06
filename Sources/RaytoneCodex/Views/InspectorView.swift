@@ -419,6 +419,14 @@ private struct TerminalToolPanel: View {
                 .help("返回工具")
             } trailing: {
                 Button {
+                    Task { await store.cleanThreadBackgroundTerminals() }
+                } label: {
+                    Image(systemName: "eraser")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("清理 Codex 后台终端")
+                Button {
                     withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
                 } label: {
                     Image(systemName: "sidebar.trailing")
@@ -473,6 +481,10 @@ private struct TerminalToolPanel: View {
 
                 TerminalSizeControls(store: store)
                 Text(store.threadShellCommandStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                Text(store.backgroundTerminalCleanStatusText)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
@@ -557,6 +569,15 @@ struct BottomTerminalToolPanel: View {
                 .help("移到右侧")
 
                 Button {
+                    Task { await store.cleanThreadBackgroundTerminals() }
+                } label: {
+                    Image(systemName: "eraser")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("清理 Codex 后台终端")
+
+                Button {
                     withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
                 } label: {
                     Image(systemName: "xmark")
@@ -609,6 +630,10 @@ struct BottomTerminalToolPanel: View {
                 }
                 TerminalSizeControls(store: store)
                 Text(store.threadShellCommandStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                Text(store.backgroundTerminalCleanStatusText)
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)

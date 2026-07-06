@@ -3049,6 +3049,12 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func cleanThreadBackgroundTerminals(threadID: String) async throws {
+        _ = try await request(method: "thread/backgroundTerminals/clean", params: .object([
+            "threadId": .string(threadID)
+        ]))
+    }
+
     public func approveGuardianDeniedAction(threadID: String, event: JSONValue) async throws {
         _ = try await request(method: "thread/approveGuardianDeniedAction", params: .object([
             "threadId": .string(threadID),

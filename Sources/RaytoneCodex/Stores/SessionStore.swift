@@ -59,6 +59,7 @@ final class SessionStore: ObservableObject {
     @Published var terminalIsRunning = false
     @Published var terminalResizeStatusText = "30×100"
     @Published var threadShellCommandStatusText = "未发送"
+    @Published var backgroundTerminalCleanStatusText = "未清理"
     @Published var sideChatDraft = ""
     @Published var sideChatStatusText = "未发送"
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
@@ -2792,6 +2793,28 @@ final class SessionStore: ObservableObject {
                 thread.items.append(TranscriptItem(kind: .notice(Notice(
                     level: .warning,
                     text: threadShellCommandStatusText
+                ))))
+            }
+        }
+    }
+
+    func cleanThreadBackgroundTerminals() async {
+        backgroundTerminalCleanStatusText = "正在调用 thread/backgroundTerminals/clean…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
+            try await client.cleanThreadBackgroundTerminals(threadID: threadID)
+            backgroundTerminalCleanStatusText = "thread/backgroundTerminals/clean：已清理"
+            runtimeCatalogStatusText = backgroundTerminalCleanStatusText
+            runtimeCatalogErrors = []
+        } catch {
+            backgroundTerminalCleanStatusText = "thread/backgroundTerminals/clean 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = backgroundTerminalCleanStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: backgroundTerminalCleanStatusText
                 ))))
             }
         }
