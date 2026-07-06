@@ -109,6 +109,8 @@ enum SmokeTestRunner {
             runIntegrationPagesSmoke()
         } else if CommandLine.arguments.contains("--home-connection-actions-smoke-test") {
             runHomeConnectionActionsSmoke()
+        } else if CommandLine.arguments.contains("--home-connection-app-mention-smoke-test") {
+            runHomeConnectionAppMentionSmoke()
         } else if CommandLine.arguments.contains("--app-mention-config-smoke-test") {
             runAppMentionConfigSmoke()
         } else if CommandLine.arguments.contains("--app-mention-turn-smoke-test") {
@@ -9567,6 +9569,8 @@ enum SmokeTestRunner {
 
             fputs("home-connection-actions-smoke: open messaging card\n", stderr)
             let messagingOK = await store.openHomeConnection(.messaging)
+            let messagingPrompt = store.prompt
+            let messagingMentions = store.lastMentionInputPreview
             let messagingPayload: [String: Any] = [
                 "ok": messagingOK,
                 "route": "\(store.route)",
@@ -9574,11 +9578,15 @@ enum SmokeTestRunner {
                 "status": store.homeConnectionStatusText,
                 "runtimeCatalogStatus": store.runtimeCatalogStatusText,
                 "count": store.messagingConnectionCount,
-                "names": store.messagingConnectionNames
+                "names": store.messagingConnectionNames,
+                "prompt": messagingPrompt,
+                "mentions": messagingMentions
             ]
 
             fputs("home-connection-actions-smoke: open email card\n", stderr)
             let emailOK = await store.openHomeConnection(.email)
+            let emailPrompt = store.prompt
+            let emailMentions = store.lastMentionInputPreview
             let emailPayload: [String: Any] = [
                 "ok": emailOK,
                 "route": "\(store.route)",
@@ -9586,9 +9594,25 @@ enum SmokeTestRunner {
                 "status": store.homeConnectionStatusText,
                 "runtimeCatalogStatus": store.runtimeCatalogStatusText,
                 "count": store.emailConnectionCount,
-                "names": store.emailConnectionNames
+                "names": store.emailConnectionNames,
+                "prompt": emailPrompt,
+                "mentions": emailMentions
             ]
 
+            let messagingHasApp = (messagingPayload["count"] as? Int ?? 0) > 0
+            let messagingRouteOK = messagingHasApp
+                ? (messagingPayload["route"] as? String) == "thread" &&
+                    !messagingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    !messagingMentions.isEmpty
+                : (messagingPayload["route"] as? String) == "settings" &&
+                    (messagingPayload["settingsPane"] as? String) == "connections"
+            let emailHasApp = (emailPayload["count"] as? Int ?? 0) > 0
+            let emailRouteOK = emailHasApp
+                ? (emailPayload["route"] as? String) == "thread" &&
+                    !emailPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    !emailMentions.isEmpty
+                : (emailPayload["route"] as? String) == "settings" &&
+                    (emailPayload["settingsPane"] as? String) == "connections"
             let ok = store.runtimeSnapshot.executable != nil &&
                 filesOK &&
                 messagingOK &&
@@ -9598,10 +9622,8 @@ enum SmokeTestRunner {
                 (filesPayload["fileCount"] as? Int ?? 0) > 0 &&
                 (filesPayload["route"] as? String) == "thread" &&
                 (filesPayload["toolPanel"] as? String) == "files" &&
-                (messagingPayload["route"] as? String) == "settings" &&
-                (messagingPayload["settingsPane"] as? String) == "connections" &&
-                (emailPayload["route"] as? String) == "settings" &&
-                (emailPayload["settingsPane"] as? String) == "connections"
+                messagingRouteOK &&
+                emailRouteOK
 
             emitJSON([
                 "ok": ok,
@@ -9614,11 +9636,114 @@ enum SmokeTestRunner {
                 "appCount": store.runtimeApps.count,
                 "mcpServerCount": store.runtimeMCPServers.count,
                 "runtimeErrors": store.runtimeCatalogErrors,
+                "messagingRouteOK": messagingRouteOK,
+                "emailRouteOK": emailRouteOK,
                 "files": filesPayload,
                 "messaging": messagingPayload,
                 "email": emailPayload
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runHomeConnectionAppMentionSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexHomeConnectionAppMentionSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "hello from home connection app mention smoke\n"
+                    .write(to: workspaceURL.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+                try fakeHomeConnectionAppMentionAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-home-connection-app-mention"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_HOME_CONNECTION_APP_MENTION_LOG": logURL.path
+                ]
+
+                fputs("home-connection-app-mention-smoke: refresh hero runtime\n", stderr)
+                await store.refreshNewThreadHeroRuntime()
+                let refreshedAppCount = store.runtimeApps.count
+                let refreshedFileCount = store.workspaceFileConnectionCount
+
+                fputs("home-connection-app-mention-smoke: open messaging card\n", stderr)
+                let messagingOK = await store.openHomeConnection(.messaging)
+                let messagingPrompt = store.prompt
+                let messagingMentions = store.lastMentionInputPreview
+                let messagingStatus = store.homeConnectionStatusText
+
+                fputs("home-connection-app-mention-smoke: open email card\n", stderr)
+                let emailOK = await store.openHomeConnection(.email)
+                let emailPrompt = store.prompt
+                let emailMentions = store.lastMentionInputPreview
+                let emailStatus = store.homeConnectionStatusText
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let appListCount = logText.components(separatedBy: #""method":"app/list""#).count - 1
+                let requestObserved = appListCount >= 3 &&
+                    logText.contains(#""method":"mcpServerStatus/list""#) &&
+                    logText.contains(#""method":"fs/readDirectory""#)
+                let messagingMentionOK = messagingPrompt.contains("$slack") &&
+                    messagingMentions.contains { $0["path"] == "app://raytone.slack" }
+                let emailMentionOK = emailPrompt.contains("$gmail") &&
+                    emailMentions.contains { $0["path"] == "app://raytone.gmail" }
+                let ok = messagingOK &&
+                    emailOK &&
+                    refreshedAppCount == 2 &&
+                    refreshedFileCount > 0 &&
+                    requestObserved &&
+                    messagingMentionOK &&
+                    emailMentionOK &&
+                    store.route == .thread
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "appCount": refreshedAppCount,
+                    "fileCount": refreshedFileCount,
+                    "requestObserved": requestObserved,
+                    "appListRequestCount": appListCount,
+                    "messagingOK": messagingOK,
+                    "messagingMentionOK": messagingMentionOK,
+                    "messagingPrompt": messagingPrompt,
+                    "messagingMentions": messagingMentions,
+                    "messagingStatus": messagingStatus,
+                    "emailOK": emailOK,
+                    "emailMentionOK": emailMentionOK,
+                    "emailPrompt": emailPrompt,
+                    "emailMentions": emailMentions,
+                    "emailStatus": emailStatus,
+                    "route": "\(store.route)",
+                    "source": "home connection cards + app/list + previewInputMentions app:// mentions",
+                    "requestLogPreview": String(logText.prefix(2400))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
@@ -14124,6 +14249,146 @@ enum SmokeTestRunner {
                 send_auth_refresh_request()
             else:
                 send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeHomeConnectionAppMentionAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_HOME_CONNECTION_APP_MENTION_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({"id": request_id, "error": {"code": -32602, "message": message}})
+
+        def app_payload(app_id, name, description, category, install_url):
+            return {
+                "id": app_id,
+                "name": name,
+                "description": description,
+                "logoUrl": None,
+                "logoUrlDark": None,
+                "distributionChannel": None,
+                "branding": {
+                    "category": category,
+                    "developer": "Raytone",
+                    "website": "https://example.com/raytone",
+                    "privacyPolicy": None,
+                    "termsOfService": None,
+                    "isDiscoverableApp": True,
+                },
+                "appMetadata": {
+                    "review": {"status": "approved"},
+                    "categories": [category],
+                    "subCategories": [],
+                    "seoDescription": description,
+                    "screenshots": [],
+                    "developer": "Raytone",
+                    "version": "1.0.0",
+                },
+                "labels": {"source": "home-connection-app-mention-smoke"},
+                "installUrl": install_url,
+                "isAccessible": True,
+                "isEnabled": True,
+                "pluginDisplayNames": [name],
+            }
+
+        def apps():
+            return [
+                app_payload(
+                    "raytone.slack",
+                    "Slack",
+                    "消息传送 app，用于验证主页连接卡片可以直接变成 app mention。",
+                    "消息",
+                    "https://chatgpt.com/apps/raytone/slack",
+                ),
+                app_payload(
+                    "raytone.gmail",
+                    "Gmail",
+                    "电子邮件 app，用于验证主页连接卡片可以直接变成 app mention。",
+                    "电子邮件",
+                    "https://chatgpt.com/apps/raytone/gmail",
+                ),
+            ]
+
+        def config_requirements():
+            return {
+                "requirements": {
+                    "defaultPermissions": ":workspace",
+                    "allowAppshots": True,
+                    "allowedApprovalPolicies": ["on-request", "never"],
+                    "allowedSandboxModes": ["read-only", "workspace-write", "danger-full-access"],
+                    "allowedWebSearchModes": ["enabled", "disabled"],
+                    "allowedWindowsSandboxImplementations": ["unelevated"],
+                    "allowedPermissionProfiles": {
+                        ":read-only": True,
+                        ":workspace": True,
+                        ":danger-full-access": True,
+                    },
+                    "featureRequirements": {"browser": True},
+                    "computerUse": {"allowLockedComputerUse": False},
+                    "network": {"enabled": True},
+                    "hooks": {},
+                }
+            }
+
+        def result_for(method, params):
+            if method == "initialize":
+                return {}
+            if method == "configRequirements/read":
+                return config_requirements()
+            if method == "app/list":
+                return {"data": apps(), "nextCursor": None}
+            if method == "remoteControl/status/read":
+                return {"status": "disabled", "serverName": "fake", "installationId": "fake-installation", "environmentId": None}
+            if method == "permissionProfile/list":
+                return {"data": [{"id": ":workspace", "description": "工作区写入"}], "nextCursor": None}
+            if method == "windowsSandbox/readiness":
+                return {"status": "unsupported"}
+            if method in ("plugin/list", "plugin/installed"):
+                return {"marketplaces": [], "featuredPluginIds": [], "marketplaceLoadErrors": []}
+            if method == "mcpServerStatus/list":
+                return {"data": [], "nextCursor": None}
+            if method == "fs/readDirectory":
+                return {"entries": [{"fileName": "README.md", "isDirectory": False, "isFile": True}]}
+            if method == "fs/watch":
+                return {"path": params.get("path") or cwd, "watchId": params.get("watchId") or "watch"}
+            if method == "command/exec":
+                return {"stdout": "CURRENT:main\nmain\n", "stderr": "", "exitCode": 0}
+            raise KeyError(method)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            try:
+                send_result(request_id, result_for(method, params))
+            except Exception as error:
+                send_error(request_id, f"unsupported method {method}: {error}")
         """#
     }
 

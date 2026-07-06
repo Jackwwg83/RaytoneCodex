@@ -22,6 +22,42 @@ enum HomeConnectionKind: String, CaseIterable {
         case .files: "未发现工作区文件"
         }
     }
+
+    var matchTokens: [String] {
+        switch self {
+        case .messaging:
+            [
+                "slack",
+                "dingtalk",
+                "ding talk",
+                "microsoft teams",
+                "discord",
+                "telegram",
+                "whatsapp",
+                "wechat",
+                "飞书",
+                "lark"
+            ]
+        case .email:
+            [
+                "gmail",
+                "email",
+                "mail",
+                "outlook",
+                "imap"
+            ]
+        case .files:
+            [
+                "drive",
+                "file",
+                "files",
+                "folder",
+                "documents",
+                "文档",
+                "文件"
+            ]
+        }
+    }
 }
 
 /// Additive UI affordances layered on top of the core `SessionStore`: per-project
@@ -527,18 +563,7 @@ extension SessionStore {
     }
 
     var messagingConnectionNames: [String] {
-        connectedIntegrationNames(matching: [
-            "slack",
-            "dingtalk",
-            "ding talk",
-            "microsoft teams",
-            "discord",
-            "telegram",
-            "whatsapp",
-            "wechat",
-            "飞书",
-            "lark"
-        ])
+        connectedIntegrationNames(matching: HomeConnectionKind.messaging.matchTokens)
     }
 
     var emailConnectionCount: Int {
@@ -546,13 +571,7 @@ extension SessionStore {
     }
 
     var emailConnectionNames: [String] {
-        connectedIntegrationNames(matching: [
-            "gmail",
-            "email",
-            "mail",
-            "outlook",
-            "imap"
-        ])
+        connectedIntegrationNames(matching: HomeConnectionKind.email.matchTokens)
     }
 
     var workspaceFileConnectionCount: Int {
@@ -676,6 +695,12 @@ extension SessionStore {
             let names = kind == .messaging ? messagingConnectionNames : emailConnectionNames
             let connectionText = names.isEmpty ? kind.emptyText : names.joined(separator: "、")
             let ok = !runtimeCatalogStatusText.hasPrefix("集成状态读取失败")
+            if ok, let app = preferredRuntimeApp(matching: kind.matchTokens) {
+                let inserted = await useRuntimeAppInComposer(app)
+                let actionText = inserted ? "已放入输入框" : "mention 解析失败"
+                homeConnectionStatusText = "\(kind.title)：app/list \(runtimeApps.count) 个 · \(app.name) \(actionText) · \(connectionText)"
+                return inserted
+            }
             homeConnectionStatusText = "\(kind.title)：app/list \(runtimeApps.count) 个 · MCP \(runtimeMCPServers.count) 个 · \(connectionText)"
             return ok
 
@@ -969,13 +994,34 @@ extension SessionStore {
                 app.name,
                 app.description ?? "",
                 app.category ?? "",
-                app.developer ?? ""
+                app.developer ?? "",
+                app.pluginDisplayNames.joined(separator: " ")
             ]
                 .joined(separator: " ")
                 .lowercased()
             return normalizedTokens.contains { haystack.contains($0) } ? app.name : nil
         }
         return Array(Set(connectedMCPServers + connectedApps)).sorted()
+    }
+
+    private func preferredRuntimeApp(matching tokens: [String]) -> CodexRuntimeAppInfo? {
+        let normalizedTokens = tokens.map { $0.lowercased() }
+        return runtimeApps.first { app in
+            guard app.isEnabled, app.isAccessible else {
+                return false
+            }
+            let haystack = [
+                app.id,
+                app.name,
+                app.description ?? "",
+                app.category ?? "",
+                app.developer ?? "",
+                app.pluginDisplayNames.joined(separator: " ")
+            ]
+                .joined(separator: " ")
+                .lowercased()
+            return normalizedTokens.contains { haystack.contains($0) }
+        }
     }
 
     private var chronicleSkill: CodexRuntimeSkill? {
