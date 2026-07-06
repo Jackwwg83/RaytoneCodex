@@ -58,6 +58,11 @@ extension SessionStore {
            threads[index].items.isEmpty,
            threads[index].appServerThreadID == nil {
             threads[index].projectID = projectID
+            threads[index].model = model
+            threads[index].sandbox = sandbox
+            threads[index].approval = approval
+            threads[index].approvalsReviewer = approvalsReviewer
+            threads[index].personality = personality
             threads[index].updatedAt = Date()
             selectedThreadID = threads[index].id
             workspacePath = project.path

@@ -5519,12 +5519,27 @@ enum SmokeTestRunner {
                 .appendingPathComponent("RaytoneCodexNewThreadPermissionsSmoke-\(UUID().uuidString)", isDirectory: true)
             let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
             let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let switchFirstURL = rootURL.appendingPathComponent("switch-first", isDirectory: true)
+            let switchSecondURL = rootURL.appendingPathComponent("switch-second", isDirectory: true)
+            let switchLogURL = rootURL.appendingPathComponent("switch-requests.jsonl")
             let scriptURL = rootURL.appendingPathComponent("fake-codex")
 
             do {
                 try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: switchFirstURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: switchSecondURL, withIntermediateDirectories: true)
                 try "# New thread permissions smoke\n".write(
                     to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try "first\n".write(
+                    to: switchFirstURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try "second\n".write(
+                    to: switchSecondURL.appendingPathComponent("README.md"),
                     atomically: true,
                     encoding: .utf8
                 )
@@ -5558,7 +5573,7 @@ enum SmokeTestRunner {
                 await waitForStoreToSettle(store)
 
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                let ok = inheritedSandbox == .readOnly &&
+                let directNewThreadOK = inheritedSandbox == .readOnly &&
                     inheritedApproval == .never &&
                     inheritedReviewer == .user &&
                     store.selectedThread.appServerThreadID == "thread-bootstrap-1" &&
@@ -5570,18 +5585,90 @@ enum SmokeTestRunner {
                     logText.contains(#""method":"thread/compact/start""#)
 
                 await store.stopAppServerForTesting()
+
+                let switchStore = SessionStore()
+                let firstProject = Project(name: "第一个项目", path: switchFirstURL.path)
+                let secondProject = Project(name: "第二个项目", path: switchSecondURL.path)
+                switchStore.projects = [firstProject, secondProject]
+                switchStore.threads = [
+                    ChatThread(
+                        title: "新对话",
+                        projectID: firstProject.id,
+                        items: [],
+                        model: "stale-model",
+                        sandbox: .dangerFullAccess,
+                        approval: .onRequest,
+                        approvalsReviewer: .autoReview,
+                        personality: .pragmatic
+                    )
+                ]
+                switchStore.selectedThreadID = switchStore.threads[0].id
+                switchStore.workspacePath = firstProject.path
+                switchStore.filePanelPath = firstProject.path
+                switchStore.model = "raytone-current-model"
+                switchStore.sandbox = .readOnly
+                switchStore.approval = .never
+                switchStore.approvalsReviewer = .user
+                switchStore.personality = .friendly
+                switchStore.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-new-thread-permissions"
+                )
+                switchStore.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_THREAD_BOOTSTRAP_ACTIONS_LOG": switchLogURL.path
+                ]
+
+                switchStore.selectProjectForNewThread(secondProject.id)
+                let reusedThread = switchStore.selectedThread
+                let reusedThreadOK = reusedThread.projectID == secondProject.id &&
+                    reusedThread.model == "raytone-current-model" &&
+                    reusedThread.sandbox == .readOnly &&
+                    reusedThread.approval == .never &&
+                    reusedThread.approvalsReviewer == .user &&
+                    reusedThread.personality == .friendly &&
+                    switchStore.workspacePath == secondProject.path &&
+                    switchStore.filePanelPath == secondProject.path
+
+                await switchStore.startSelectedThreadCompaction()
+                await waitForStoreToSettle(switchStore)
+
+                let switchLogText = (try? String(contentsOf: switchLogURL, encoding: .utf8)) ?? ""
+                let reusedRuntimeOK = switchStore.selectedThread.appServerThreadID == "thread-bootstrap-1" &&
+                    switchStore.runtimeThreadSyncStatusText.hasPrefix("thread/compact/start") &&
+                    switchLogText.contains(#""method":"thread/start""#) &&
+                    switchLogText.contains(#""cwd":"\#(secondProject.path)""#) &&
+                    switchLogText.contains(#""model":"raytone-current-model""#) &&
+                    switchLogText.contains(#""sandbox":"read-only""#) &&
+                    switchLogText.contains(#""approvalPolicy":"never""#) &&
+                    switchLogText.contains(#""approvalsReviewer":"user""#) &&
+                    switchLogText.contains(#""personality":"friendly""#)
+
+                await switchStore.stopAppServerForTesting()
+                let ok = directNewThreadOK && reusedThreadOK && reusedRuntimeOK
                 emitJSON([
                     "ok": ok,
                     "workspacePath": workspaceURL.path,
                     "fakeExecutable": scriptURL.path,
                     "requestLog": logURL.path,
+                    "projectSwitchRequestLog": switchLogURL.path,
+                    "directNewThreadOK": directNewThreadOK,
+                    "reusedThreadOK": reusedThreadOK,
+                    "reusedRuntimeOK": reusedRuntimeOK,
                     "inheritedSandbox": inheritedSandbox.rawValue,
                     "inheritedApproval": inheritedApproval.rawValue,
                     "inheritedApprovalsReviewer": inheritedReviewer.rawValue,
                     "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
+                    "reusedThreadModel": reusedThread.model,
+                    "reusedThreadSandbox": reusedThread.sandbox.rawValue,
+                    "reusedThreadApproval": reusedThread.approval.rawValue,
+                    "reusedThreadApprovalsReviewer": reusedThread.approvalsReviewer.rawValue,
+                    "reusedThreadPersonality": reusedThread.personality.rawValue,
+                    "reusedThreadWorkspacePath": switchStore.workspacePath,
                     "runtimeThreadSyncStatus": store.runtimeThreadSyncStatusText,
-                    "source": "newThread -> SessionStore sandbox inheritance -> thread/start",
-                    "requestLogPreview": String(logText.prefix(1800))
+                    "projectSwitchRuntimeThreadSyncStatus": switchStore.runtimeThreadSyncStatusText,
+                    "source": "newThread/selectProjectForNewThread -> SessionStore runtime inheritance -> thread/start",
+                    "requestLogPreview": String(logText.prefix(1200)),
+                    "projectSwitchRequestLogPreview": String(switchLogText.prefix(1800))
                 ])
                 try? fileManager.removeItem(at: rootURL)
                 exit(ok ? 0 : 1)
@@ -12409,6 +12496,45 @@ enum SmokeTestRunner {
                 send_result(request_id, {
                     "thread": thread_payload(params.get("threadId", "thread-bootstrap-rollback"), include_turns=True)
                 })
+            elif method == "command/exec":
+                command = " ".join(params.get("command") or [])
+                stdout = ""
+                if "git branch" in command:
+                    stdout = "* main\n  feature/current\n"
+                send_result(request_id, {
+                    "exitCode": 0,
+                    "stdout": stdout,
+                    "stderr": "",
+                    "durationMs": 1,
+                })
+            elif method == "configRequirements/read":
+                send_result(request_id, {"defaultPermissions": {"mode": "custom"}})
+            elif method == "app/list":
+                send_result(request_id, {"apps": []})
+            elif method == "remoteControl/status/read":
+                send_result(request_id, {"enabled": False, "environmentId": None, "publicUrl": None})
+            elif method == "permissionProfile/list":
+                send_result(request_id, {"profiles": []})
+            elif method == "windowsSandbox/readiness":
+                send_result(request_id, {"status": "unsupported"})
+            elif method == "plugin/list":
+                send_result(request_id, {"plugins": [], "marketplaceLoadErrors": []})
+            elif method == "mcpServerStatus/list":
+                send_result(request_id, {"servers": []})
+            elif method == "fs/readDirectory":
+                target = params.get("path") or cwd
+                entries = []
+                try:
+                    for name in os.listdir(target):
+                        item = os.path.join(target, name)
+                        entries.append({
+                            "fileName": name,
+                            "isDirectory": os.path.isdir(item),
+                            "isFile": os.path.isfile(item),
+                        })
+                except OSError:
+                    pass
+                send_result(request_id, {"entries": entries})
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
