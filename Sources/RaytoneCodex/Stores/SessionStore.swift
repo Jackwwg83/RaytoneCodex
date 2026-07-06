@@ -3111,7 +3111,7 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func openBrowserAddress(_ address: String) {
+    func openBrowserAddress(_ address: String) async {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -3119,6 +3119,10 @@ final class SessionStore: ObservableObject {
         if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
             let expanded = (trimmed as NSString).expandingTildeInPath
             url = URL(fileURLWithPath: expanded)
+        } else if trimmed.hasPrefix("./") || trimmed.hasPrefix("../") {
+            url = URL(fileURLWithPath: workspacePath)
+                .appendingPathComponent(trimmed)
+                .standardizedFileURL
         } else if let parsed = URL(string: trimmed), parsed.scheme != nil {
             url = parsed
         } else {
@@ -3126,11 +3130,38 @@ final class SessionStore: ObservableObject {
         }
 
         guard let url else { return }
+        if url.isFileURL {
+            guard await verifyBrowserAddressFileURL(url) else {
+                return
+            }
+        } else {
+            browserDataStatusText = ""
+        }
         browserURL = url
         browserTitle = url.isFileURL ? url.lastPathComponent : (url.host ?? url.absoluteString)
         browserCanGoBack = false
         browserCanGoForward = false
         openToolPanel(.browser)
+    }
+
+    private func verifyBrowserAddressFileURL(_ url: URL) async -> Bool {
+        let fileURL = url.standardizedFileURL
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let metadata = try await client.getMetadata(path: fileURL.path)
+            guard metadata.isFile else {
+                browserDataStatusText = metadata.isDirectory
+                    ? "fs/getMetadata：地址栏目标是目录 · \(Project.abbreviate(fileURL.path))"
+                    : "fs/getMetadata：地址栏目标不是可读取文件 · \(Project.abbreviate(fileURL.path))"
+                return false
+            }
+
+            browserDataStatusText = "fs/getMetadata：已确认地址栏本地文件 · \(Project.abbreviate(fileURL.path))"
+            return true
+        } catch {
+            browserDataStatusText = "fs/getMetadata 读取地址栏本地文件失败：\(error.localizedDescription)"
+            return false
+        }
     }
 
     func prepareBrowserSampleFileForOpening() async -> URL? {

@@ -152,7 +152,7 @@ struct BrowserPanelView: View {
                     .font(Theme.mono(11.5))
                     .foregroundStyle(Theme.textSecondary)
                     .onSubmit {
-                        store.openBrowserAddress(addressDraft)
+                        Task { await store.openBrowserAddress(addressDraft) }
                     }
             }
             .padding(.horizontal, 9)

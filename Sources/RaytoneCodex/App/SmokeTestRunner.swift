@@ -1875,7 +1875,7 @@ enum SmokeTestRunner {
                 store.appServerEnvironmentOverridesForTesting = [
                     "RAYTONE_DYNAMIC_TOOL_LOG": logURL.path
                 ]
-                store.openBrowserAddress(browserHTMLURL.path)
+                await store.openBrowserAddress(browserHTMLURL.path)
                 store.updateBrowserNavigationState(
                     url: browserHTMLURL,
                     title: "Raytone 浏览器动态工具",
@@ -5402,9 +5402,38 @@ enum SmokeTestRunner {
 
     private static func runBrowserNavigationSmoke() {
         Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexBrowserNavigationSmoke-\(UUID().uuidString)", isDirectory: true)
+            let localHTMLURL = workspaceURL.appendingPathComponent("address-bar.html")
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try """
+                <!doctype html>
+                <html>
+                  <head><title>Raytone 地址栏本地文件</title></head>
+                  <body><h1>Raytone address bar</h1></body>
+                </html>
+                """.write(to: localHTMLURL, atomically: true, encoding: .utf8)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "error": "无法准备地址栏本地文件：\(error.localizedDescription)"
+                ])
+                exit(1)
+            }
+
             let store = SessionStore()
+            store.workspacePath = workspaceURL.path
             let firstURL = URL(fileURLWithPath: "/tmp/raytone-browser-one.html")
             let secondURL = URL(fileURLWithPath: "/tmp/raytone-browser-two.html")
+            await store.openBrowserAddress(localHTMLURL.path)
+            let addressBarState: [String: Any] = [
+                "url": store.browserURL?.path ?? "",
+                "title": store.browserTitle,
+                "dataStatus": store.browserDataStatusText,
+                "toolPanel": store.toolPanel == .browser ? "browser" : "other"
+            ]
 
             store.updateBrowserNavigationState(
                 url: firstURL,
@@ -5465,9 +5494,13 @@ enum SmokeTestRunner {
                 afterBackState["canGoForward"] as? Bool == true &&
                 forwardCommand?.action == .forward &&
                 afterForwardState["title"] as? String == "第二页" &&
-                afterForwardState["canGoBack"] as? Bool == true
+                afterForwardState["canGoBack"] as? Bool == true &&
+                addressBarState["url"] as? String == localHTMLURL.path &&
+                addressBarState["title"] as? String == "address-bar.html" &&
+                (addressBarState["dataStatus"] as? String)?.contains("fs/getMetadata：已确认地址栏本地文件") == true
             emitJSON([
                 "ok": ok,
+                "addressBar": addressBarState,
                 "initial": initialState,
                 "afterBack": afterBackState,
                 "afterForward": afterForwardState
@@ -5481,7 +5514,7 @@ enum SmokeTestRunner {
     private static func runBrowserClearDataSmoke() {
         Task { @MainActor in
             let store = SessionStore()
-            store.openBrowserAddress("https://raytone.example/clear-data-smoke")
+            await store.openBrowserAddress("https://raytone.example/clear-data-smoke")
             store.updateBrowserNavigationState(
                 url: URL(string: "https://raytone.example/clear-data-smoke"),
                 title: "Raytone Clear Data Smoke",
