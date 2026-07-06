@@ -980,6 +980,134 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func startSelectedThreadCompaction() async {
+        guard let threadID = selectedThread.appServerThreadID else {
+            runtimeThreadSyncStatusText = "当前对话还没有 app-server threadId"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "当前对话还没有连接到底层 Codex 线程，无法压缩历史。"
+                ))))
+            }
+            return
+        }
+        guard !isRunning else {
+            runtimeThreadSyncStatusText = "当前有运行中的轮次，暂不能压缩"
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeThreadSyncStatusText = "正在调用 thread/compact/start…"
+        runtimeCatalogStatusText = runtimeThreadSyncStatusText
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await retryAfterActiveTurnSettles {
+                try await client.startThreadCompaction(threadID: threadID)
+            }
+            runtimeThreadSyncStatusText = "thread/compact/start：已提交"
+            runtimeCatalogStatusText = runtimeThreadSyncStatusText
+        } catch {
+            runtimeThreadSyncStatusText = "thread/compact/start 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimeThreadSyncStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "压缩历史失败：\(error.localizedDescription)"
+                ))))
+            }
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func rollbackSelectedThreadLastTurn(confirm: Bool = true) async {
+        guard let threadID = selectedThread.appServerThreadID else {
+            runtimeThreadSyncStatusText = "当前对话还没有 app-server threadId"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "当前对话还没有连接到底层 Codex 线程，无法回滚。"
+                ))))
+            }
+            return
+        }
+        guard !isRunning else {
+            runtimeThreadSyncStatusText = "当前有运行中的轮次，暂不能回滚"
+            return
+        }
+        guard !confirm || confirmThreadRollback() else {
+            runtimeThreadSyncStatusText = "thread/rollback：已取消"
+            return
+        }
+
+        let localThreadID = selectedThreadID
+        runtimeCatalogIsRefreshing = true
+        runtimeThreadSyncStatusText = "正在调用 thread/rollback…"
+        runtimeCatalogStatusText = runtimeThreadSyncStatusText
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await retryAfterActiveTurnSettles {
+                try await client.rollbackThread(id: threadID, numTurns: 1)
+            }
+            applyRuntimeThreadRead(result, to: localThreadID)
+            runtimeThreadSyncStatusText = "thread/rollback：已回滚最后 1 轮"
+            runtimeCatalogStatusText = runtimeThreadSyncStatusText
+        } catch {
+            runtimeThreadSyncStatusText = "thread/rollback 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimeThreadSyncStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "回滚最后一轮失败：\(error.localizedDescription)"
+                ))))
+            }
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    private func confirmThreadRollback() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "回滚最后一轮？"
+        alert.informativeText = "这会通过 Codex app-server 调用 thread/rollback，只回滚对话历史，不会还原本地文件改动。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "回滚")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func retryAfterActiveTurnSettles<T>(
+        attempts: Int = 8,
+        operation: () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+        for attempt in 0..<attempts {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+                guard attempt + 1 < attempts, Self.isActiveTurnSettlingError(error) else {
+                    throw error
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        throw lastError ?? CodexAppServerError.invalidResponse("Operation did not complete.")
+    }
+
+    private static func isActiveTurnSettlingError(_ error: Error) -> Bool {
+        let text = error.localizedDescription.lowercased()
+        return text.contains("turn is in progress") ||
+            text.contains("active turn") ||
+            text.contains("while a turn is in progress")
+    }
+
     func pauseActiveGoal() async {
         let shouldUpdateRuntimeGoal = selectedThread.activeGoal?.runtimeBacked == true
         if shouldUpdateRuntimeGoal,

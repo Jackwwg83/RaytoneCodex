@@ -2330,6 +2330,23 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func startThreadCompaction(threadID: String) async throws {
+        _ = try await request(method: "thread/compact/start", params: .object([
+            "threadId": .string(threadID)
+        ]))
+    }
+
+    public func rollbackThread(id threadID: String, numTurns: Int = 1) async throws -> JSONValue {
+        let result = try await request(method: "thread/rollback", params: .object([
+            "threadId": .string(threadID),
+            "numTurns": .number(Double(max(1, numTurns)))
+        ]))
+        guard result["thread"] != nil else {
+            throw CodexAppServerError.invalidResponse("Missing thread/rollback thread.")
+        }
+        return result
+    }
+
     public func setThreadGoal(
         threadID: String,
         objective: String? = nil,

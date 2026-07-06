@@ -3904,7 +3904,10 @@ enum SmokeTestRunner {
             var mockServer: MockResponsesServer?
             do {
                 try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
-                mockServer = try startMockResponsesServer(message: "Raytone thread management smoke OK")
+                mockServer = try startMockResponsesServer(
+                    message: "Raytone thread management smoke OK",
+                    indexedResponses: true
+                )
                 try writeMockCodexConfig(codexHome: codexHome, baseURL: mockServer!.baseURL)
                 let client = CodexAppServerClient(
                     executable: executable,
@@ -3988,9 +3991,16 @@ enum SmokeTestRunner {
         }
 
         await store.refreshRuntime()
-        await store.setActiveGoal(objective: "Raytone store thread management seed")
         let originalLocalID = store.selectedThreadID
-        let originalServerID = store.selectedThread.appServerThreadID ?? ""
+        store.prompt = "请回复：Raytone thread management smoke OK"
+        await store.runPrompt()
+        await waitForStoreToSettle(store)
+        _ = await waitForAgentMessageCount(
+            in: store,
+            containing: "Raytone thread management smoke OK",
+            atLeast: 1
+        )
+        let originalServerID = await waitForThreadServerID(in: store, localThreadID: originalLocalID)
         let renamed = "Raytone store thread \(UUID().uuidString.prefix(8))"
         let renameAccepted = await store.renameSelectedThread(to: renamed)
         await store.refreshRuntimeThreads(searchTerm: renamed, limit: 20)
@@ -4007,17 +4017,62 @@ enum SmokeTestRunner {
         if !forkServerID.isEmpty,
            let fork = store.threads.first(where: { $0.id == forkLocalID }) {
             store.selectThread(fork)
-            await store.setActiveGoal(objective: "Raytone fork archive restore seed")
             store.prompt = "请回复：Raytone thread management smoke OK"
             await store.runPrompt()
             await waitForStoreToSettle(store)
+
+            let firstAgentCount = await waitForAgentMessageCount(
+                in: store,
+                containing: "Raytone thread management smoke OK",
+                atLeast: 1
+            )
+            let rollbackPromptMarker = "Raytone rollback marker \(UUID().uuidString.prefix(8))"
+            store.prompt = "这轮稍后会被回滚：\(rollbackPromptMarker)"
+            await store.runPrompt()
+            await waitForStoreToSettle(store)
+            _ = await waitForAgentMessageCount(
+                in: store,
+                containing: "Raytone thread management smoke OK",
+                atLeast: max(2, firstAgentCount + 1)
+            )
         }
+        let forkPromptPersistedBeforeRollback = store.selectedThread.items.contains { item in
+            if case let .agentMessage(text) = item.kind {
+                return text.contains("Raytone thread management smoke OK")
+            }
+            return false
+        }
+        let rollbackUserMessagesBefore = store.selectedThread.items.compactMap { item -> String? in
+            if case let .userMessage(text) = item.kind { return text }
+            return nil
+        }
+        let rollbackMarker = rollbackUserMessagesBefore.last ?? ""
+        let rollbackItemCountBefore = store.selectedThread.items.count
+        if !forkServerID.isEmpty {
+            await store.rollbackSelectedThreadLastTurn(confirm: false)
+        }
+        let rollbackStatus = store.runtimeThreadSyncStatusText
+        let rollbackItemCountAfter = store.selectedThread.items.count
+        let rollbackRemovedLastTurn = !rollbackMarker.isEmpty &&
+            rollbackUserMessagesBefore.contains(rollbackMarker) &&
+            !store.selectedThread.items.contains { item in
+                if case let .userMessage(text) = item.kind {
+                    return text == rollbackMarker
+                }
+                return false
+            }
         let forkPromptPersisted = store.selectedThread.items.contains { item in
             if case let .agentMessage(text) = item.kind {
                 return text.contains("Raytone thread management smoke OK")
             }
             return false
         }
+        if !forkServerID.isEmpty {
+            await store.startSelectedThreadCompaction()
+            await waitForStoreToSettle(store)
+        }
+        let compactStatus = store.runtimeThreadSyncStatusText
+        let compactSubmitted = compactStatus.hasPrefix("thread/compact/start")
 
         if !forkServerID.isEmpty {
             store.deleteThread(forkLocalID)
@@ -4044,7 +4099,12 @@ enum SmokeTestRunner {
             runtimeRenamed &&
             !forkServerID.isEmpty &&
             forkServerID != originalServerID &&
+            forkPromptPersistedBeforeRollback &&
             forkPromptPersisted &&
+            rollbackStatus.hasPrefix("thread/rollback") &&
+            rollbackItemCountAfter < rollbackItemCountBefore &&
+            rollbackRemovedLastTurn &&
+            compactSubmitted &&
             forkArchived &&
             forkUnarchived &&
             forkRemovedFromArchive &&
@@ -4060,6 +4120,12 @@ enum SmokeTestRunner {
             forkLocalID: forkLocalID.uuidString,
             forkServerID: forkServerID,
             forkPromptPersisted: forkPromptPersisted,
+            rollbackStatus: rollbackStatus,
+            rollbackItemCountBefore: rollbackItemCountBefore,
+            rollbackItemCountAfter: rollbackItemCountAfter,
+            rollbackRemovedLastTurn: rollbackRemovedLastTurn,
+            compactStatus: compactStatus,
+            compactSubmitted: compactSubmitted,
             forkArchived: forkArchived,
             forkUnarchived: forkUnarchived,
             forkRemovedFromArchive: forkRemovedFromArchive,
@@ -4095,6 +4161,34 @@ enum SmokeTestRunner {
         return store.runtimeCatalogStatusText.contains(needle)
     }
 
+    @MainActor
+    private static func waitForAgentMessageCount(
+        in store: SessionStore,
+        containing needle: String,
+        atLeast expectedCount: Int,
+        timeout: TimeInterval = 20
+    ) async -> Int {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let count = agentMessageCount(in: store, containing: needle)
+            if count >= expectedCount {
+                return count
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return agentMessageCount(in: store, containing: needle)
+    }
+
+    @MainActor
+    private static func agentMessageCount(in store: SessionStore, containing needle: String) -> Int {
+        store.selectedThread.items.reduce(0) { count, item in
+            if case let .agentMessage(text) = item.kind, text.contains(needle) {
+                return count + 1
+            }
+            return count
+        }
+    }
+
     private struct StoreThreadManagementSmokeResult: Sendable {
         let ok: Bool
         let originalLocalID: String
@@ -4105,6 +4199,12 @@ enum SmokeTestRunner {
         let forkLocalID: String
         let forkServerID: String
         let forkPromptPersisted: Bool
+        let rollbackStatus: String
+        let rollbackItemCountBefore: Int
+        let rollbackItemCountAfter: Int
+        let rollbackRemovedLastTurn: Bool
+        let compactStatus: String
+        let compactSubmitted: Bool
         let forkArchived: Bool
         let forkUnarchived: Bool
         let forkRemovedFromArchive: Bool
@@ -4124,6 +4224,12 @@ enum SmokeTestRunner {
                     "forkLocalID": forkLocalID,
                     "forkServerID": forkServerID,
                     "forkPromptPersisted": forkPromptPersisted,
+                    "rollbackStatus": rollbackStatus,
+                    "rollbackItemCountBefore": rollbackItemCountBefore,
+                    "rollbackItemCountAfter": rollbackItemCountAfter,
+                    "rollbackRemovedLastTurn": rollbackRemovedLastTurn,
+                    "compactStatus": compactStatus,
+                    "compactSubmitted": compactSubmitted,
                     "forkArchived": forkArchived,
                     "forkUnarchived": forkUnarchived,
                     "forkRemovedFromArchive": forkRemovedFromArchive,
@@ -5980,7 +6086,10 @@ enum SmokeTestRunner {
         }
     }
 
-    private static func startMockResponsesServer(message: String) throws -> MockResponsesServer {
+    private static func startMockResponsesServer(
+        message: String,
+        indexedResponses: Bool = false
+    ) throws -> MockResponsesServer {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory
             .appendingPathComponent("RaytoneCodexMockResponses-\(UUID().uuidString)", isDirectory: true)
@@ -5995,7 +6104,14 @@ enum SmokeTestRunner {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", scriptURL.path, messageURL.path, portURL.path, logURL.path]
+        process.arguments = [
+            "python3",
+            scriptURL.path,
+            messageURL.path,
+            portURL.path,
+            logURL.path,
+            indexedResponses ? "indexed" : "plain"
+        ]
         process.standardOutput = Pipe()
         process.standardError = Pipe()
         try process.run()
@@ -6105,23 +6221,28 @@ enum SmokeTestRunner {
         message = Path(sys.argv[1]).read_text(encoding="utf-8")
         port_file = Path(sys.argv[2])
         log_file = Path(sys.argv[3])
+        response_mode = sys.argv[4] if len(sys.argv) > 4 else "plain"
+        request_index = 0
 
-        def sse_payload():
+        def sse_payload(index):
+            response_id = f"resp-raytone-review-{index}"
+            item_id = f"msg-raytone-review-{index}"
+            output_text = message if response_mode != "indexed" else f"{message} #{index}"
             events = [
-                {"type": "response.created", "response": {"id": "resp-raytone-review"}},
+                {"type": "response.created", "response": {"id": response_id}},
                 {
                     "type": "response.output_item.done",
                     "item": {
                         "type": "message",
                         "role": "assistant",
-                        "id": "msg-raytone-review",
-                        "content": [{"type": "output_text", "text": message}],
+                        "id": item_id,
+                        "content": [{"type": "output_text", "text": output_text}],
                     },
                 },
                 {
                     "type": "response.completed",
                     "response": {
-                        "id": "resp-raytone-review",
+                        "id": response_id,
                         "usage": {
                             "input_tokens": 0,
                             "input_tokens_details": None,
@@ -6140,11 +6261,14 @@ enum SmokeTestRunner {
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
+                global request_index
                 length = int(self.headers.get("content-length") or "0")
                 body = self.rfile.read(length).decode("utf-8", "replace")
+                request_index += 1
+                index = request_index
                 with log_file.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps({"path": self.path, "body": body}) + "\n")
-                payload = sse_payload()
+                    fh.write(json.dumps({"path": self.path, "body": body, "index": index}) + "\n")
+                payload = sse_payload(index)
                 self.send_response(200)
                 self.send_header("content-type", "text/event-stream")
                 self.send_header("cache-control", "no-cache")
