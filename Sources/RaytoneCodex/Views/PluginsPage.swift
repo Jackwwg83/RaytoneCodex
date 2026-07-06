@@ -175,6 +175,18 @@ struct PluginsPage: View {
             }
                 .buttonStyle(ChipButtonStyle())
             Menu {
+                Button("新建本地插件模板") {
+                    selectedTab = .plugins
+                    sourceFilter = "全部来源"
+                    stateFilter = "全部"
+                    Task { await store.createLocalPluginTemplate() }
+                }
+                Button("新建本地技能模板") {
+                    selectedTab = .skills
+                    stateFilter = "全部"
+                    Task { await store.createLocalSkillTemplate() }
+                }
+                Divider()
                 Button("打开插件目录") {
                     store.revealCodexHomeSubfolder("plugins")
                 }

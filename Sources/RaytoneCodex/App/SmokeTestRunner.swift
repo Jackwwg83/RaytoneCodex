@@ -26,6 +26,8 @@ enum SmokeTestRunner {
             runMCPToolSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
+        } else if CommandLine.arguments.contains("--plugin-scaffold-smoke-test") {
+            runPluginScaffoldSmoke()
         } else if CommandLine.arguments.contains("--codex-home-directory-smoke-test") {
             runCodexHomeDirectorySmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
@@ -1338,6 +1340,135 @@ enum SmokeTestRunner {
                             "eventName": hook.eventName
                         ] as [String: Any]
                     } ?? []
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runPluginScaffoldSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexPluginScaffoldSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let pluginName = "raytone-local-plugin"
+            let skillName = "raytone-local-skill"
+            let pluginManifestURL = workspaceURL
+                .appendingPathComponent("plugins/\(pluginName)/.codex-plugin/plugin.json")
+            let marketplaceURL = workspaceURL
+                .appendingPathComponent(".agents/plugins/marketplace.json")
+            let pluginSkillURL = workspaceURL
+                .appendingPathComponent("plugins/\(pluginName)/skills/raytone-project-helper/SKILL.md")
+            let localSkillURL = codexHomeURL
+                .appendingPathComponent("skills/\(skillName)/SKILL.md")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: workspaceURL.appendingPathComponent(".git", isDirectory: true), withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("plugin-scaffold-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("plugin-scaffold-smoke: createLocalPluginTemplate\n", stderr)
+                guard let pluginResult = await store.createLocalPluginTemplate() else {
+                    await store.stopAppServerForTesting()
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHome": codexHomeURL.path,
+                        "status": store.runtimeCatalogStatusText,
+                        "errors": store.runtimeCatalogErrors
+                    ])
+                    exit(1)
+                }
+
+                fputs("plugin-scaffold-smoke: createLocalSkillTemplate\n", stderr)
+                guard let skillResult = await store.createLocalSkillTemplate() else {
+                    await store.stopAppServerForTesting()
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHome": codexHomeURL.path,
+                        "pluginResult": scaffoldPayload(pluginResult),
+                        "status": store.runtimeCatalogStatusText,
+                        "errors": store.runtimeCatalogErrors
+                    ])
+                    exit(1)
+                }
+
+                let marketplaceText = try String(contentsOf: marketplaceURL, encoding: .utf8)
+                let manifestText = try String(contentsOf: pluginManifestURL, encoding: .utf8)
+                let pluginSkillText = try String(contentsOf: pluginSkillURL, encoding: .utf8)
+                let localSkillText = try String(contentsOf: localSkillURL, encoding: .utf8)
+                let pluginDiscovered = store.runtimePlugins.contains {
+                    $0.name == pluginName && $0.marketplaceName == "raytone-local"
+                }
+                let localSkillDiscovered = store.runtimeSkills.contains {
+                    $0.name == skillName || $0.path == localSkillURL.path
+                }
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    marketplaceText.contains(pluginName) &&
+                    manifestText.contains("Raytone 本地插件") &&
+                    pluginSkillText.contains("raytone-project-helper") &&
+                    localSkillText.contains(skillName) &&
+                    pluginResult.readBackSnippets[pluginManifestURL.path]?.contains("Raytone 本地插件") == true &&
+                    skillResult.readBackSnippets[localSkillURL.path]?.contains(skillName) == true &&
+                    pluginDiscovered &&
+                    localSkillDiscovered
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "pluginResult": scaffoldPayload(pluginResult),
+                    "skillResult": scaffoldPayload(skillResult),
+                    "pluginDiscovered": pluginDiscovered,
+                    "localSkillDiscovered": localSkillDiscovered,
+                    "status": store.runtimeCatalogStatusText,
+                    "errors": store.runtimeCatalogErrors,
+                    "artifacts": [
+                        "marketplace": marketplaceURL.path,
+                        "pluginManifest": pluginManifestURL.path,
+                        "pluginSkill": pluginSkillURL.path,
+                        "localSkill": localSkillURL.path
+                    ],
+                    "artifactSnippets": [
+                        "marketplace": String(marketplaceText.prefix(240)),
+                        "pluginManifest": String(manifestText.prefix(240)),
+                        "pluginSkill": String(pluginSkillText.prefix(240)),
+                        "localSkill": String(localSkillText.prefix(240))
+                    ]
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -5728,6 +5859,17 @@ enum SmokeTestRunner {
             "defaultV2": voices?.defaultV2 ?? "",
             "v1Count": voices?.v1.count ?? 0,
             "v2Count": voices?.v2.count ?? 0
+        ]
+    }
+
+    private static func scaffoldPayload(_ result: CodexRuntimeScaffoldResult) -> [String: Any] {
+        [
+            "kind": result.kind,
+            "rootPath": result.rootPath,
+            "files": result.files,
+            "readBackSnippets": result.readBackSnippets,
+            "discoveredPluginID": result.discoveredPluginID ?? "",
+            "discoveredSkillPath": result.discoveredSkillPath ?? ""
         ]
     }
 

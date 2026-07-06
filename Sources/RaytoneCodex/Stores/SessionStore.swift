@@ -5,6 +5,15 @@ import RaytoneCodexCore
 import UniformTypeIdentifiers
 import WebKit
 
+struct CodexRuntimeScaffoldResult: Equatable {
+    var kind: String
+    var rootPath: String
+    var files: [String]
+    var readBackSnippets: [String: String]
+    var discoveredPluginID: String?
+    var discoveredSkillPath: String?
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     enum Route: Equatable {
@@ -3644,6 +3653,152 @@ final class SessionStore: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    @discardableResult
+    func createLocalPluginTemplate() async -> CodexRuntimeScaffoldResult? {
+        let pluginName = "raytone-local-plugin"
+        let skillName = "raytone-project-helper"
+        let marketplaceName = "raytone-local"
+        let workspaceURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
+        let agentsDirectory = workspaceURL.appendingPathComponent(".agents/plugins", isDirectory: true)
+        let marketplaceURL = agentsDirectory.appendingPathComponent("marketplace.json")
+        let pluginRoot = workspaceURL.appendingPathComponent("plugins/\(pluginName)", isDirectory: true)
+        let manifestURL = pluginRoot.appendingPathComponent(".codex-plugin/plugin.json")
+        let skillURL = pluginRoot.appendingPathComponent("skills/\(skillName)/SKILL.md")
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 app-server 创建本地插件模板…"
+        runtimeCatalogErrors = []
+        defer { runtimeCatalogIsRefreshing = false }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(keyPath: "features.plugins", value: .bool(true))
+            try await client.createDirectory(path: agentsDirectory.path)
+            try await client.createDirectory(path: manifestURL.deletingLastPathComponent().path)
+            try await client.createDirectory(path: skillURL.deletingLastPathComponent().path)
+
+            let existingMarketplaceData: Data?
+            if FileManager.default.fileExists(atPath: marketplaceURL.path) {
+                existingMarketplaceData = try await client.readFile(path: marketplaceURL.path)
+            } else {
+                existingMarketplaceData = nil
+            }
+            let marketplaceData = try Self.marketplaceTemplateData(
+                existingData: existingMarketplaceData,
+                marketplaceName: marketplaceName,
+                pluginName: pluginName,
+                pluginRelativePath: "./plugins/\(pluginName)"
+            )
+            let manifestData = try Self.jsonData([
+                "name": pluginName,
+                "description": "RaytoneCodex 创建的本机插件模板",
+                "keywords": ["raytone", "local", "codex"],
+                "interface": [
+                    "displayName": "Raytone 本地插件",
+                    "shortDescription": "项目级插件模板",
+                    "longDescription": "这是 RaytoneCodex 通过 Codex app-server 写入的本地插件模板，可继续添加技能、MCP、钩子和 app。",
+                    "developerName": "Raytone",
+                    "category": "Productivity",
+                    "capabilities": ["Interactive"]
+                ]
+            ])
+            let skillData = Self.utf8Data("""
+            ---
+            name: \(skillName)
+            description: 为当前项目准备 RaytoneCodex 本地插件工作流
+            ---
+
+            # Raytone Project Helper
+
+            当用户在当前项目中提到本地插件、项目规范或最小可运行示例时，先读取仓库上下文，再给出中文、可执行、带证据路径的建议。
+            """)
+
+            try await client.writeFile(path: marketplaceURL.path, data: marketplaceData)
+            try await client.writeFile(path: manifestURL.path, data: manifestData)
+            try await client.writeFile(path: skillURL.path, data: skillData)
+
+            let readBacks = try await Self.readBackSnippets(
+                client: client,
+                paths: [marketplaceURL.path, manifestURL.path, skillURL.path]
+            )
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+            let discoveredPlugin = runtimePlugins.first {
+                $0.name == pluginName && $0.marketplaceName == marketplaceName
+            }
+            let discoveredSkill = runtimeSkills.first {
+                $0.path == skillURL.path || $0.name == "\(pluginName):\(skillName)" || $0.name == skillName
+            }
+            let result = CodexRuntimeScaffoldResult(
+                kind: "plugin",
+                rootPath: pluginRoot.path,
+                files: [marketplaceURL.path, manifestURL.path, skillURL.path],
+                readBackSnippets: readBacks,
+                discoveredPluginID: discoveredPlugin?.id,
+                discoveredSkillPath: discoveredSkill?.path
+            )
+            let loadedText = discoveredPlugin == nil ? "已写入，等待 plugin/list 加载" : "plugin/list 已发现 \(discoveredPlugin?.displayName ?? pluginName)"
+            runtimeCatalogStatusText = "fs/writeFile：已创建 \(pluginName) · \(loadedText)"
+            return result
+        } catch {
+            runtimeCatalogStatusText = "创建本地插件失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            return nil
+        }
+    }
+
+    @discardableResult
+    func createLocalSkillTemplate() async -> CodexRuntimeScaffoldResult? {
+        let skillName = "raytone-local-skill"
+        let codexHomeURL = Self.defaultCodexConfigURL(
+            overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
+        )
+        .deletingLastPathComponent()
+        let skillRoot = codexHomeURL.appendingPathComponent("skills/\(skillName)", isDirectory: true)
+        let skillURL = skillRoot.appendingPathComponent("SKILL.md")
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 app-server 创建本地技能模板…"
+        runtimeCatalogErrors = []
+        defer { runtimeCatalogIsRefreshing = false }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.createDirectory(path: skillRoot.path)
+            let skillData = Self.utf8Data("""
+            ---
+            name: \(skillName)
+            description: RaytoneCodex 本机技能模板
+            ---
+
+            # Raytone Local Skill
+
+            当用户明确调用这个技能时，用中文给出当前仓库内可验证的最小下一步，并列出真实文件或运行结果作为证据。
+            """)
+            try await client.writeFile(path: skillURL.path, data: skillData)
+
+            let readBacks = try await Self.readBackSnippets(client: client, paths: [skillURL.path])
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+            let discoveredSkill = runtimeSkills.first { skill in
+                skill.path == skillURL.path || skill.name == skillName
+            }
+            let result = CodexRuntimeScaffoldResult(
+                kind: "skill",
+                rootPath: skillRoot.path,
+                files: [skillURL.path],
+                readBackSnippets: readBacks,
+                discoveredPluginID: nil,
+                discoveredSkillPath: discoveredSkill?.path
+            )
+            let loadedText = discoveredSkill == nil ? "已写入，等待 skills/list 加载" : "skills/list 已发现 \(discoveredSkill?.displayName ?? skillName)"
+            runtimeCatalogStatusText = "fs/writeFile：已创建 \(skillName) · \(loadedText)"
+            return result
+        } catch {
+            runtimeCatalogStatusText = "创建本地技能失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            return nil
+        }
+    }
+
     func readRuntimePluginDetail(_ plugin: CodexRuntimePlugin) async {
         runtimeCatalogIsRefreshing = true
         runtimePluginDetailStatusText = "正在读取 \(plugin.displayName)…"
@@ -5630,6 +5785,89 @@ final class SessionStore: ObservableObject {
             return command
         }
         return String(first)
+    }
+
+    private static func marketplaceTemplateData(
+        existingData: Data?,
+        marketplaceName: String,
+        pluginName: String,
+        pluginRelativePath: String
+    ) throws -> Data {
+        var marketplace: [String: Any]
+        if let existingData, !existingData.isEmpty {
+            let object = try JSONSerialization.jsonObject(with: existingData)
+            guard let decoded = object as? [String: Any] else {
+                throw NSError(
+                    domain: "RaytoneCodex",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "marketplace.json 必须是 JSON object"]
+                )
+            }
+            marketplace = decoded
+        } else {
+            marketplace = [
+                "name": marketplaceName,
+                "plugins": []
+            ]
+        }
+
+        if (marketplace["name"] as? String)?.isEmpty != false {
+            marketplace["name"] = marketplaceName
+        }
+
+        let rawPlugins = marketplace["plugins"] as? [Any] ?? []
+        let pluginEntries = rawPlugins.compactMap { $0 as? [String: Any] }
+        if pluginEntries.count != rawPlugins.count {
+            throw NSError(
+                domain: "RaytoneCodex",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "marketplace.json 的 plugins 必须是 object 数组"]
+            )
+        }
+
+        let entry: [String: Any] = [
+            "name": pluginName,
+            "source": [
+                "source": "local",
+                "path": pluginRelativePath
+            ],
+            "policy": [
+                "installation": "AVAILABLE",
+                "authentication": "ON_INSTALL"
+            ],
+            "category": "Productivity"
+        ]
+        var mergedPlugins = pluginEntries
+        if let index = mergedPlugins.firstIndex(where: { ($0["name"] as? String) == pluginName }) {
+            mergedPlugins[index] = entry
+        } else {
+            mergedPlugins.append(entry)
+        }
+        marketplace["plugins"] = mergedPlugins
+        return try jsonData(marketplace)
+    }
+
+    private static func jsonData(_ object: [String: Any]) throws -> Data {
+        var data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        data.append(0x0A)
+        return data
+    }
+
+    private static func utf8Data(_ string: String) -> Data {
+        Data(string.utf8)
+    }
+
+    private static func readBackSnippets(
+        client: CodexAppServerClient,
+        paths: [String]
+    ) async throws -> [String: String] {
+        var snippets: [String: String] = [:]
+        for path in paths {
+            let data = try await client.readFile(path: path)
+            let text = String(data: data, encoding: .utf8) ?? "<非 UTF-8 内容>"
+            snippets[path] = String(text.prefix(240))
+        }
+        return snippets
     }
 
     private static func defaultCodexConfigURL(overrideCodexHome: String? = nil) -> URL {
