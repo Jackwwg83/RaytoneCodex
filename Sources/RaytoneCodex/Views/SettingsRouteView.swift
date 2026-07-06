@@ -1852,8 +1852,48 @@ struct SettingsRouteView: View {
                     VStack(spacing: 10) {
                         ForEach(store.runtimeApps.prefix(8)) { app in
                             SettingsCard {
-                                metricRow(app.name, app.isAccessible ? "可访问" : "不可访问")
-                                metricRow("状态", app.isEnabled ? "启用" : "停用")
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack(alignment: .top, spacing: 10) {
+                                        VStack(alignment: .leading, spacing: 5) {
+                                            metricRow(app.name, app.isAccessible ? "可访问" : "不可访问")
+                                            if let description = app.description, !description.isEmpty {
+                                                Text(description)
+                                                    .font(.system(size: 11.5))
+                                                    .foregroundStyle(Theme.textSecondary)
+                                                    .lineLimit(2)
+                                            }
+                                            HStack(spacing: 6) {
+                                                statusBadge(app.isEnabled ? "启用" : "停用", ok: app.isEnabled)
+                                                if let developer = app.developer, !developer.isEmpty {
+                                                    statusBadge(developer, ok: true)
+                                                }
+                                                if let category = app.category, !category.isEmpty {
+                                                    statusBadge(category, ok: true)
+                                                }
+                                            }
+                                        }
+                                        Spacer(minLength: 0)
+                                        Button(app.installURL == nil ? "无链接" : (app.isAccessible ? "打开" : "安装")) {
+                                            store.openRuntimeAppInstallURL(app)
+                                        }
+                                        .buttonStyle(ChipButtonStyle(prominent: app.installURL != nil && !app.isAccessible))
+                                        .disabled(app.installURL == nil)
+                                    }
+                                    if !app.pluginDisplayNames.isEmpty {
+                                        Text("关联插件：\(app.pluginDisplayNames.prefix(3).joined(separator: "、"))")
+                                            .font(.system(size: 11.5))
+                                            .foregroundStyle(Theme.textTertiary)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                    }
+                                    if let installURL = app.installURL, !installURL.isEmpty {
+                                        Text(installURL)
+                                            .font(Theme.mono(10.5))
+                                            .foregroundStyle(Theme.textTertiary)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                    }
+                                }
                             }
                         }
                     }

@@ -4782,6 +4782,12 @@ enum SmokeTestRunner {
                 return name.contains("computer")
             }
             let appsWithScreenshots = store.runtimeApps.filter { !$0.screenshotPrompts.isEmpty }
+            let appWithInstallURL = store.runtimeApps.first { app in
+                app.installURL?.isEmpty == false
+            }
+            let appInstallActionOK = appWithInstallURL.map {
+                store.openRuntimeAppInstallURL($0, openExternal: false)
+            } ?? false
             let ok = store.runtimeSnapshot.executable != nil &&
                 !integrationStatus.hasPrefix("集成状态读取失败") &&
                 !worktreeStatus.hasPrefix("工作树读取失败") &&
@@ -4812,11 +4818,21 @@ enum SmokeTestRunner {
                     [
                         "id": app.id,
                         "name": app.name,
+                        "description": app.description ?? "",
                         "enabled": app.isEnabled,
                         "accessible": app.isAccessible,
+                        "installURL": app.installURL ?? "",
+                        "pluginDisplayNames": app.pluginDisplayNames,
                         "screenshotPromptCount": app.screenshotPrompts.count
                     ] as [String: Any]
                 }),
+                "appInstallAction": [
+                    "attempted": appWithInstallURL != nil,
+                    "ok": appInstallActionOK,
+                    "app": appWithInstallURL?.name ?? "",
+                    "url": store.lastOpenedRuntimeAppInstallURL,
+                    "status": store.runtimeCatalogStatusText
+                ] as [String: Any],
                 "browserPluginCount": browserPlugins.count,
                 "computerPluginCount": computerPlugins.count,
                 "mcpServerCount": store.runtimeMCPServers.count,

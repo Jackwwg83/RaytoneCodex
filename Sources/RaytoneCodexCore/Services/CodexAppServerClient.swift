@@ -1352,6 +1352,7 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
     public var category: String?
     public var developer: String?
     public var website: String?
+    public var installURL: String?
     public var isAccessible: Bool
     public var isEnabled: Bool
     public var pluginDisplayNames: [String]
@@ -1364,6 +1365,7 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
         category: String?,
         developer: String?,
         website: String?,
+        installURL: String?,
         isAccessible: Bool,
         isEnabled: Bool,
         pluginDisplayNames: [String],
@@ -1375,6 +1377,7 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
         self.category = category
         self.developer = developer
         self.website = website
+        self.installURL = installURL
         self.isAccessible = isAccessible
         self.isEnabled = isEnabled
         self.pluginDisplayNames = pluginDisplayNames
@@ -3465,6 +3468,7 @@ public actor CodexAppServerClient {
                 category: branding?["category"]?.stringValue ?? metadata?["categories"]?.stringList.first,
                 developer: branding?["developer"]?.stringValue ?? metadata?["developer"]?.stringValue,
                 website: branding?["website"]?.stringValue,
+                installURL: value["installUrl"]?.stringValue,
                 isAccessible: value["isAccessible"]?.boolValue ?? false,
                 isEnabled: value["isEnabled"]?.boolValue ?? true,
                 pluginDisplayNames: value["pluginDisplayNames"]?.stringList ?? [],

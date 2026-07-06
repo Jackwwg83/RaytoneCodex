@@ -95,6 +95,7 @@ final class SessionStore: ObservableObject {
     @Published var voiceInputStatusText = "麦克风"
     @Published var runtimeApps: [CodexRuntimeAppInfo] = []
     @Published var runtimePermissionProfiles: [CodexRuntimePermissionProfile] = []
+    @Published var lastOpenedRuntimeAppInstallURL = ""
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
     @Published var runtimeThreadSyncStatusText = "未同步"
     @Published var workspaceGitDiff: CodexRuntimeGitDiff?
@@ -3220,6 +3221,23 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    @discardableResult
+    func openRuntimeAppInstallURL(_ app: CodexRuntimeAppInfo, openExternal: Bool = true) -> Bool {
+        guard let installURL = app.installURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !installURL.isEmpty,
+              let url = URL(string: installURL) else {
+            runtimeCatalogStatusText = "app/list：\(app.name) 没有返回 installUrl"
+            return false
+        }
+
+        lastOpenedRuntimeAppInstallURL = installURL
+        runtimeCatalogStatusText = "app/list：打开 \(app.name) 安装链接"
+        if openExternal {
+            NSWorkspace.shared.open(url)
+        }
+        return true
     }
 
     func refreshNewThreadHeroRuntime() async {
