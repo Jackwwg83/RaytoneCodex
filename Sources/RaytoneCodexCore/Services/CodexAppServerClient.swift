@@ -557,6 +557,14 @@ public struct CodexRuntimePluginSkill: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexRuntimePluginSkillReadResult: Equatable, Sendable {
+    public var contents: String?
+
+    public init(contents: String?) {
+        self.contents = contents
+    }
+}
+
 public struct CodexRuntimePluginHook: Equatable, Sendable, Identifiable {
     public var id: String { key }
     public var key: String
@@ -2119,6 +2127,19 @@ public actor CodexAppServerClient {
         return Self.pluginDetail(from: detail, fallback: plugin)
     }
 
+    public func readRemotePluginSkill(
+        remoteMarketplaceName: String,
+        remotePluginID: String,
+        skillName: String
+    ) async throws -> CodexRuntimePluginSkillReadResult {
+        let result = try await request(method: "plugin/skill/read", params: .object([
+            "remoteMarketplaceName": .string(remoteMarketplaceName),
+            "remotePluginId": .string(remotePluginID),
+            "skillName": .string(skillName)
+        ]))
+        return Self.pluginSkillReadResult(from: result)
+    }
+
     public func installPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginInstallResult {
         var params: [String: JSONValue] = [
             "pluginName": .string(plugin.name)
@@ -3456,6 +3477,10 @@ public actor CodexAppServerClient {
             needsAuth: object["needsAuth"]?.boolValue ?? false,
             installURL: object["installUrl"]?.stringValue
         )
+    }
+
+    private static func pluginSkillReadResult(from result: JSONValue) -> CodexRuntimePluginSkillReadResult {
+        CodexRuntimePluginSkillReadResult(contents: result["contents"]?.stringValue)
     }
 
     private static func skillCatalog(from result: JSONValue) -> CodexRuntimeSkillCatalog {

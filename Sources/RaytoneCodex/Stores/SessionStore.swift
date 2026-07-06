@@ -66,6 +66,9 @@ final class SessionStore: ObservableObject {
     @Published var runtimePluginInstallResult: CodexRuntimePluginInstallResult?
     @Published var runtimeSharedPluginCount = 0
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
+    @Published var runtimeSkillPreview: CodexRuntimeSkill?
+    @Published var runtimeSkillPreviewText = ""
+    @Published var runtimeSkillPreviewStatusText = "未读取"
     @Published var runtimeExperimentalFeatures: [CodexExperimentalFeature] = []
     @Published var runtimeExperimentalFeaturesNextCursor: String?
     @Published var runtimeExperimentalFeaturesStatusText = "未读取"
@@ -4720,6 +4723,36 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "技能操作失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    @discardableResult
+    func readRuntimeSkillPreview(_ skill: CodexRuntimeSkill) async -> Bool {
+        runtimeSkillPreview = skill
+        runtimeSkillPreviewText = ""
+        runtimeSkillPreviewStatusText = "正在通过 fs/readFile 读取 \(skill.displayName)…"
+        runtimeCatalogStatusText = runtimeSkillPreviewStatusText
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let data = try await client.readFile(path: skill.path)
+            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+            runtimeSkillPreviewText = text
+            runtimeSkillPreviewStatusText = "fs/readFile：\(skill.displayName) · \(data.count) 字节"
+            runtimeCatalogStatusText = runtimeSkillPreviewStatusText
+            return true
+        } catch {
+            runtimeSkillPreviewStatusText = "技能内容读取失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimeSkillPreviewStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            return false
+        }
+    }
+
+    func clearRuntimeSkillPreview() {
+        runtimeSkillPreview = nil
+        runtimeSkillPreviewText = ""
+        runtimeSkillPreviewStatusText = "未读取"
     }
 
     @discardableResult

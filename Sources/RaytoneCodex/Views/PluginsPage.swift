@@ -599,14 +599,84 @@ struct PluginsPage: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(filteredSkills) { skill in
-                        RuntimeSkillRow(skill: skill) {
-                            Task { await store.toggleSkill(skill) }
-                        }
+                        RuntimeSkillRow(
+                            skill: skill,
+                            detail: {
+                                Task { await store.readRuntimeSkillPreview(skill) }
+                            },
+                            toggle: {
+                                Task { await store.toggleSkill(skill) }
+                            }
+                        )
+                    }
+                    if store.runtimeSkillPreview != nil {
+                        skillPreviewCard
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var skillPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("技能内容")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(store.runtimeSkillPreviewStatusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    store.clearRuntimeSkillPreview()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 24, height: 24)
+                        .background(Theme.fill)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let skill = store.runtimeSkillPreview {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(skill.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(Project.abbreviate(skill.path))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            ScrollView {
+                Text(store.runtimeSkillPreviewText.isEmpty ? "尚未读取到内容。" : store.runtimeSkillPreviewText)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .frame(maxHeight: 260)
+            .background(Theme.fillSubtle)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .padding(14)
+        .background(Theme.transcript)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func emptyRuntimeCard(symbol: String, title: String, detail: String) -> some View {
@@ -720,6 +790,7 @@ private struct RuntimePluginRow: View {
 
 private struct RuntimeSkillRow: View {
     let skill: CodexRuntimeSkill
+    var detail: () -> Void
     var toggle: () -> Void
 
     var body: some View {
@@ -746,6 +817,16 @@ private struct RuntimeSkillRow: View {
             }
 
             Spacer(minLength: 8)
+
+            Button(action: detail) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .background(Theme.fill)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
 
             Button(skill.enabled ? "停用" : "启用", action: toggle)
                 .buttonStyle(ChipButtonStyle(prominent: !skill.enabled))

@@ -28,6 +28,8 @@ enum SmokeTestRunner {
             runMCPToolSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
+        } else if CommandLine.arguments.contains("--skill-read-smoke-test") {
+            runSkillReadSmoke()
         } else if CommandLine.arguments.contains("--plugin-scaffold-smoke-test") {
             runPluginScaffoldSmoke()
         } else if CommandLine.arguments.contains("--plugin-install-response-smoke-test") {
@@ -1469,6 +1471,98 @@ enum SmokeTestRunner {
                             "eventName": hook.eventName
                         ] as [String: Any]
                     } ?? []
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSkillReadSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexSkillReadSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let skillURL = codexHomeURL
+                .appendingPathComponent("skills/raytone-readable-skill/SKILL.md")
+            let marker = "RAYTONE_SKILL_READ_SMOKE_MARKER"
+            let skillText = """
+            ---
+            name: raytone-readable-skill
+            shortDescription: Smoke skill content served through codex app-server fs/readFile.
+            ---
+
+            # Raytone Readable Skill
+
+            \(marker)
+
+            使用这个技能时，先说明真实文件路径，再给出可执行验证。
+            """
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(
+                    at: skillURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try skillText.write(to: skillURL, atomically: true, encoding: .utf8)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("skill-read-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+
+                let skill = CodexRuntimeSkill(
+                    name: "raytone-readable-skill",
+                    displayName: "Raytone 可读取技能",
+                    summary: "通过 app-server 读取本地技能 Markdown",
+                    path: skillURL.path,
+                    cwd: workspaceURL.path,
+                    scope: "user",
+                    enabled: true
+                )
+
+                fputs("skill-read-smoke: readRuntimeSkillPreview\n", stderr)
+                let readOK = await store.readRuntimeSkillPreview(skill)
+                let preview = store.runtimeSkillPreviewText
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    readOK &&
+                    store.runtimeSkillPreview?.path == skillURL.path &&
+                    store.runtimeSkillPreviewStatusText.hasPrefix("fs/readFile") &&
+                    preview.contains(marker) &&
+                    preview.contains("# Raytone Readable Skill")
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "skillPath": skillURL.path,
+                    "status": store.runtimeSkillPreviewStatusText,
+                    "previewByteCount": preview.data(using: .utf8)?.count ?? 0,
+                    "previewContainsMarker": preview.contains(marker),
+                    "preview": String(preview.prefix(600))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
