@@ -170,6 +170,7 @@ final class SessionStore: ObservableObject {
     @Published var providerConnectionCodexConfigPath = ""
     @Published var providerConnectionProxyConfigPath = ""
     @Published var providerUsage: RaytoneProxyUsage?
+    @Published var providerUsageByProviderID: [String: RaytoneProxyUsage] = [:]
     @Published var providerUsageStatusText = "未读取"
     @Published var providerOnboardingPresented = false
     @Published var providerOnboardingStatusText = "未开始"
@@ -4000,6 +4001,7 @@ final class SessionStore: ObservableObject {
             }
             let usage = try await proxyService.readUsage(session: session)
             providerUsage = usage
+            providerUsageByProviderID[provider.id] = usage
             providerUsageStatusText = "sidecar /usage：\(usage.successfulResponses) 次响应"
         } catch {
             providerUsage = nil
@@ -6724,6 +6726,10 @@ final class SessionStore: ObservableObject {
         guard providers.contains(where: { $0.id == providerID }) else { return }
         selectedProviderID = providerID
         model = selectedProvider.usesSidecar ? selectedProvider.model : model
+        providerUsage = selectedProvider.usesSidecar ? providerUsageByProviderID[providerID] : nil
+        providerUsageStatusText = selectedProvider.usesSidecar
+            ? (providerUsage == nil ? "\(selectedProvider.displayName) 尚未读取 /usage" : "sidecar /usage：\(providerUsage?.successfulResponses ?? 0) 次响应")
+            : "OpenAI 用量来自 account/usage/read"
         updateSelectedThread { thread in
             thread.model = model
         }

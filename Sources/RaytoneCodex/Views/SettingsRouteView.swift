@@ -682,6 +682,8 @@ struct SettingsRouteView: View {
                 providerUsageSummaryCard
             }
 
+            providerUsageByProviderSection
+
             SettingsSection(title: "速率限制") {
                 if let rateLimits = store.runtimeRateLimits, !rateLimits.buckets.isEmpty {
                     VStack(spacing: 10) {
@@ -959,6 +961,99 @@ struct SettingsRouteView: View {
                 }
             }
         }
+    }
+
+    private var providerUsageByProviderSection: some View {
+        SettingsSection(
+            title: "Provider 用量",
+            description: "OpenAI 行来自 Codex account/usage/read；第三方 provider 行来自当前 sidecar 的 /usage 快照。"
+        ) {
+            SettingsCard {
+                VStack(spacing: 0) {
+                    ForEach(store.providers) { provider in
+                        providerUsageRow(provider)
+                        if provider.id != store.providers.last?.id {
+                            Divider()
+                                .overlay(Theme.borderSoft)
+                                .padding(.vertical, 10)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func providerUsageRow(_ provider: RaytoneProviderConfiguration) -> some View {
+        let usage = store.providerUsageByProviderID[provider.id]
+        let isSelected = provider.id == store.selectedProviderID
+
+        return HStack(alignment: .center, spacing: 12) {
+            Image(systemName: provider.usesSidecar ? "shippingbox" : "sparkles")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
+                .frame(width: 24, height: 24)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(provider.displayName)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    statusBadge(providerUsageRowBadge(provider: provider, usage: usage, isSelected: isSelected),
+                                ok: provider.usesSidecar ? usage != nil : store.runtimeTokenUsage != nil)
+                }
+
+                Text(providerUsageRowDetail(provider: provider, usage: usage))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            Button(provider.usesSidecar ? (isSelected ? "刷新" : "选择并刷新") : "刷新账户") {
+                Task {
+                    if provider.usesSidecar {
+                        if !isSelected {
+                            store.selectProvider(provider.id)
+                        }
+                        await store.refreshSelectedProviderUsage()
+                    } else {
+                        await store.refreshAccountUsageRuntime()
+                    }
+                }
+            }
+            .buttonStyle(ChipButtonStyle(prominent: isSelected && provider.usesSidecar))
+        }
+    }
+
+    private func providerUsageRowBadge(
+        provider: RaytoneProviderConfiguration,
+        usage: RaytoneProxyUsage?,
+        isSelected: Bool
+    ) -> String {
+        if !provider.usesSidecar {
+            return store.runtimeTokenUsage == nil ? "未读取" : "账户"
+        }
+        if usage != nil {
+            return isSelected ? "当前" : "已读取"
+        }
+        return isSelected ? "未读取" : "待选择"
+    }
+
+    private func providerUsageRowDetail(
+        provider: RaytoneProviderConfiguration,
+        usage: RaytoneProxyUsage?
+    ) -> String {
+        if !provider.usesSidecar {
+            let total = tokenText(store.runtimeTokenUsage?.lifetimeTokens)
+            return "模型 \(store.model.isEmpty ? provider.model : store.model) · 累计 \(total) · 来源 account/usage/read"
+        }
+        if let usage {
+            return "\(usage.model) · 请求 \(usage.requests) 次 · Token \(tokenText(usage.totalTokens)) · 推理 \(tokenText(usage.reasoningTokens)) · 来源 raytone-proxy /usage"
+        }
+        return "\(provider.model) · 尚未读取真实 /usage；选择该 provider 后可刷新"
     }
 
     private var providerUsageBadgeText: String {

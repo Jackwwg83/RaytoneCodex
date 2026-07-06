@@ -3856,6 +3856,7 @@ enum SmokeTestRunner {
                 let persistedConfigText = (try? String(contentsOf: persistedConfigURL, encoding: .utf8)) ?? ""
                 let persistedProvider = store.runtimeConfig?.raytoneProviders.first { $0.id == providerID }
                 let providerUsage = store.providerUsage
+                let cachedProviderUsage = store.providerUsageByProviderID[providerID]
                 let agentMessages = store.selectedThread.items.compactMap { item -> String? in
                     if case let .agentMessage(text) = item.kind { return text }
                     return nil
@@ -3892,6 +3893,8 @@ enum SmokeTestRunner {
                     agentMessages.contains("Raytone provider usage smoke OK") &&
                     providerUsage?.provider == providerID &&
                     providerUsage?.model == editedModel &&
+                    cachedProviderUsage?.provider == providerID &&
+                    cachedProviderUsage?.model == editedModel &&
                     (providerUsage?.requests ?? 0) >= 2 &&
                     (providerUsage?.successfulResponses ?? 0) >= 2 &&
                     (providerUsage?.totalTokens ?? 0) >= 36 &&
@@ -3944,6 +3947,19 @@ enum SmokeTestRunner {
                             "reasoningTokens": usage.reasoningTokens
                         ] as [String: Any]
                     } ?? NSNull(),
+                    "providerUsageByProviderID": store.providerUsageByProviderID.mapValues { usage in
+                        [
+                            "provider": usage.provider,
+                            "model": usage.model,
+                            "requests": usage.requests,
+                            "successfulResponses": usage.successfulResponses,
+                            "failedResponses": usage.failedResponses,
+                            "inputTokens": usage.inputTokens,
+                            "outputTokens": usage.outputTokens,
+                            "totalTokens": usage.totalTokens,
+                            "reasoningTokens": usage.reasoningTokens
+                        ] as [String: Any]
+                    },
                     "baseURL": store.providerConnectionBaseURL,
                     "codexConfigPath": store.providerConnectionCodexConfigPath,
                     "proxyConfigPath": store.providerConnectionProxyConfigPath,
