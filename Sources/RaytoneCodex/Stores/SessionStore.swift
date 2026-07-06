@@ -8925,7 +8925,7 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        let result = dynamicToolCallResult(namespace: namespace, tool: tool, arguments: arguments)
+        let result = await dynamicToolCallResult(namespace: namespace, tool: tool, arguments: arguments)
         do {
             try await client.respondDynamicToolCall(
                 requestID: requestID,
@@ -8963,8 +8963,11 @@ final class SessionStore: ObservableObject {
         namespace: String?,
         tool: String,
         arguments: JSONValue
-    ) -> (success: Bool, text: String) {
+    ) async -> (success: Bool, text: String) {
         if namespace == "raytone_context", tool == "workspace_snapshot" {
+            if arguments["includeDiffStats"]?.boolValue ?? true {
+                await refreshWorkspaceGitDiff()
+            }
             return (true, workspaceSnapshotText(arguments: arguments))
         }
 

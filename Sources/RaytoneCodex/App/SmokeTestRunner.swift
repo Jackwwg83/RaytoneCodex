@@ -1777,6 +1777,16 @@ enum SmokeTestRunner {
                     atomically: true,
                     encoding: .utf8
                 )
+                _ = try runProcess(["git", "init", "-b", "main"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.email", "raytone@example.invalid"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.name", "Raytone Smoke"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "README.md"], cwd: workspaceURL)
+                _ = try runProcess(["git", "commit", "-m", "Initial dynamic tool smoke"], cwd: workspaceURL)
+                try "raytone dynamic tool smoke\nfresh app-server diff\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
                 try fakeDynamicToolAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
                 try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
 
@@ -1817,9 +1827,17 @@ enum SmokeTestRunner {
                 let responseObserved = logText.contains(#""dynamicToolResponse""#) &&
                     logText.contains(#""success":true"#) &&
                     logText.contains(#""contentItems""#)
+                let commandExecObserved = logText.contains(#""method":"command/exec""#) ||
+                    logText.contains(#""method": "command/exec""#)
+                let freshDiffObserved = output.contains(#""gitDiff""#) &&
+                    output.contains(#""files" : 1"#) &&
+                    output.contains(#""additions" : 1"#) &&
+                    output.contains(#"M README.md"#)
                 let ok = registeredDynamicTool &&
                     requestObserved &&
                     responseObserved &&
+                    commandExecObserved &&
+                    freshDiffObserved &&
                     dynamicCommand?.status == .succeeded &&
                     output.contains(#""workspacePath""#) &&
                     normalizedOutput.contains(workspaceURL.path) &&
@@ -1835,6 +1853,8 @@ enum SmokeTestRunner {
                     "registeredDynamicTool": registeredDynamicTool,
                     "requestObserved": requestObserved,
                     "responseObserved": responseObserved,
+                    "commandExecObserved": commandExecObserved,
+                    "freshDiffObserved": freshDiffObserved,
                     "isRunning": store.isRunning,
                     "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
                     "dynamicCommandOutputPreview": String(output.prefix(1200)),
@@ -12250,6 +12270,7 @@ enum SmokeTestRunner {
         #!/usr/bin/env python3
         import json
         import os
+        import subprocess
         import sys
 
         log_path = os.environ.get("RAYTONE_DYNAMIC_TOOL_LOG")
@@ -12328,6 +12349,33 @@ enum SmokeTestRunner {
                 continue
             if method == "initialize":
                 send_result(request_id, {})
+            elif method == "command/exec":
+                params = request.get("params") or {}
+                command = params.get("command") or []
+                cwd = params.get("cwd") or os.getcwd()
+                try:
+                    completed = subprocess.run(
+                        command,
+                        cwd=cwd,
+                        text=True,
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    result = {
+                        "stdout": completed.stdout,
+                        "stderr": completed.stderr,
+                        "exitCode": completed.returncode,
+                    }
+                    log({"commandExecResponse": result})
+                    send_result(request_id, result)
+                except Exception as exc:
+                    result = {
+                        "stdout": "",
+                        "stderr": str(exc),
+                        "exitCode": 1,
+                    }
+                    log({"commandExecResponse": result})
+                    send_result(request_id, result)
             elif method == "thread/start":
                 send_result(request_id, {
                     "thread": {
