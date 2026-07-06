@@ -1687,6 +1687,13 @@ public enum CodexAppServerApprovalDecision: String, Sendable {
     case cancel
 }
 
+public enum CodexAppServerLegacyReviewDecision: String, Sendable {
+    case approved
+    case approvedForSession = "approved_for_session"
+    case denied
+    case abort
+}
+
 public enum CodexAppServerElicitationAction: String, Sendable {
     case accept
     case decline
@@ -3030,6 +3037,31 @@ public actor CodexAppServerClient {
         try respond(requestID: requestID, result: .object([
             "decision": .string(decision.rawValue)
         ]))
+    }
+
+    public func respondLegacyApproval(
+        requestID: CodexAppServerRequestID,
+        decision: CodexAppServerLegacyReviewDecision
+    ) async throws {
+        try respond(requestID: requestID, result: .object([
+            "decision": .string(decision.rawValue)
+        ]))
+    }
+
+    public func respondPermissionsApproval(
+        requestID: CodexAppServerRequestID,
+        permissions: JSONValue,
+        scope: String = "turn",
+        strictAutoReview: Bool? = nil
+    ) async throws {
+        var result: [String: JSONValue] = [
+            "permissions": permissions,
+            "scope": .string(scope)
+        ]
+        if let strictAutoReview {
+            result["strictAutoReview"] = .bool(strictAutoReview)
+        }
+        try respond(requestID: requestID, result: .object(result))
     }
 
     public func respondMcpElicitation(

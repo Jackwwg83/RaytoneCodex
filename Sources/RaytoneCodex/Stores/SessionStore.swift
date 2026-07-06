@@ -177,6 +177,12 @@ final class SessionStore: ObservableObject {
     private static let dangerFullAccessPermissionsProfile = ":danger-full-access"
     private static let providerOnboardingCompletedKey = "RaytoneCodex.providerOnboardingCompleted.v1"
 
+    private enum PendingApprovalResponseKind {
+        case appServerDecision
+        case permissions(requested: JSONValue)
+        case legacyReviewDecision
+    }
+
     nonisolated static var sampleWorkspaceEnabled: Bool {
         let environment = ProcessInfo.processInfo.environment
         if environment["RAYTONE_CODEX_ENABLE_SAMPLE_DATA"] == "1" {
@@ -192,6 +198,7 @@ final class SessionStore: ObservableObject {
     private var appServerItemIDs: [String: UUID] = [:]
     private var activeDiffTranscriptIDs: Set<UUID> = []
     private var pendingApprovalRequestIDs: [UUID: CodexAppServerRequestID] = [:]
+    private var pendingApprovalResponseKinds: [UUID: PendingApprovalResponseKind] = [:]
     private var pendingMcpElicitationRequestIDs: [UUID: CodexAppServerRequestID] = [:]
     private var pendingToolUserInputRequestIDs: [UUID: CodexAppServerRequestID] = [:]
     private var activeAppServerTurnID: String?
@@ -595,6 +602,7 @@ final class SessionStore: ObservableObject {
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
         pendingApprovalRequestIDs.removeAll()
+        pendingApprovalResponseKinds.removeAll()
         pendingMcpElicitationRequestIDs.removeAll()
         pendingToolUserInputRequestIDs.removeAll()
         mcpElicitationDrafts.removeAll()
@@ -1363,21 +1371,39 @@ final class SessionStore: ObservableObject {
               let client = appServerClient else {
             return
         }
-
-        let appServerDecision: CodexAppServerApprovalDecision
-        switch decision {
-        case .pending:
-            return
-        case .approved:
-            appServerDecision = .accept
-        case .approvedAlways:
-            appServerDecision = .acceptForSession
-        case .denied:
-            appServerDecision = .decline
-        }
+        let responseKind = pendingApprovalResponseKinds.removeValue(forKey: itemID) ?? .appServerDecision
 
         do {
-            try await client.respondApproval(requestID: requestID, decision: appServerDecision)
+            switch responseKind {
+            case .appServerDecision:
+                guard let appServerDecision = Self.appServerApprovalDecision(from: decision) else { return }
+                try await client.respondApproval(requestID: requestID, decision: appServerDecision)
+            case let .permissions(requested):
+                let permissions: JSONValue
+                let scope: String
+                switch decision {
+                case .pending:
+                    return
+                case .approved:
+                    permissions = requested
+                    scope = "turn"
+                case .approvedAlways:
+                    permissions = requested
+                    scope = "session"
+                case .denied:
+                    permissions = .object([:])
+                    scope = "turn"
+                }
+                try await client.respondPermissionsApproval(
+                    requestID: requestID,
+                    permissions: permissions,
+                    scope: scope,
+                    strictAutoReview: false
+                )
+            case .legacyReviewDecision:
+                guard let legacyDecision = Self.legacyReviewDecision(from: decision) else { return }
+                try await client.respondLegacyApproval(requestID: requestID, decision: legacyDecision)
+            }
         } catch {
             updateSelectedThread { thread in
                 thread.items.append(TranscriptItem(kind: .notice(Notice(
@@ -6026,6 +6052,7 @@ final class SessionStore: ObservableObject {
             appServerItemIDs.removeAll()
             activeDiffTranscriptIDs.removeAll()
             pendingApprovalRequestIDs.removeAll()
+            pendingApprovalResponseKinds.removeAll()
             pendingMcpElicitationRequestIDs.removeAll()
             pendingToolUserInputRequestIDs.removeAll()
             mcpElicitationDrafts.removeAll()
@@ -6514,7 +6541,8 @@ final class SessionStore: ObservableObject {
             let command = params?["command"]?.stringValue
             let reason = params?["reason"]?.stringValue
             let itemID = params?["itemId"]?.stringValue ?? id.description
-            let transcriptID = transcriptUUID(for: "approval:\(id.description)")
+            let serverItemID = "approval:\(id.description):\(itemID)"
+            let transcriptID = transcriptUUID(for: serverItemID)
             let request = ApprovalRequest(
                 id: transcriptID,
                 kind: .command,
@@ -6526,7 +6554,8 @@ final class SessionStore: ObservableObject {
                 decision: .pending
             )
             pendingApprovalRequestIDs[transcriptID] = id
-            upsertTranscriptItem(serverItemID: "approval:\(id.description):\(itemID)", kind: .approval(request))
+            pendingApprovalResponseKinds[transcriptID] = .appServerDecision
+            upsertTranscriptItem(serverItemID: serverItemID, kind: .approval(request))
         case "item/fileChange/requestApproval":
             let reason = params?["reason"]?.stringValue
             let grantRoot = params?["grantRoot"]?.stringValue
@@ -6540,7 +6569,71 @@ final class SessionStore: ObservableObject {
                 decision: .pending
             )
             pendingApprovalRequestIDs[transcriptID] = id
+            pendingApprovalResponseKinds[transcriptID] = .appServerDecision
             upsertTranscriptItem(serverItemID: "approval:\(id.description)", kind: .approval(request))
+        case "item/permissions/requestApproval":
+            let requestedPermissions = params?["permissions"] ?? .object([:])
+            let serverItemID = "approval:\(id.description):permissions"
+            let transcriptID = transcriptUUID(for: serverItemID)
+            let request = ApprovalRequest(
+                id: transcriptID,
+                kind: Self.permissionApprovalKind(requestedPermissions),
+                title: "允许扩展权限？",
+                detail: Self.permissionApprovalDetail(params),
+                rationale: params?["reason"]?.stringValue,
+                decision: .pending
+            )
+            pendingApprovalRequestIDs[transcriptID] = id
+            pendingApprovalResponseKinds[transcriptID] = .permissions(requested: requestedPermissions)
+            upsertTranscriptItem(
+                serverItemID: serverItemID,
+                kind: .approval(request)
+            )
+        case "execCommandApproval":
+            let command = (params?["command"]?.arrayValue ?? [])
+                .compactMap(\.stringValue)
+                .joined(separator: " ")
+            let reason = params?["reason"]?.stringValue
+            let callID = params?["approvalId"]?.stringValue ?? params?["callId"]?.stringValue ?? id.description
+            let transcriptID = transcriptUUID(for: "approval:\(id.description):legacy-exec:\(callID)")
+            let request = ApprovalRequest(
+                id: transcriptID,
+                kind: .command,
+                title: "允许运行命令？",
+                detail: command.isEmpty ? "Codex 请求运行命令" : command,
+                rationale: reason,
+                command: command.isEmpty ? nil : command,
+                commandPrefix: Self.commandPrefix(for: command),
+                decision: .pending
+            )
+            pendingApprovalRequestIDs[transcriptID] = id
+            pendingApprovalResponseKinds[transcriptID] = .legacyReviewDecision
+            upsertTranscriptItem(
+                serverItemID: "approval:\(id.description):legacy-exec:\(callID)",
+                kind: .approval(request)
+            )
+        case "applyPatchApproval":
+            let fileChanges = params?["fileChanges"]?.objectValue ?? [:]
+            let changedPaths = fileChanges.keys.sorted()
+            let grantRoot = params?["grantRoot"]?.stringValue
+            let reason = params?["reason"]?.stringValue
+            let callID = params?["callId"]?.stringValue ?? id.description
+            let detail = grantRoot ?? (changedPaths.isEmpty ? "Codex 请求修改文件" : changedPaths.joined(separator: "\n"))
+            let transcriptID = transcriptUUID(for: "approval:\(id.description):legacy-patch:\(callID)")
+            let request = ApprovalRequest(
+                id: transcriptID,
+                kind: .patch,
+                title: "允许修改文件？",
+                detail: detail,
+                rationale: reason,
+                decision: .pending
+            )
+            pendingApprovalRequestIDs[transcriptID] = id
+            pendingApprovalResponseKinds[transcriptID] = .legacyReviewDecision
+            upsertTranscriptItem(
+                serverItemID: "approval:\(id.description):legacy-patch:\(callID)",
+                kind: .approval(request)
+            )
         case "mcpServer/elicitation/request":
             let mode = McpElicitationRequest.Mode(rawValue: params?["mode"]?.stringValue ?? "form")
             let requestedSchema = params?["requestedSchema"]
@@ -6787,8 +6880,14 @@ final class SessionStore: ObservableObject {
     }
 
     private func clearResolvedApproval(_ requestID: String) {
+        let resolvedApprovalIDs = pendingApprovalRequestIDs.compactMap { itemID, value in
+            value.description == requestID ? itemID : nil
+        }
         pendingApprovalRequestIDs = pendingApprovalRequestIDs.filter { _, value in
             value.description != requestID
+        }
+        for itemID in resolvedApprovalIDs {
+            pendingApprovalResponseKinds.removeValue(forKey: itemID)
         }
         let resolvedElicitationIDs = pendingMcpElicitationRequestIDs.compactMap { itemID, value in
             value.description == requestID ? itemID : nil
@@ -6860,6 +6959,60 @@ final class SessionStore: ObservableObject {
         return JSONValue.object(content).prettyJSONString
     }
 
+    private static func permissionApprovalKind(_ permissions: JSONValue) -> ApprovalRequest.Kind {
+        if permissions["network"]?.objectValue != nil {
+            return .network
+        }
+        return .patch
+    }
+
+    private static func permissionApprovalDetail(_ params: JSONValue?) -> String {
+        let permissions = params?["permissions"]
+        var lines: [String] = []
+        if let cwd = params?["cwd"]?.stringValue, !cwd.isEmpty {
+            lines.append("工作目录：\(cwd)")
+        }
+        if permissions?["network"]?.objectValue != nil {
+            let enabled = permissions?["network"]?["enabled"]?.boolValue
+            lines.append("网络：\(enabled == false ? "不扩展" : "允许访问")")
+        }
+        if let fileSystem = permissions?["fileSystem"]?.objectValue {
+            let read = fileSystem["read"]?.arrayValue?.compactMap(\.stringValue) ?? []
+            let write = fileSystem["write"]?.arrayValue?.compactMap(\.stringValue) ?? []
+            if !read.isEmpty {
+                lines.append("读取：\(read.joined(separator: "、"))")
+            }
+            if !write.isEmpty {
+                lines.append("写入：\(write.joined(separator: "、"))")
+            }
+            if let entries = fileSystem["entries"]?.arrayValue, !entries.isEmpty {
+                let entryText = entries.compactMap { entry -> String? in
+                    guard let access = entry["access"]?.stringValue else { return nil }
+                    if let path = entry["path"]?["path"]?.stringValue {
+                        return "\(access)：\(path)"
+                    }
+                    if let pattern = entry["path"]?["pattern"]?.stringValue {
+                        return "\(access)：\(pattern)"
+                    }
+                    if let special = entry["path"]?["value"]?["kind"]?.stringValue {
+                        return "\(access)：\(special)"
+                    }
+                    return access
+                }
+                if !entryText.isEmpty {
+                    lines.append("文件系统：\(entryText.joined(separator: "、"))")
+                }
+            }
+        }
+        if let reason = params?["reason"]?.stringValue, !reason.isEmpty {
+            lines.append("原因：\(reason)")
+        }
+        if lines.isEmpty {
+            lines.append(permissions?.prettyJSONString ?? "Codex 请求扩展权限")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private static func toolUserInputQuestions(from values: [JSONValue]) -> [ToolUserInputQuestion] {
         values.compactMap { value in
             guard let id = value["id"]?.stringValue,
@@ -6882,6 +7035,36 @@ final class SessionStore: ObservableObject {
                 isSecret: value["isSecret"]?.boolValue ?? false,
                 options: options
             )
+        }
+    }
+
+    private static func appServerApprovalDecision(
+        from decision: ApprovalRequest.Decision
+    ) -> CodexAppServerApprovalDecision? {
+        switch decision {
+        case .pending:
+            return nil
+        case .approved:
+            return .accept
+        case .approvedAlways:
+            return .acceptForSession
+        case .denied:
+            return .decline
+        }
+    }
+
+    private static func legacyReviewDecision(
+        from decision: ApprovalRequest.Decision
+    ) -> CodexAppServerLegacyReviewDecision? {
+        switch decision {
+        case .pending:
+            return nil
+        case .approved:
+            return .approved
+        case .approvedAlways:
+            return .approvedForSession
+        case .denied:
+            return .denied
         }
     }
 

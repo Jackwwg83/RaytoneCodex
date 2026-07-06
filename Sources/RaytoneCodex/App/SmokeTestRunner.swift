@@ -31,6 +31,8 @@ enum SmokeTestRunner {
             runMCPElicitationSmoke()
         } else if CommandLine.arguments.contains("--tool-user-input-smoke-test") {
             runToolUserInputSmoke()
+        } else if CommandLine.arguments.contains("--approval-compat-smoke-test") {
+            runApprovalCompatSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--skill-read-smoke-test") {
@@ -1603,6 +1605,113 @@ enum SmokeTestRunner {
                     "submitted": submitted,
                     "isRunning": store.isRunning,
                     "requestLogPreview": String(logText.prefix(2200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runApprovalCompatSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexApprovalCompatSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeApprovalCompatAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-approval-compat"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_APPROVAL_COMPAT_LOG": logURL.path
+                ]
+                store.prompt = "触发权限与旧审批兼容"
+
+                await store.runPrompt()
+                guard let permissionsID = await waitForPendingApproval(in: store, title: "允许扩展权限？") else {
+                    throw NSError(
+                        domain: "RaytoneCodexApprovalCompatSmoke",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "permissions approval did not appear"]
+                    )
+                }
+                store.decideApproval(itemID: permissionsID, decision: .approved)
+
+                guard let execID = await waitForPendingApproval(in: store, title: "允许运行命令？") else {
+                    throw NSError(
+                        domain: "RaytoneCodexApprovalCompatSmoke",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "legacy exec approval did not appear"]
+                    )
+                }
+                store.decideApproval(itemID: execID, decision: .approvedAlways)
+
+                guard let patchID = await waitForPendingApproval(in: store, title: "允许修改文件？") else {
+                    throw NSError(
+                        domain: "RaytoneCodexApprovalCompatSmoke",
+                        code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "legacy patch approval did not appear"]
+                    )
+                }
+                store.decideApproval(itemID: patchID, decision: .denied(note: nil))
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""permissionsResponse""#) &&
+                        logText.contains(#""legacyExecResponse""#) &&
+                        logText.contains(#""legacyPatchResponse""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let approvals = store.selectedThread.items.compactMap { item -> ApprovalRequest? in
+                    if case let .approval(request) = item.kind {
+                        return request
+                    }
+                    return nil
+                }
+                let ok = approvals.count >= 3 &&
+                    logText.contains(#""method":"item/permissions/requestApproval""#) &&
+                    logText.contains(#""permissionsResponse""#) &&
+                    logText.contains(#""network":{"enabled":true}"#) &&
+                    logText.contains(#""method":"execCommandApproval""#) &&
+                    logText.contains(#""legacyExecResponse":{"decision":"approved_for_session"}"#) &&
+                    logText.contains(#""method":"applyPatchApproval""#) &&
+                    logText.contains(#""legacyPatchResponse":{"decision":"denied"}"#)
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "approvalCount": approvals.count,
+                    "isRunning": store.isRunning,
+                    "requestLogPreview": String(logText.prefix(2600))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -5138,6 +5247,29 @@ enum SmokeTestRunner {
         while Date() < deadline {
             if let item = store.selectedThread.items.first(where: { item in
                 if case .toolUserInput = item.kind {
+                    return true
+                }
+                return false
+            }) {
+                return item.id
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return nil
+    }
+
+    @MainActor
+    private static func waitForPendingApproval(
+        in store: SessionStore,
+        title: String,
+        timeout: TimeInterval = 8
+    ) async -> UUID? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let item = store.selectedThread.items.first(where: { item in
+                if case let .approval(request) = item.kind,
+                   request.title == title,
+                   request.decision == .pending {
                     return true
                 }
                 return false
@@ -8953,6 +9085,161 @@ enum SmokeTestRunner {
                     }
                 })
                 send_tool_user_input_request()
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeApprovalCompatAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_APPROVAL_COMPAT_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        def send_permissions_request():
+            message = {
+                "id": "permissions-smoke",
+                "method": "item/permissions/requestApproval",
+                "params": {
+                    "threadId": "thread-smoke",
+                    "turnId": "turn-smoke",
+                    "itemId": "permissions-item",
+                    "cwd": os.getcwd(),
+                    "startedAtMs": 1700000000000,
+                    "reason": "需要联网读取文档。",
+                    "permissions": {
+                        "network": {"enabled": True},
+                        "fileSystem": None
+                    }
+                }
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        def send_legacy_exec_request():
+            message = {
+                "id": "legacy-exec-smoke",
+                "method": "execCommandApproval",
+                "params": {
+                    "conversationId": "thread-smoke",
+                    "callId": "exec-call-smoke",
+                    "approvalId": "exec-approval-smoke",
+                    "command": ["echo", "legacy"],
+                    "cwd": os.getcwd(),
+                    "reason": "验证旧 execCommandApproval 响应。",
+                    "parsedCmd": []
+                }
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        def send_legacy_patch_request():
+            message = {
+                "id": "legacy-patch-smoke",
+                "method": "applyPatchApproval",
+                "params": {
+                    "conversationId": "thread-smoke",
+                    "callId": "patch-call-smoke",
+                    "reason": "验证旧 applyPatchApproval 响应。",
+                    "grantRoot": None,
+                    "fileChanges": {
+                        "Sources/LegacySmoke.swift": {
+                            "type": "update",
+                            "unified_diff": "@@ -1 +1 @@\n-old\n+new\n",
+                            "move_path": None
+                        }
+                    }
+                }
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id == "permissions-smoke" and "result" in request:
+                log({"permissionsResponse": request.get("result")})
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "permissions-smoke"
+                })
+                send_legacy_exec_request()
+                continue
+            if request_id == "legacy-exec-smoke" and "result" in request:
+                log({"legacyExecResponse": request.get("result")})
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "legacy-exec-smoke"
+                })
+                send_legacy_patch_request()
+                continue
+            if request_id == "legacy-patch-smoke" and "result" in request:
+                log({"legacyPatchResponse": request.get("result")})
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "legacy-patch-smoke"
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-smoke", "status": "completed"}
+                })
+                continue
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-smoke",
+                        "sessionId": "session-smoke",
+                        "preview": "Approval compatibility smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-smoke", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-smoke",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_permissions_request()
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
