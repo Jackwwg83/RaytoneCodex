@@ -99,7 +99,7 @@ settings_runtime = {
         "--personality-smoke-test",
         "--realtime-voices-smoke-test",
     ],
-    "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")"],
+    "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")", "--command-surface-smoke-test"],
     "usageBilling": [
         "account/usage/read",
         "account/rateLimits/read",
@@ -265,6 +265,10 @@ for page, tokens in page_runtime_tokens.items():
         require(page, token)
 
 menu_runtime_tokens = [
+    "--command-surface-smoke-test",
+    "CommandGroup(replacing: .appSettings)",
+    "CommandGroup(replacing: .newItem)",
+    "CommandMenu(\"工具\")",
     "thread/name/set",
     "thread/fork",
     "thread/compact/start",

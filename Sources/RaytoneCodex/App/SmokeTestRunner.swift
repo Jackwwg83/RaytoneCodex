@@ -83,6 +83,8 @@ enum SmokeTestRunner {
             runRuntimePagesSmoke()
         } else if CommandLine.arguments.contains("--settings-scene-smoke-test") {
             runSettingsSceneSmoke()
+        } else if CommandLine.arguments.contains("--command-surface-smoke-test") {
+            runCommandSurfaceSmoke()
         } else if CommandLine.arguments.contains("--sample-data-gate-smoke-test") {
             runSampleDataGateSmoke()
         } else if CommandLine.arguments.contains("--usage-activity-smoke-test") {
@@ -9410,6 +9412,134 @@ enum SmokeTestRunner {
                 "source": "Settings scene -> SettingsRouteView -> config/read"
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runCommandSurfaceSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let temporaryRoot = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexCommandSurfaceSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = temporaryRoot.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = temporaryRoot.appendingPathComponent("codex-home", isDirectory: true)
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "command surface smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+                let project = Project(name: "命令面 Smoke", path: workspaceURL.path)
+                let initialThread = ChatThread(
+                    title: "命令面起点",
+                    projectID: project.id,
+                    items: [TranscriptItem(kind: .userMessage("已有对话"))]
+                )
+                let store = SessionStore()
+                store.projects = [project]
+                store.threads = [initialThread]
+                store.selectedThreadID = initialThread.id
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                store.route = .settings
+                store.settingsPane = .general
+                let settingsCommandOK = store.route == .settings && store.settingsPane == .general
+
+                store.resetThread()
+                let resetThreadID = store.selectedThreadID
+                let newConversationOK = store.route == .thread &&
+                    resetThreadID != initialThread.id &&
+                    store.selectedThread.items.isEmpty &&
+                    store.pendingLocalImagePaths.isEmpty
+
+                store.newThread(in: project.id)
+                let projectNewThreadOK = store.route == .thread &&
+                    store.selectedThread.projectID == project.id &&
+                    store.selectedThread.items.isEmpty
+
+                store.showInspector = false
+                store.showInspector.toggle()
+                let inspectorCommandOK = store.showInspector
+
+                store.openToolPanel(.browser)
+                let browserCommandOK = store.showInspector && store.toolPanel == .browser
+                store.openToolPanel(.terminal)
+                let terminalCommandOK = store.showInspector && store.toolPanel == .terminal
+                store.openToolPanel(.sideChat)
+                let sideChatCommandOK = store.showInspector && store.toolPanel == .sideChat
+
+                store.openToolPanel(.files)
+                let deadline = Date().addingTimeInterval(20)
+                while Date() < deadline,
+                      !store.fileEntries.contains(where: { $0.name == "README.md" }),
+                      !store.filePanelStatusText.hasPrefix("读取失败") {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                let fileCommandOK = store.showInspector &&
+                    store.toolPanel == .files &&
+                    store.fileEntries.contains { $0.name == "README.md" } &&
+                    store.filePanelLastOperationSource.contains("fs/readDirectory")
+
+                let deletedThreadID = store.selectedThreadID
+                let threadCountBeforeDelete = store.threads.count
+                store.deleteThread(deletedThreadID)
+                let deleteCommandOK = threadCountBeforeDelete > store.threads.count &&
+                    !store.threads.contains { $0.id == deletedThreadID }
+
+                await store.stopAppServerForTesting()
+                try? fileManager.removeItem(at: temporaryRoot)
+
+                let ok = settingsCommandOK &&
+                    newConversationOK &&
+                    projectNewThreadOK &&
+                    inspectorCommandOK &&
+                    browserCommandOK &&
+                    terminalCommandOK &&
+                    sideChatCommandOK &&
+                    fileCommandOK &&
+                    deleteCommandOK
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "settingsCommandOK": settingsCommandOK,
+                    "newConversationOK": newConversationOK,
+                    "projectNewThreadOK": projectNewThreadOK,
+                    "inspectorCommandOK": inspectorCommandOK,
+                    "browserCommandOK": browserCommandOK,
+                    "terminalCommandOK": terminalCommandOK,
+                    "sideChatCommandOK": sideChatCommandOK,
+                    "fileCommandOK": fileCommandOK,
+                    "deleteCommandOK": deleteCommandOK,
+                    "route": "\(store.route)",
+                    "toolPanel": "\(store.toolPanel)",
+                    "threadCount": store.threads.count,
+                    "filePanelStatus": store.filePanelStatusText,
+                    "filePanelSource": store.filePanelLastOperationSource,
+                    "fileEntries": store.fileEntries.map(\.name),
+                    "source": "AppCommands/MenuBarExtra surface -> SessionStore + fs/readDirectory"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                try? fileManager.removeItem(at: temporaryRoot)
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
