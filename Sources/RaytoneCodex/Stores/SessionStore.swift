@@ -1068,16 +1068,6 @@ final class SessionStore: ObservableObject {
     }
 
     func startSelectedThreadCompaction() async {
-        guard let threadID = selectedThread.appServerThreadID else {
-            runtimeThreadSyncStatusText = "当前对话还没有 app-server threadId"
-            updateSelectedThread { thread in
-                thread.items.append(TranscriptItem(kind: .notice(Notice(
-                    level: .warning,
-                    text: "当前对话还没有连接到底层 Codex 线程，无法压缩历史。"
-                ))))
-            }
-            return
-        }
         guard !isRunning else {
             runtimeThreadSyncStatusText = "当前有运行中的轮次，暂不能压缩"
             return
@@ -1090,6 +1080,7 @@ final class SessionStore: ObservableObject {
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
             try await retryAfterActiveTurnSettles {
                 try await client.startThreadCompaction(threadID: threadID)
             }
@@ -1111,16 +1102,6 @@ final class SessionStore: ObservableObject {
     }
 
     func rollbackSelectedThreadLastTurn(confirm: Bool = true) async {
-        guard let threadID = selectedThread.appServerThreadID else {
-            runtimeThreadSyncStatusText = "当前对话还没有 app-server threadId"
-            updateSelectedThread { thread in
-                thread.items.append(TranscriptItem(kind: .notice(Notice(
-                    level: .warning,
-                    text: "当前对话还没有连接到底层 Codex 线程，无法回滚。"
-                ))))
-            }
-            return
-        }
         guard !isRunning else {
             runtimeThreadSyncStatusText = "当前有运行中的轮次，暂不能回滚"
             return
@@ -1138,6 +1119,7 @@ final class SessionStore: ObservableObject {
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
             let result = try await retryAfterActiveTurnSettles {
                 try await client.rollbackThread(id: threadID, numTurns: 1)
             }

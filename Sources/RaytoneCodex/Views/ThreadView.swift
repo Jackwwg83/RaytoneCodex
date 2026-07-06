@@ -122,11 +122,11 @@ private struct ThreadHeader: View {
                 Button("压缩对话历史") {
                     Task { await store.startSelectedThreadCompaction() }
                 }
-                .disabled(!hasRuntimeThread || store.isRunning)
+                .disabled(store.isRunning)
                 Button("回滚最后一轮", role: .destructive) {
                     Task { await store.rollbackSelectedThreadLastTurn() }
                 }
-                .disabled(!hasRuntimeThread || store.isRunning)
+                .disabled(store.isRunning)
                 Divider()
                 Button("删除对话", role: .destructive) {
                     store.deleteThread(store.selectedThreadID)
@@ -168,10 +168,6 @@ private struct ThreadHeader: View {
         .frame(height: Theme.Layout.headerHeight)
         .background(.bar)
         .overlay(alignment: .bottom) { Hairline() }
-    }
-
-    private var hasRuntimeThread: Bool {
-        store.selectedThread.appServerThreadID?.isEmpty == false
     }
 }
 

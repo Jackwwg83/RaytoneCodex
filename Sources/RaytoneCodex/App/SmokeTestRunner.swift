@@ -167,6 +167,8 @@ enum SmokeTestRunner {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
             runThreadManagementSmoke()
+        } else if CommandLine.arguments.contains("--thread-bootstrap-actions-smoke-test") {
+            runThreadBootstrapActionsSmoke()
         } else if CommandLine.arguments.contains("--thread-lifecycle-smoke-test") {
             runThreadLifecycleSmoke()
         } else if CommandLine.arguments.contains("--history-smoke-test") {
@@ -5328,6 +5330,111 @@ enum SmokeTestRunner {
                     "unarchiveStatus": unarchiveStatus,
                     "threadTitles": store.threads.map(\.title),
                     "archivedThreadIDs": store.archivedRuntimeThreads.map(\.id),
+                    "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runThreadBootstrapActionsSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadBootstrapActionsSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# Thread bootstrap actions smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeThreadBootstrapActionsAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-thread-bootstrap-actions"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_THREAD_BOOTSTRAP_ACTIONS_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "ThreadBootstrapActionsSmoke"
+                }
+
+                let compactInitialHadNoThreadID = store.selectedThread.appServerThreadID == nil
+                await store.startSelectedThreadCompaction()
+                await waitForStoreToSettle(store)
+                let compactThreadID = store.selectedThread.appServerThreadID ?? ""
+                let compactStatus = store.runtimeThreadSyncStatusText
+
+                let projectID = store.selectedThread.projectID
+                store.newThread(in: projectID)
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                let rollbackInitialHadNoThreadID = store.selectedThread.appServerThreadID == nil
+                await store.rollbackSelectedThreadLastTurn(confirm: false)
+                await waitForStoreToSettle(store)
+                let rollbackThreadID = store.selectedThread.appServerThreadID ?? ""
+                let rollbackStatus = store.runtimeThreadSyncStatusText
+                let rollbackTranscript = store.selectedThread.items.compactMap { item -> String? in
+                    switch item.kind {
+                    case let .userMessage(text), let .agentMessage(text):
+                        return text
+                    default:
+                        return nil
+                    }
+                }.joined(separator: "\n")
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let threadStartCount = logText.components(separatedBy: #""method":"thread/start""#).count - 1
+                let ok = compactInitialHadNoThreadID &&
+                    rollbackInitialHadNoThreadID &&
+                    compactThreadID == "thread-bootstrap-1" &&
+                    rollbackThreadID == "thread-bootstrap-2" &&
+                    compactStatus.hasPrefix("thread/compact/start") &&
+                    rollbackStatus.hasPrefix("thread/rollback") &&
+                    rollbackTranscript.contains("rollback restored user") &&
+                    rollbackTranscript.contains("rollback restored agent") &&
+                    threadStartCount >= 2 &&
+                    logText.contains(#""method":"thread/compact/start""#) &&
+                    logText.contains(#""method":"thread/rollback""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "compactInitialHadNoThreadID": compactInitialHadNoThreadID,
+                    "compactThreadID": compactThreadID,
+                    "compactStatus": compactStatus,
+                    "rollbackInitialHadNoThreadID": rollbackInitialHadNoThreadID,
+                    "rollbackThreadID": rollbackThreadID,
+                    "rollbackStatus": rollbackStatus,
+                    "rollbackTranscript": rollbackTranscript,
+                    "threadStartCount": threadStartCount,
                     "requestLogPreview": String(logText.prefix(2600))
                 ])
                 exit(ok ? 0 : 1)
@@ -10514,6 +10621,102 @@ enum SmokeTestRunner {
                         enablement[key] = bool(value)
                         accepted[key] = bool(value)
                 send_result(request_id, {"enablement": accepted})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeThreadBootstrapActionsAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_THREAD_BOOTSTRAP_ACTIONS_LOG")
+        cwd = os.getcwd()
+        thread_counter = 0
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def thread_payload(thread_id, include_turns=False):
+            payload = {
+                "id": thread_id,
+                "sessionId": "session-" + thread_id,
+                "name": "Bootstrap " + thread_id,
+                "preview": "thread action bootstrap",
+                "cwd": cwd,
+                "archived": False,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000042,
+                "status": {"type": "idle"},
+            }
+            if include_turns:
+                payload["turns"] = [{
+                    "id": "turn-rollback",
+                    "status": "completed",
+                    "startedAt": 1700000030,
+                    "items": [
+                        {
+                            "id": "user-rollback",
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "rollback restored user"}],
+                        },
+                        {
+                            "id": "agent-rollback",
+                            "type": "agentMessage",
+                            "text": "rollback restored agent",
+                        },
+                    ],
+                }]
+            return payload
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                thread_counter += 1
+                thread_id = f"thread-bootstrap-{thread_counter}"
+                send_result(request_id, {
+                    "thread": thread_payload(thread_id),
+                    "approvalPolicy": params.get("approvalPolicy", "on-request"),
+                    "approvalsReviewer": params.get("approvalsReviewer", "user"),
+                    "sandbox": params.get("sandbox", "danger-full-access"),
+                })
+            elif method == "thread/compact/start":
+                send_result(request_id, {})
+            elif method == "thread/rollback":
+                send_result(request_id, {
+                    "thread": thread_payload(params.get("threadId", "thread-bootstrap-rollback"), include_turns=True)
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
