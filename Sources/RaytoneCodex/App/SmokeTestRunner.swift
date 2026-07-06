@@ -1819,7 +1819,7 @@ enum SmokeTestRunner {
                 var logText = ""
                 while Date() < deadline {
                     logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                    if logText.contains(#""dynamicToolFilesResponse""#) {
+                    if logText.contains(#""dynamicToolReadFileResponse""#) {
                         break
                     }
                     try? await Task.sleep(nanoseconds: 100_000_000)
@@ -1833,23 +1833,33 @@ enum SmokeTestRunner {
                 let filesCommand = commands.last { command in
                     command.command.contains("动态工具 raytone_context.list_workspace_files")
                 }
+                let readFileCommand = commands.last { command in
+                    command.command.contains("动态工具 raytone_context.read_workspace_file")
+                }
                 let output = dynamicCommand?.output ?? ""
                 let filesOutput = filesCommand?.output ?? ""
+                let readFileOutput = readFileCommand?.output ?? ""
                 let normalizedOutput = output.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedFilesOutput = filesOutput.replacingOccurrences(of: "\\/", with: "/")
+                let normalizedReadFileOutput = readFileOutput.replacingOccurrences(of: "\\/", with: "/")
                 let registeredDynamicTool = logText.contains(#""dynamicTools""#) &&
                     logText.contains(#""namespace":"raytone_context""#) &&
                     logText.contains(#""name":"workspace_snapshot""#) &&
-                    logText.contains(#""name":"list_workspace_files""#)
+                    logText.contains(#""name":"list_workspace_files""#) &&
+                    logText.contains(#""name":"read_workspace_file""#)
                 let requestObserved = logText.contains(#""method":"item/tool/call""#) &&
                     logText.contains(#""tool":"workspace_snapshot""#) &&
-                    logText.contains(#""tool":"list_workspace_files""#)
+                    logText.contains(#""tool":"list_workspace_files""#) &&
+                    logText.contains(#""tool":"read_workspace_file""#)
                 let responseObserved = logText.contains(#""dynamicToolResponse""#) &&
                     logText.contains(#""dynamicToolFilesResponse""#) &&
+                    logText.contains(#""dynamicToolReadFileResponse""#) &&
                     logText.contains(#""success":true"#) &&
                     logText.contains(#""contentItems""#)
                 let commandExecObserved = logText.contains(#""method":"command/exec""#) ||
                     logText.contains(#""method": "command/exec""#)
+                let readFileRequestObserved = logText.contains(#""method":"fs/readFile""#) ||
+                    logText.contains(#""method": "fs/readFile""#)
                 let freshDiffObserved = output.contains(#""gitDiff""#) &&
                     output.contains(#""files" : 1"#) &&
                     output.contains(#""additions" : 1"#) &&
@@ -1858,14 +1868,22 @@ enum SmokeTestRunner {
                     filesOutput.contains(#""entryCount""#) &&
                     normalizedFilesOutput.contains("README.md") &&
                     normalizedFilesOutput.contains(workspaceURL.path)
+                let fileReadObserved = readFileOutput.contains(#""content""#) &&
+                    readFileOutput.contains(#""byteCount""#) &&
+                    normalizedReadFileOutput.contains("README.md") &&
+                    normalizedReadFileOutput.contains("raytone dynamic tool smoke") &&
+                    normalizedReadFileOutput.contains(workspaceURL.path)
                 let ok = registeredDynamicTool &&
                     requestObserved &&
                     responseObserved &&
                     commandExecObserved &&
+                    readFileRequestObserved &&
                     freshDiffObserved &&
                     fileListObserved &&
+                    fileReadObserved &&
                     dynamicCommand?.status == .succeeded &&
                     filesCommand?.status == .succeeded &&
+                    readFileCommand?.status == .succeeded &&
                     output.contains(#""workspacePath""#) &&
                     normalizedOutput.contains(workspaceURL.path) &&
                     output.contains(#""approvalPolicy""#) &&
@@ -1881,13 +1899,17 @@ enum SmokeTestRunner {
                     "requestObserved": requestObserved,
                     "responseObserved": responseObserved,
                     "commandExecObserved": commandExecObserved,
+                    "readFileRequestObserved": readFileRequestObserved,
                     "freshDiffObserved": freshDiffObserved,
                     "fileListObserved": fileListObserved,
+                    "fileReadObserved": fileReadObserved,
                     "isRunning": store.isRunning,
                     "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
                     "filesCommandStatus": runStatusName(filesCommand?.status),
+                    "readFileCommandStatus": runStatusName(readFileCommand?.status),
                     "dynamicCommandOutputPreview": String(output.prefix(1200)),
                     "filesCommandOutputPreview": String(filesOutput.prefix(1200)),
+                    "readFileCommandOutputPreview": String(readFileOutput.prefix(1200)),
                     "requestLogPreview": String(logText.prefix(2400))
                 ])
                 exit(ok ? 0 : 1)
@@ -12351,6 +12373,7 @@ enum SmokeTestRunner {
     private static var fakeDynamicToolAppServerScript: String {
         #"""
         #!/usr/bin/env python3
+        import base64
         import json
         import os
         import subprocess
@@ -12359,6 +12382,7 @@ enum SmokeTestRunner {
         log_path = os.environ.get("RAYTONE_DYNAMIC_TOOL_LOG")
         tool_arguments = {"includeDiffStats": True}
         file_tool_arguments = {"path": ".", "maxEntries": 5, "includeHidden": False}
+        read_file_tool_arguments = {"path": "README.md", "maxBytes": 200}
 
         def log(message):
             if not log_path:
@@ -12451,6 +12475,32 @@ enum SmokeTestRunner {
                     "threadId": "thread-smoke",
                     "requestId": "dynamic-tool-files-smoke"
                 })
+                send_dynamic_tool_request(
+                    "dynamic-tool-read-file-smoke",
+                    "call-read-file-smoke",
+                    "read_workspace_file",
+                    read_file_tool_arguments,
+                )
+                continue
+            if request_id == "dynamic-tool-read-file-smoke" and "result" in request:
+                result = request.get("result") or {}
+                log({"dynamicToolReadFileResponse": result})
+                send_notification("item/completed", {
+                    "item": {
+                        "id": "call-read-file-smoke",
+                        "type": "dynamicToolCall",
+                        "namespace": "raytone_context",
+                        "tool": "read_workspace_file",
+                        "arguments": read_file_tool_arguments,
+                        "status": "completed",
+                        "success": result.get("success"),
+                        "contentItems": result.get("contentItems") or []
+                    }
+                })
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "dynamic-tool-read-file-smoke"
+                })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-smoke", "status": "completed"}
                 })
@@ -12499,6 +12549,17 @@ enum SmokeTestRunner {
                         })
                     result = {"entries": entries}
                     log({"readDirectoryResponse": result})
+                    send_result(request_id, result)
+                except Exception as exc:
+                    send_error(request_id, str(exc))
+            elif method == "fs/readFile":
+                params = request.get("params") or {}
+                path = params.get("path") or os.getcwd()
+                try:
+                    with open(path, "rb") as handle:
+                        data = handle.read()
+                    result = {"dataBase64": base64.b64encode(data).decode("ascii")}
+                    log({"readFileResponse": {"path": path, "byteCount": len(data)}})
                     send_result(request_id, result)
                 except Exception as exc:
                     send_error(request_id, str(exc))

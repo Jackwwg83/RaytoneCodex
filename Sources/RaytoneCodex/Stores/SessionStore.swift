@@ -9243,6 +9243,9 @@ final class SessionStore: ObservableObject {
         if namespace == "raytone_context", tool == "list_workspace_files" {
             return await listWorkspaceFilesDynamicToolText(arguments: arguments)
         }
+        if namespace == "raytone_context", tool == "read_workspace_file" {
+            return await readWorkspaceFileDynamicToolText(arguments: arguments)
+        }
 
         let qualifiedName = Self.dynamicToolQualifiedName(namespace: namespace, tool: tool)
         return (
@@ -9288,6 +9291,51 @@ final class SessionStore: ObservableObject {
             return (true, payload.prettyJSONString)
         } catch {
             return (false, "fs/readDirectory 失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func readWorkspaceFileDynamicToolText(arguments: JSONValue) async -> (success: Bool, text: String) {
+        guard let client = appServerClient else {
+            return (false, "Codex app-server 尚未连接，无法读取工作区文件。")
+        }
+
+        guard let rawPath = arguments["path"]?.stringValue,
+              !rawPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return (false, "必须提供工作区内文件路径。")
+        }
+        guard let targetPath = Self.dynamicToolWorkspacePath(rawPath, workspacePath: workspacePath) else {
+            return (false, "路径必须位于当前工作区内：\(rawPath)")
+        }
+
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: targetPath, isDirectory: &isDirectory), isDirectory.boolValue {
+            return (false, "目标路径是目录，请改用 list_workspace_files：\(Self.dynamicToolRelativeWorkspacePath(targetPath, workspacePath: workspacePath))")
+        }
+
+        let rawLimit = arguments["maxBytes"]?.intValue ?? 32_768
+        let maxBytes = min(max(rawLimit, 1), 200_000)
+
+        do {
+            let data = try await client.readFile(path: targetPath)
+            let limitedData = Data(data.prefix(maxBytes))
+            let truncated = data.count > limitedData.count
+            let looksBinary = limitedData.contains(0)
+            let content = looksBinary
+                ? "文件看起来是二进制内容，RaytoneCodex 已省略正文。"
+                : String(decoding: limitedData, as: UTF8.self)
+            let payload: JSONValue = .object([
+                "workspacePath": .string(workspacePath),
+                "path": .string(targetPath),
+                "relativePath": .string(Self.dynamicToolRelativeWorkspacePath(targetPath, workspacePath: workspacePath)),
+                "byteCount": .number(Double(data.count)),
+                "returnedBytes": .number(Double(limitedData.count)),
+                "truncated": .bool(truncated),
+                "encoding": .string(looksBinary ? "binary" : "utf-8"),
+                "content": .string(content)
+            ])
+            return (true, payload.prettyJSONString)
+        } catch {
+            return (false, "fs/readFile 失败：\(error.localizedDescription)")
         }
     }
 

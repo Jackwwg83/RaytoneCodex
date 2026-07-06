@@ -2208,6 +2208,30 @@ public actor CodexAppServerClient {
                     ]),
                     "required": .array([])
                 ])
+            ]),
+            .object([
+                "namespace": .string("raytone_context"),
+                "name": .string("read_workspace_file"),
+                "description": .string("通过 Codex app-server 的 fs/readFile 读取当前工作区内某个文本文件。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object([
+                            "type": .string("string"),
+                            "description": .string("工作区内的相对文件路径。也允许工作区内的绝对路径。")
+                        ]),
+                        "maxBytes": .object([
+                            "type": .string("integer"),
+                            "minimum": .number(1),
+                            "maximum": .number(200_000),
+                            "description": .string("最多返回多少字节，默认 32768。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("path")
+                    ])
+                ])
             ])
         ]
     }
