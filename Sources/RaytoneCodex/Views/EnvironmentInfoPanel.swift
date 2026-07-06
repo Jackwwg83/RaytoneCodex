@@ -11,6 +11,7 @@ struct EnvironmentInfoPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     environmentRows
+                    activeGoalSection
                     progressSection
                     if !store.recentGuardianDeniedActions.isEmpty {
                         guardianDeniedSection
@@ -204,6 +205,40 @@ struct EnvironmentInfoPanel: View {
         }
     }
 
+    @ViewBuilder
+    private var activeGoalSection: some View {
+        if let goal = store.selectedThread.activeGoal {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionLabel(text: "目标")
+                    ActiveGoalDetailCard(
+                        goal: goal,
+                        now: timeline.date,
+                        runtimeStatus: store.runtimeCatalogStatusText,
+                        refresh: {
+                            Task { await store.refreshSelectedRuntimeGoal() }
+                        },
+                        edit: {
+                            store.promptEditActiveGoal()
+                        },
+                        togglePause: {
+                            Task {
+                                if goal.status == .paused {
+                                    await store.resumeActiveGoal()
+                                } else {
+                                    await store.pauseActiveGoal()
+                                }
+                            }
+                        },
+                        clear: {
+                            Task { await store.clearActiveGoal() }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     private var guardianDeniedSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "自动审批拒绝")
@@ -314,6 +349,162 @@ struct EnvironmentInfoPanel: View {
             .split(separator: "\n", omittingEmptySubsequences: true)
             .filter { !$0.hasPrefix("##") }
             .count
+    }
+}
+
+private struct ActiveGoalDetailCard: View {
+    let goal: ActiveGoal
+    let now: Date
+    let runtimeStatus: String
+    let refresh: () -> Void
+    let edit: () -> Void
+    let togglePause: () -> Void
+    let clear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: statusSymbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(statusTint)
+                    .frame(width: 18, height: 18)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text(statusName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(goal.runtimeBacked ? "thread/goal/get" : "本地状态")
+                            .font(Theme.mono(9.5, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
+                    Text(goal.title)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(spacing: 6) {
+                GoalDetailRow(label: "Token", value: tokenText)
+                GoalDetailRow(label: "预算", value: budgetText)
+                GoalDetailRow(label: "耗时", value: elapsedText)
+                GoalDetailRow(label: "最近状态", value: runtimeStatus.isEmpty ? "未刷新" : runtimeStatus)
+            }
+
+            HStack(spacing: 8) {
+                Button("刷新") {
+                    refresh()
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button("编辑") {
+                    edit()
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button(goal.status == .paused ? "继续" : "暂停") {
+                    togglePause()
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button("清除") {
+                    clear()
+                }
+                .buttonStyle(ChipButtonStyle(tint: Theme.danger))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .help("来自 Codex app-server thread/goal/get 的当前目标详情")
+    }
+
+    private var statusSymbol: String {
+        switch goal.status {
+        case .active:
+            return "arrow.triangle.2.circlepath"
+        case .paused:
+            return "pause.circle.fill"
+        case .complete:
+            return "checkmark.circle.fill"
+        case .blocked, .usageLimited, .budgetLimited:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var statusTint: Color {
+        switch goal.status {
+        case .active:
+            return Theme.info
+        case .paused:
+            return Theme.warning
+        case .complete:
+            return Theme.success
+        case .blocked, .usageLimited, .budgetLimited:
+            return Theme.danger
+        }
+    }
+
+    private var statusName: String {
+        switch goal.status {
+        case .active:
+            return "进行中"
+        case .paused:
+            return "已暂停"
+        case .blocked:
+            return "已阻塞"
+        case .usageLimited:
+            return "用量受限"
+        case .budgetLimited:
+            return "预算受限"
+        case .complete:
+            return "已完成"
+        }
+    }
+
+    private var tokenText: String {
+        SessionStore.compactNumber(goal.tokensUsed)
+    }
+
+    private var budgetText: String {
+        goal.tokenBudget.map(SessionStore.compactNumber) ?? "未设置"
+    }
+
+    private var elapsedText: String {
+        let seconds = goal.status == .active
+            ? max(0, Int(now.timeIntervalSince(goal.startedAt)))
+            : max(0, goal.timeUsedSeconds)
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let secs = seconds % 60
+        return "\(days)d \(hours)h \(minutes)m \(secs)s"
+    }
+}
+
+private struct GoalDetailRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textTertiary)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
     }
 }
 
