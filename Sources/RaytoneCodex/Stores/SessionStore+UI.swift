@@ -2,6 +2,28 @@ import AppKit
 import Foundation
 import RaytoneCodexCore
 
+enum HomeConnectionKind: String, CaseIterable {
+    case messaging
+    case email
+    case files
+
+    var title: String {
+        switch self {
+        case .messaging: "连接消息传送"
+        case .email: "连接电子邮件"
+        case .files: "连接文件"
+        }
+    }
+
+    var emptyText: String {
+        switch self {
+        case .messaging: "未发现已授权消息连接"
+        case .email: "未发现已授权邮件连接"
+        case .files: "未发现工作区文件"
+        }
+    }
+}
+
 /// Additive UI affordances layered on top of the core `SessionStore`: per-project
 /// thread creation, deletion, approval decisions, and one-time sample seeding so
 /// the sidebar resembles a real Codex workspace. Kept separate so the core store
@@ -619,6 +641,39 @@ extension SessionStore {
         route = .settings
         settingsPane = .connections
         Task { await refreshIntegrationRuntime() }
+    }
+
+    @discardableResult
+    func openHomeConnection(_ kind: HomeConnectionKind) async -> Bool {
+        homeConnectionStatusText = "正在打开\(kind.title)…"
+
+        switch kind {
+        case .messaging, .email:
+            route = .settings
+            settingsPane = .connections
+            await refreshIntegrationRuntime(forceRefetchApps: true)
+            homeConnectionsRefreshedAt = Date()
+
+            let names = kind == .messaging ? messagingConnectionNames : emailConnectionNames
+            let connectionText = names.isEmpty ? kind.emptyText : names.joined(separator: "、")
+            let ok = !runtimeCatalogStatusText.hasPrefix("集成状态读取失败")
+            homeConnectionStatusText = "\(kind.title)：app/list \(runtimeApps.count) 个 · MCP \(runtimeMCPServers.count) 个 · \(connectionText)"
+            return ok
+
+        case .files:
+            route = .thread
+            showInspector = true
+            toolPanel = .files
+            await loadFilePanelDirectory(workspacePath)
+            homeConnectionsRefreshedAt = Date()
+
+            let ok = !filePanelStatusText.hasPrefix("读取失败")
+            let fileText = workspaceFileConnectionCount > 0
+                ? "文件 \(workspaceFileConnectionCount) 个 · \(filePanelStatusText)"
+                : kind.emptyText
+            homeConnectionStatusText = "\(kind.title)：fs/readDirectory \(Project.abbreviate(filePanelPath)) · \(fileText)"
+            return ok
+        }
     }
 
     func recoverConnection(

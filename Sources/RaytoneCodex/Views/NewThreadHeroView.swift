@@ -299,7 +299,7 @@ struct NewThreadHeroView: View {
                 subtitle: store.messagingConnectionSubtitle,
                 connected: store.messagingConnectionCount > 0
             ) {
-                store.openConnectionsSettings()
+                Task { await store.openHomeConnection(.messaging) }
             }
             ConnectionCard(
                 symbol: "envelope",
@@ -307,7 +307,7 @@ struct NewThreadHeroView: View {
                 subtitle: store.emailConnectionSubtitle,
                 connected: store.emailConnectionCount > 0
             ) {
-                store.openConnectionsSettings()
+                Task { await store.openHomeConnection(.email) }
             }
             ConnectionCard(
                 symbol: "folder",
@@ -315,7 +315,7 @@ struct NewThreadHeroView: View {
                 subtitle: store.workspaceFileConnectionSubtitle,
                 connected: store.workspaceFileConnectionCount > 0
             ) {
-                store.connectWorkspaceFiles()
+                Task { await store.openHomeConnection(.files) }
             }
         }
     }

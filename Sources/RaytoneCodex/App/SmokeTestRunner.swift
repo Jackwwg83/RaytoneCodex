@@ -75,6 +75,8 @@ enum SmokeTestRunner {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
+        } else if CommandLine.arguments.contains("--home-connection-actions-smoke-test") {
+            runHomeConnectionActionsSmoke()
         } else if CommandLine.arguments.contains("--app-mention-config-smoke-test") {
             runAppMentionConfigSmoke()
         } else if CommandLine.arguments.contains("--app-list-updated-smoke-test") {
@@ -6813,6 +6815,95 @@ enum SmokeTestRunner {
                 "worktreeStatus": worktreeStatus,
                 "worktreeErrors": worktreeErrors,
                 "worktrees": store.workspaceWorktrees
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runHomeConnectionActionsSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.filePanelPath = workspacePath
+
+            fputs("home-connection-actions-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("home-connection-actions-smoke: refreshNewThreadHeroRuntime\n", stderr)
+            await store.refreshNewThreadHeroRuntime()
+            let initialStatus = store.homeConnectionStatusText
+
+            fputs("home-connection-actions-smoke: open files card\n", stderr)
+            let filesOK = await store.openHomeConnection(.files)
+            let fileNames = store.fileEntries.map(\.name)
+            let filesPayload: [String: Any] = [
+                "ok": filesOK,
+                "route": "\(store.route)",
+                "toolPanel": "\(store.toolPanel)",
+                "status": store.homeConnectionStatusText,
+                "filePanelStatus": store.filePanelStatusText,
+                "path": store.filePanelPath,
+                "entryCount": store.fileEntries.count,
+                "fileCount": store.workspaceFileConnectionCount,
+                "preview": Array(fileNames.prefix(12))
+            ]
+
+            fputs("home-connection-actions-smoke: open messaging card\n", stderr)
+            let messagingOK = await store.openHomeConnection(.messaging)
+            let messagingPayload: [String: Any] = [
+                "ok": messagingOK,
+                "route": "\(store.route)",
+                "settingsPane": "\(store.settingsPane)",
+                "status": store.homeConnectionStatusText,
+                "runtimeCatalogStatus": store.runtimeCatalogStatusText,
+                "count": store.messagingConnectionCount,
+                "names": store.messagingConnectionNames
+            ]
+
+            fputs("home-connection-actions-smoke: open email card\n", stderr)
+            let emailOK = await store.openHomeConnection(.email)
+            let emailPayload: [String: Any] = [
+                "ok": emailOK,
+                "route": "\(store.route)",
+                "settingsPane": "\(store.settingsPane)",
+                "status": store.homeConnectionStatusText,
+                "runtimeCatalogStatus": store.runtimeCatalogStatusText,
+                "count": store.emailConnectionCount,
+                "names": store.emailConnectionNames
+            ]
+
+            let ok = store.runtimeSnapshot.executable != nil &&
+                filesOK &&
+                messagingOK &&
+                emailOK &&
+                !initialStatus.hasPrefix("集成状态读取失败") &&
+                store.homeConnectionsRefreshedAt != nil &&
+                (filesPayload["fileCount"] as? Int ?? 0) > 0 &&
+                (filesPayload["route"] as? String) == "thread" &&
+                (filesPayload["toolPanel"] as? String) == "files" &&
+                (messagingPayload["route"] as? String) == "settings" &&
+                (messagingPayload["settingsPane"] as? String) == "connections" &&
+                (emailPayload["route"] as? String) == "settings" &&
+                (emailPayload["settingsPane"] as? String) == "connections"
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "source": "app/list + mcpServerStatus/list + fs/readDirectory",
+                "initialStatus": initialStatus,
+                "appCount": store.runtimeApps.count,
+                "mcpServerCount": store.runtimeMCPServers.count,
+                "runtimeErrors": store.runtimeCatalogErrors,
+                "files": filesPayload,
+                "messaging": messagingPayload,
+                "email": emailPayload
             ])
             exit(ok ? 0 : 1)
         }
