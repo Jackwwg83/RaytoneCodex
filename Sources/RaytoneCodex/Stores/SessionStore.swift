@@ -138,6 +138,7 @@ final class SessionStore: ObservableObject {
     @Published var workspaceGitStatusText = ""
     @Published var workspacePullRequestStatusText = "未刷新"
     @Published var workspaceWorktrees: [String] = []
+    @Published var workspaceWorktreeStatusSource = ""
     @Published var workspaceBranches: [String] = []
     @Published var workspaceBranchStatusText = "未刷新"
     @Published var workspaceExecutionMode: WorkspaceExecutionMode = .local
@@ -1631,8 +1632,24 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func openWorkspaceWorktree(_ path: String, revealFiles: Bool = false) async -> Bool {
         let normalizedPath = Self.canonicalPath(path)
-        guard FileManager.default.fileExists(atPath: normalizedPath) else {
-            runtimeCatalogStatusText = "工作树不存在：\(Project.abbreviate(normalizedPath))"
+        runtimeCatalogStatusText = "正在验证工作树：\(Project.abbreviate(normalizedPath))"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let metadata = try await client.getMetadata(path: normalizedPath)
+            workspaceWorktreeStatusSource = "fs/getMetadata + worktreeSwitch"
+            guard metadata.isDirectory else {
+                runtimeCatalogStatusText = "工作树不是目录：\(Project.abbreviate(normalizedPath))"
+                return false
+            }
+        } catch {
+            guard !Self.isCancellation(error) else {
+                runtimeCatalogStatusText = "工作树切换已取消"
+                return false
+            }
+            runtimeCatalogStatusText = "工作树验证失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
             return false
         }
 
@@ -1653,6 +1670,7 @@ final class SessionStore: ObservableObject {
         await refreshWorkspaceGitDiff()
         await refreshWorkspaceWorktrees()
 
+        workspaceWorktreeStatusSource = "fs/getMetadata + worktreeSwitch + command/exec git worktree list"
         runtimeCatalogStatusText = "已切换工作树：\(Project.abbreviate(normalizedPath))"
         runtimeCatalogIsRefreshing = false
         return true
@@ -4949,6 +4967,7 @@ final class SessionStore: ObservableObject {
                 timeoutMs: 10_000
             )
             workspaceWorktrees = Self.parseWorktreeOutput(result.stdout)
+            workspaceWorktreeStatusSource = "command/exec git worktree list"
             runtimeCatalogStatusText = "git worktree：\(workspaceWorktrees.count) 个工作树"
         } catch {
             runtimeCatalogStatusText = "工作树读取失败：\(error.localizedDescription)"

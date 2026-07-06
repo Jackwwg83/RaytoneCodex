@@ -11002,6 +11002,7 @@ enum SmokeTestRunner {
                 let switched = await store.openWorkspaceWorktree(linkedWorktree.path, revealFiles: true)
                 let fileNames = store.fileEntries.map(\.name)
                 let finalStatus = store.runtimeCatalogStatusText
+                let worktreeSource = store.workspaceWorktreeStatusSource
                 let branch = store.selectedProject.branch ?? ""
                 let normalizedLinked = SessionStore.canonicalPath(linkedWorktree.path)
                 let normalizedMain = SessionStore.canonicalPath(mainWorkspace.path)
@@ -11019,6 +11020,8 @@ enum SmokeTestRunner {
                     branch == "raytone-linked" &&
                     store.workspaceWorktrees.contains(normalizedMain) &&
                     store.workspaceWorktrees.contains(normalizedLinked) &&
+                    worktreeSource.contains("fs/getMetadata + worktreeSwitch") &&
+                    worktreeSource.contains("command/exec git worktree list") &&
                     finalStatus.contains("已切换工作树")
 
                 emitJSON([
@@ -11041,7 +11044,8 @@ enum SmokeTestRunner {
                     "branchStatus": store.workspaceBranchStatusText,
                     "finalStatus": finalStatus,
                     "worktrees": store.workspaceWorktrees,
-                    "source": "command/exec git worktree list + command/exec git branch + fs/readDirectory"
+                    "worktreeSource": worktreeSource,
+                    "source": "fs/getMetadata + worktreeSwitch + command/exec git worktree list + command/exec git branch + fs/readDirectory"
                 ])
                 try? FileManager.default.removeItem(at: temporaryRoot)
                 exit(ok ? 0 : 1)
