@@ -400,6 +400,19 @@ public struct CodexRuntimePluginSharePrincipal: Equatable, Sendable, Identifiabl
     }
 }
 
+public struct CodexRuntimePluginShareTarget: Equatable, Sendable, Identifiable {
+    public var id: String { "\(principalType):\(principalID):\(role)" }
+    public var principalID: String
+    public var principalType: String
+    public var role: String
+
+    public init(principalID: String, principalType: String, role: String) {
+        self.principalID = principalID
+        self.principalType = principalType
+        self.role = role
+    }
+}
+
 public struct CodexRuntimePluginShareContext: Equatable, Sendable {
     public var remotePluginID: String
     public var remoteVersion: String?
@@ -425,6 +438,26 @@ public struct CodexRuntimePluginShareContext: Equatable, Sendable {
         self.creatorAccountUserID = creatorAccountUserID
         self.creatorName = creatorName
         self.sharePrincipals = sharePrincipals
+    }
+}
+
+public struct CodexRuntimePluginShareSaveResult: Equatable, Sendable {
+    public var remotePluginID: String
+    public var shareURL: String
+
+    public init(remotePluginID: String, shareURL: String) {
+        self.remotePluginID = remotePluginID
+        self.shareURL = shareURL
+    }
+}
+
+public struct CodexRuntimePluginShareUpdateResult: Equatable, Sendable {
+    public var discoverability: String
+    public var principals: [CodexRuntimePluginSharePrincipal]
+
+    public init(discoverability: String, principals: [CodexRuntimePluginSharePrincipal]) {
+        self.discoverability = discoverability
+        self.principals = principals
     }
 }
 
@@ -464,6 +497,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
     public var marketplaceName: String
     public var marketplaceDisplayName: String
     public var marketplacePath: String?
+    public var localPluginPath: String?
     public var category: String?
     public var developerName: String?
     public var sourceType: String
@@ -486,6 +520,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
         marketplaceName: String,
         marketplaceDisplayName: String,
         marketplacePath: String?,
+        localPluginPath: String?,
         category: String?,
         developerName: String?,
         sourceType: String,
@@ -503,6 +538,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
         self.marketplaceName = marketplaceName
         self.marketplaceDisplayName = marketplaceDisplayName
         self.marketplacePath = marketplacePath
+        self.localPluginPath = localPluginPath
         self.category = category
         self.developerName = developerName
         self.sourceType = sourceType
@@ -2165,6 +2201,41 @@ public actor CodexAppServerClient {
         return try Self.pluginShareCheckoutResult(from: result)
     }
 
+    public func saveSharedPlugin(
+        pluginPath: String,
+        remotePluginID: String? = nil,
+        discoverability: String? = nil,
+        shareTargets: [CodexRuntimePluginShareTarget]? = nil
+    ) async throws -> CodexRuntimePluginShareSaveResult {
+        var params: [String: JSONValue] = [
+            "pluginPath": .string(pluginPath)
+        ]
+        if let remotePluginID, !remotePluginID.isEmpty {
+            params["remotePluginId"] = .string(remotePluginID)
+        }
+        if let discoverability, !discoverability.isEmpty {
+            params["discoverability"] = .string(discoverability)
+        }
+        if let shareTargets {
+            params["shareTargets"] = .array(shareTargets.map(Self.pluginShareTargetPayload))
+        }
+        let result = try await request(method: "plugin/share/save", params: .object(params))
+        return try Self.pluginShareSaveResult(from: result)
+    }
+
+    public func updateSharedPluginTargets(
+        remotePluginID: String,
+        discoverability: String,
+        shareTargets: [CodexRuntimePluginShareTarget] = []
+    ) async throws -> CodexRuntimePluginShareUpdateResult {
+        let result = try await request(method: "plugin/share/updateTargets", params: .object([
+            "remotePluginId": .string(remotePluginID),
+            "discoverability": .string(discoverability),
+            "shareTargets": .array(shareTargets.map(Self.pluginShareTargetPayload))
+        ]))
+        return Self.pluginShareUpdateResult(from: result)
+    }
+
     public func deleteSharedPlugin(remotePluginID: String) async throws {
         _ = try await request(method: "plugin/share/delete", params: .object([
             "remotePluginId": .string(remotePluginID)
@@ -3438,12 +3509,16 @@ public actor CodexAppServerClient {
                   let plugin = item["plugin"]?.objectValue else {
                 return nil
             }
-            return runtimePlugin(
+            var parsed = runtimePlugin(
                 from: plugin,
                 marketplaceName: "workspace-shared-with-me",
                 marketplaceDisplayName: "共享插件",
                 marketplacePath: item["localPluginPath"]?.pathString
             )
+            if parsed?.localPluginPath == nil {
+                parsed?.localPluginPath = item["localPluginPath"]?.pathString
+            }
+            return parsed
         } ?? []
 
         return CodexRuntimePluginCatalog(
@@ -3494,6 +3569,9 @@ public actor CodexAppServerClient {
             ?? interface?["longDescription"]?.stringValue
             ?? plugin["keywords"]?.stringList.joined(separator: " · ")
             ?? "Codex 插件"
+        let source = plugin["source"]?.objectValue
+        let sourceType = source?["type"]?.stringValue ?? "unknown"
+        let localPluginPath = sourceType == "local" ? source?["path"]?.pathString : nil
         return CodexRuntimePlugin(
             id: plugin["id"]?.stringValue ?? "\(name)@\(marketplaceName)",
             name: name,
@@ -3502,9 +3580,10 @@ public actor CodexAppServerClient {
             marketplaceName: marketplaceName,
             marketplaceDisplayName: marketplaceDisplayName,
             marketplacePath: marketplacePath,
+            localPluginPath: localPluginPath,
             category: interface?["category"]?.stringValue,
             developerName: interface?["developerName"]?.stringValue,
-            sourceType: plugin["source"]?["type"]?.stringValue ?? "unknown",
+            sourceType: sourceType,
             installPolicy: plugin["installPolicy"]?.stringValue ?? "UNKNOWN",
             authPolicy: plugin["authPolicy"]?.stringValue ?? "UNKNOWN",
             availability: plugin["availability"]?.stringValue ?? "AVAILABLE",
@@ -3545,6 +3624,44 @@ public actor CodexAppServerClient {
             creatorAccountUserID: object["creatorAccountUserId"]?.stringValue,
             creatorName: object["creatorName"]?.stringValue,
             sharePrincipals: principals
+        )
+    }
+
+    private static func pluginShareTargetPayload(_ target: CodexRuntimePluginShareTarget) -> JSONValue {
+        .object([
+            "principalId": .string(target.principalID),
+            "principalType": .string(target.principalType),
+            "role": .string(target.role)
+        ])
+    }
+
+    public static func pluginShareSaveResult(from result: JSONValue) throws -> CodexRuntimePluginShareSaveResult {
+        guard let remotePluginID = result["remotePluginId"]?.stringValue,
+              let shareURL = result["shareUrl"]?.stringValue else {
+            throw CodexAppServerError.invalidResponse("Missing plugin/share/save response fields.")
+        }
+        return CodexRuntimePluginShareSaveResult(remotePluginID: remotePluginID, shareURL: shareURL)
+    }
+
+    public static func pluginShareUpdateResult(from result: JSONValue) -> CodexRuntimePluginShareUpdateResult {
+        let principals = result["principals"]?.arrayValue?.compactMap { principalValue -> CodexRuntimePluginSharePrincipal? in
+            guard let principal = principalValue.objectValue,
+                  let principalID = principal["principalId"]?.stringValue,
+                  let principalType = principal["principalType"]?.stringValue,
+                  let role = principal["role"]?.stringValue,
+                  let name = principal["name"]?.stringValue else {
+                return nil
+            }
+            return CodexRuntimePluginSharePrincipal(
+                principalID: principalID,
+                principalType: principalType,
+                role: role,
+                name: name
+            )
+        } ?? []
+        return CodexRuntimePluginShareUpdateResult(
+            discoverability: result["discoverability"]?.stringValue ?? "",
+            principals: principals
         )
     }
 

@@ -514,8 +514,8 @@ struct PluginsPage: View {
                     pluginDetailMetric("App", detail.apps.count)
                 }
 
-                if let shareContext = detail.plugin.shareContext {
-                    pluginShareActions(detail.plugin, shareContext: shareContext)
+                if detail.plugin.localPluginPath != nil || detail.plugin.shareContext != nil {
+                    pluginShareActions(detail.plugin, shareContext: detail.plugin.shareContext)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -639,17 +639,28 @@ struct PluginsPage: View {
 
     private func pluginShareActions(
         _ plugin: CodexRuntimePlugin,
-        shareContext: CodexRuntimePluginShareContext
+        shareContext: CodexRuntimePluginShareContext?
     ) -> some View {
         HStack(spacing: 8) {
-            Button {
-                Task { await store.checkoutSharedPlugin(plugin) }
-            } label: {
-                Label("检出共享插件", systemImage: "square.and.arrow.down")
+            if plugin.localPluginPath != nil {
+                Button {
+                    Task { await store.saveSharedPlugin(plugin) }
+                } label: {
+                    Label(shareContext == nil ? "创建共享链接" : "保存共享插件", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
             }
-            .buttonStyle(ChipButtonStyle(prominent: true))
 
-            if shareContext.shareURL != nil {
+            if shareContext != nil && plugin.localPluginPath == nil {
+                Button {
+                    Task { await store.checkoutSharedPlugin(plugin) }
+                } label: {
+                    Label("检出共享插件", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+            }
+
+            if let shareContext, shareContext.shareURL != nil {
                 Button {
                     store.openPluginShareURL(plugin)
                 } label: {
@@ -658,14 +669,32 @@ struct PluginsPage: View {
                 .buttonStyle(ChipButtonStyle())
             }
 
+            if shareContext != nil {
+                Menu {
+                    Button("设为未列出链接") {
+                        Task { await store.updateSharedPluginDiscoverability(plugin, discoverability: "UNLISTED") }
+                    }
+                    Button("设为私有") {
+                        Task { await store.updateSharedPluginDiscoverability(plugin, discoverability: "PRIVATE") }
+                    }
+                } label: {
+                    Label("共享权限", systemImage: "person.2.badge.gearshape")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .buttonStyle(ChipButtonStyle())
+            }
+
             Spacer(minLength: 0)
 
-            Button {
-                Task { await store.deleteSharedPlugin(plugin) }
-            } label: {
-                Label("删除分享", systemImage: "trash")
+            if shareContext != nil {
+                Button {
+                    Task { await store.deleteSharedPlugin(plugin) }
+                } label: {
+                    Label("删除分享", systemImage: "trash")
+                }
+                .buttonStyle(ChipButtonStyle(tint: Theme.danger))
             }
-            .buttonStyle(ChipButtonStyle(tint: Theme.danger))
         }
     }
 

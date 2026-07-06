@@ -4905,6 +4905,113 @@ final class SessionStore: ObservableObject {
         runtimeCatalogStatusText = runtimePluginDetailStatusText
     }
 
+    func saveSharedPlugin(_ plugin: CodexRuntimePlugin, discoverability: String? = nil) async {
+        guard let pluginPath = plugin.localPluginPath, !pluginPath.isEmpty else {
+            runtimeCatalogStatusText = "plugin/share/save：\(plugin.displayName) 没有本地插件路径"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            return
+        }
+
+        let existingRemotePluginID = plugin.shareContext?.remotePluginID
+        let createDiscoverability = existingRemotePluginID == nil ? (discoverability ?? "UNLISTED") : nil
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = existingRemotePluginID == nil
+            ? "正在创建共享插件 \(plugin.displayName)…"
+            : "正在保存共享插件 \(plugin.displayName)…"
+        runtimePluginDetailStatusText = runtimeCatalogStatusText
+        runtimeCatalogErrors = []
+        defer { runtimeCatalogIsRefreshing = false }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.saveSharedPlugin(
+                pluginPath: pluginPath,
+                remotePluginID: existingRemotePluginID,
+                discoverability: createDiscoverability,
+                shareTargets: createDiscoverability == nil ? nil : []
+            )
+            let context = Self.updatedShareContext(
+                existing: plugin.shareContext,
+                remotePluginID: result.remotePluginID,
+                discoverability: createDiscoverability,
+                shareURL: result.shareURL.isEmpty ? plugin.shareContext?.shareURL : result.shareURL,
+                principals: plugin.shareContext?.sharePrincipals
+            )
+            applyShareContext(context, toPluginID: plugin.id, pluginName: plugin.name)
+            let urlText = result.shareURL.isEmpty ? "未返回链接" : result.shareURL
+            runtimeCatalogStatusText = "plugin/share/save：\(result.remotePluginID) · \(urlText)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+        } catch {
+            runtimeCatalogStatusText = "plugin/share/save 失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func updateSharedPluginDiscoverability(_ plugin: CodexRuntimePlugin, discoverability: String) async {
+        guard let remotePluginID = plugin.shareContext?.remotePluginID, !remotePluginID.isEmpty else {
+            runtimeCatalogStatusText = "plugin/share/updateTargets：缺少 remotePluginId"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在更新共享权限 \(plugin.displayName)…"
+        runtimePluginDetailStatusText = runtimeCatalogStatusText
+        runtimeCatalogErrors = []
+        defer { runtimeCatalogIsRefreshing = false }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.updateSharedPluginTargets(
+                remotePluginID: remotePluginID,
+                discoverability: discoverability,
+                shareTargets: []
+            )
+            let context = Self.updatedShareContext(
+                existing: plugin.shareContext,
+                remotePluginID: remotePluginID,
+                discoverability: result.discoverability.isEmpty ? discoverability : result.discoverability,
+                shareURL: plugin.shareContext?.shareURL,
+                principals: result.principals
+            )
+            applyShareContext(context, toPluginID: plugin.id, pluginName: plugin.name)
+            runtimeCatalogStatusText = "plugin/share/updateTargets：\(remotePluginID) · \(context.discoverability ?? discoverability)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+        } catch {
+            runtimeCatalogStatusText = "plugin/share/updateTargets 失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    nonisolated private static func updatedShareContext(
+        existing: CodexRuntimePluginShareContext?,
+        remotePluginID: String,
+        discoverability: String?,
+        shareURL: String?,
+        principals: [CodexRuntimePluginSharePrincipal]?
+    ) -> CodexRuntimePluginShareContext {
+        CodexRuntimePluginShareContext(
+            remotePluginID: remotePluginID,
+            remoteVersion: existing?.remoteVersion,
+            discoverability: discoverability ?? existing?.discoverability,
+            shareURL: shareURL ?? existing?.shareURL,
+            creatorAccountUserID: existing?.creatorAccountUserID,
+            creatorName: existing?.creatorName,
+            sharePrincipals: principals ?? existing?.sharePrincipals ?? []
+        )
+    }
+
+    private func applyShareContext(_ context: CodexRuntimePluginShareContext, toPluginID pluginID: String, pluginName: String) {
+        for index in runtimePlugins.indices where runtimePlugins[index].id == pluginID || runtimePlugins[index].name == pluginName {
+            runtimePlugins[index].shareContext = context
+        }
+        if runtimePluginDetail?.plugin.id == pluginID || runtimePluginDetail?.plugin.name == pluginName {
+            runtimePluginDetail?.plugin.shareContext = context
+        }
+    }
+
     @discardableResult
     func openPluginInstallAuthURL(_ app: CodexRuntimePluginApp, openExternal: Bool = true) -> Bool {
         guard let installURL = app.installURL?.trimmingCharacters(in: .whitespacesAndNewlines),

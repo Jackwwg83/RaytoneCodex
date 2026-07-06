@@ -49,6 +49,8 @@ enum SmokeTestRunner {
             runPluginScaffoldSmoke()
         } else if CommandLine.arguments.contains("--plugin-install-response-smoke-test") {
             runPluginInstallResponseSmoke()
+        } else if CommandLine.arguments.contains("--plugin-share-smoke-test") {
+            runPluginShareSmoke()
         } else if CommandLine.arguments.contains("--marketplace-upgrade-smoke-test") {
             runMarketplaceUpgradeSmoke()
         } else if CommandLine.arguments.contains("--codex-home-directory-smoke-test") {
@@ -2622,6 +2624,156 @@ enum SmokeTestRunner {
                     "parseOK": parseOK,
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runPluginShareSmoke() {
+        Task { @MainActor in
+            let saveFixture = try? JSONValue(jsonString: """
+            {
+              "remotePluginId": "plugins_raytone_share_smoke",
+              "shareUrl": "https://chatgpt.example/plugins/share/plugins_raytone_share_smoke"
+            }
+            """)
+            let parsedSave = saveFixture.flatMap { try? CodexAppServerClient.pluginShareSaveResult(from: $0) }
+            let updateFixture = try? JSONValue(jsonString: """
+            {
+              "discoverability": "PRIVATE",
+              "principals": [
+                {
+                  "principalId": "user_raytone",
+                  "principalType": "user",
+                  "role": "owner",
+                  "name": "Raytone"
+                }
+              ]
+            }
+            """)
+            let parsedUpdate = updateFixture.map { CodexAppServerClient.pluginShareUpdateResult(from: $0) }
+            let parseOK = parsedSave?.remotePluginID == "plugins_raytone_share_smoke" &&
+                parsedSave?.shareURL.contains("plugins_raytone_share_smoke") == true &&
+                parsedUpdate?.discoverability == "PRIVATE" &&
+                parsedUpdate?.principals.first?.role == "owner"
+
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexPluginShareSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let pluginRootURL = workspaceURL.appendingPathComponent("plugins/share-smoke-plugin", isDirectory: true)
+            let manifestURL = pluginRootURL.appendingPathComponent(".codex-plugin/plugin.json")
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(
+                    at: manifestURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try #"{"name":"share-smoke-plugin"}"#.write(to: manifestURL, atomically: true, encoding: .utf8)
+                try fakePluginShareAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let plugin = CodexRuntimePlugin(
+                    id: "share-smoke-plugin@raytone-local",
+                    name: "share-smoke-plugin",
+                    displayName: "共享 Smoke 插件",
+                    summary: "验证 plugin/share/save 和 plugin/share/updateTargets",
+                    marketplaceName: "raytone-local",
+                    marketplaceDisplayName: "Raytone Local",
+                    marketplacePath: nil,
+                    localPluginPath: pluginRootURL.path,
+                    category: "local",
+                    developerName: "Raytone",
+                    sourceType: "local",
+                    installPolicy: "AVAILABLE",
+                    authPolicy: "NONE",
+                    availability: "AVAILABLE",
+                    shareContext: nil,
+                    installed: true,
+                    enabled: true
+                )
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-plugin-share"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_PLUGIN_SHARE_LOG": logURL.path
+                ]
+                store.runtimePlugins = [plugin]
+                store.runtimePluginDetail = CodexRuntimePluginDetail(
+                    plugin: plugin,
+                    description: "本地插件共享 smoke",
+                    skills: [],
+                    hooks: [],
+                    mcpServers: [],
+                    apps: []
+                )
+
+                await store.saveSharedPlugin(plugin)
+                let sharedPlugin = store.runtimePluginDetail?.plugin
+                await store.updateSharedPluginDiscoverability(sharedPlugin ?? plugin, discoverability: "PRIVATE")
+
+                let deadline = Date().addingTimeInterval(4)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""method":"plugin/share/save""#) &&
+                        logText.contains(#""method":"plugin/share/updateTargets""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let finalContext = store.runtimePluginDetail?.plugin.shareContext
+                let saveRequestOK = logText.contains(#""method":"plugin/share/save""#) &&
+                    logText.contains(#""pluginPath":""#) &&
+                    logText.contains(pluginRootURL.path) &&
+                    logText.contains(#""discoverability":"UNLISTED""#) &&
+                    logText.contains(#""shareTargets":[]"#)
+                let updateRequestOK = logText.contains(#""method":"plugin/share/updateTargets""#) &&
+                    logText.contains(#""remotePluginId":"plugins_raytone_share_smoke""#) &&
+                    logText.contains(#""discoverability":"PRIVATE""#)
+                let uiStateOK = finalContext?.remotePluginID == "plugins_raytone_share_smoke" &&
+                    finalContext?.discoverability == "PRIVATE" &&
+                    finalContext?.shareURL == "https://chatgpt.example/plugins/share/plugins_raytone_share_smoke" &&
+                    store.runtimeCatalogStatusText.contains("plugin/share/updateTargets")
+                let ok = parseOK && saveRequestOK && updateRequestOK && uiStateOK
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "parseOK": parseOK,
+                    "workspacePath": workspaceURL.path,
+                    "pluginPath": pluginRootURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "saveRequestOK": saveRequestOK,
+                    "updateRequestOK": updateRequestOK,
+                    "uiStateOK": uiStateOK,
+                    "remotePluginId": finalContext?.remotePluginID ?? "",
+                    "discoverability": finalContext?.discoverability ?? "",
+                    "shareUrl": finalContext?.shareURL ?? "",
+                    "status": store.runtimeCatalogStatusText,
+                    "requestLogPreview": String(logText.prefix(2400))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "parseOK": parseOK,
+                    "workspacePath": workspaceURL.path,
+                    "pluginPath": pluginRootURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
                     "error": error.localizedDescription
                 ])
                 exit(1)
@@ -11948,6 +12100,67 @@ enum SmokeTestRunner {
                     send_notification("app/list/updated", {"data": [app_payload()]})
             except Exception as error:
                 send_error(request_id, f"unsupported method {method}: {error}")
+        """#
+    }
+
+    private static var fakePluginShareAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_PLUGIN_SHARE_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "plugin/share/save":
+                plugin_path = params.get("pluginPath", "")
+                if not plugin_path:
+                    send_error(request_id, "missing pluginPath")
+                else:
+                    send_result(request_id, {
+                        "remotePluginId": params.get("remotePluginId") or "plugins_raytone_share_smoke",
+                        "shareUrl": "https://chatgpt.example/plugins/share/plugins_raytone_share_smoke",
+                    })
+            elif method == "plugin/share/updateTargets":
+                if params.get("remotePluginId") != "plugins_raytone_share_smoke":
+                    send_error(request_id, "unexpected remotePluginId")
+                else:
+                    send_result(request_id, {
+                        "discoverability": params.get("discoverability") or "PRIVATE",
+                        "principals": [],
+                    })
+            else:
+                send_error(request_id, f"unsupported method {method}")
         """#
     }
 
