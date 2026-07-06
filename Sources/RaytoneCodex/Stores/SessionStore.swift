@@ -759,6 +759,13 @@ final class SessionStore: ObservableObject {
             return
         }
 
+        if Self.isImmediateControlSlashCommand(trimmedPrompt) {
+            prompt = ""
+            if await handleSlashCommand(trimmedPrompt) {
+                return
+            }
+        }
+
         if isRunning {
             let localImages = consumePendingLocalImages()
             await steerRunningTurn(trimmedPrompt, localImagePaths: localImages)
@@ -772,6 +779,17 @@ final class SessionStore: ObservableObject {
 
         let localImages = consumePendingLocalImages()
         await runAgentPrompt(trimmedPrompt, localImagePaths: localImages)
+    }
+
+    private static func isImmediateControlSlashCommand(_ trimmedPrompt: String) -> Bool {
+        guard trimmedPrompt.hasPrefix("/") else {
+            return false
+        }
+        let command = trimmedPrompt
+            .split(maxSplits: 1, whereSeparator: \.isWhitespace)
+            .first
+            .map { String($0).lowercased() }
+        return command == "/goal" || command == "/goal-status" || command == "/goal-clear"
     }
 
     func sendSideChatMessage(_ message: String? = nil) async {
@@ -941,6 +959,33 @@ final class SessionStore: ObservableObject {
 
         case "/pr", "/pull-request":
             await runPullRequestSummaryGeneration(displayedPrompt: trimmedPrompt, instructions: arguments.isEmpty ? nil : arguments)
+            return true
+
+        case "/goal":
+            guard !arguments.isEmpty else {
+                appendSlashNotice(displayedPrompt: trimmedPrompt, text: "请在 /goal 后添加目标内容。")
+                return true
+            }
+            appendSlashNotice(displayedPrompt: trimmedPrompt, text: "正在通过 thread/goal/set 设置目标…")
+            await setActiveGoal(objective: arguments)
+            return true
+
+        case "/goal-status":
+            appendSlashNotice(displayedPrompt: trimmedPrompt, text: "正在通过 thread/goal/get 读取目标…")
+            let goal = await refreshSelectedRuntimeGoal()
+            if let goal {
+                appendSlashNotice(
+                    displayedPrompt: "/goal-status",
+                    text: "当前目标：\(goal.objective) · \(goal.status.rawValue)"
+                )
+            } else {
+                appendSlashNotice(displayedPrompt: "/goal-status", text: "当前对话没有活动目标。")
+            }
+            return true
+
+        case "/goal-clear":
+            appendSlashNotice(displayedPrompt: trimmedPrompt, text: "正在通过 thread/goal/clear 清除目标…")
+            await clearActiveGoal()
             return true
 
         case "/init":
@@ -1529,6 +1574,7 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+        clearRunningStateIfNoActiveTurn()
     }
 
     @discardableResult
@@ -1553,11 +1599,13 @@ final class SessionStore: ObservableObject {
                 runtimeCatalogStatusText = "thread/goal/get：没有活动目标"
             }
             runtimeCatalogIsRefreshing = false
+            clearRunningStateIfNoActiveTurn()
             return goal
         } catch {
             runtimeCatalogStatusText = "目标读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
             runtimeCatalogIsRefreshing = false
+            clearRunningStateIfNoActiveTurn()
             return nil
         }
     }
@@ -1628,17 +1676,20 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+        clearRunningStateIfNoActiveTurn()
     }
 
     func clearActiveGoal() async {
         guard selectedThread.activeGoal?.runtimeBacked == true else {
             clearSelectedThreadActiveGoal()
+            clearRunningStateIfNoActiveTurn()
             return
         }
 
         guard let client = appServerClient,
               let threadID = selectedThread.appServerThreadID else {
             clearSelectedThreadActiveGoal()
+            clearRunningStateIfNoActiveTurn()
             return
         }
 
@@ -1653,6 +1704,13 @@ final class SessionStore: ObservableObject {
                     text: "无法清除目标：\(error.localizedDescription)"
                 ))))
             }
+        }
+        clearRunningStateIfNoActiveTurn()
+    }
+
+    private func clearRunningStateIfNoActiveTurn() {
+        if activeAppServerTurnID == nil {
+            isRunning = false
         }
     }
 

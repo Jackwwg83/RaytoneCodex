@@ -5888,6 +5888,38 @@ enum SmokeTestRunner {
         await store.clearActiveGoal()
         let storeAfterClear = await store.refreshSelectedRuntimeGoal()
         let storeStatusAfterClear = store.runtimeCatalogStatusText
+
+        let slashWasRunningBeforeSet = store.isRunning
+        let slashThreadIDBeforeSet = store.selectedThread.appServerThreadID ?? ""
+        store.prompt = "/goal RaytoneCodex slash goal smoke"
+        await store.runPrompt()
+        let slashSetStatus = store.runtimeCatalogStatusText
+        let slashSetErrors = store.runtimeCatalogErrors
+        let slashWasRunningAfterSet = store.isRunning
+        let slashThreadIDAfterSet = store.selectedThread.appServerThreadID ?? ""
+        let slashGoal = await store.refreshSelectedRuntimeGoal()
+        let slashGoalTitle = store.selectedThread.activeGoal?.title ?? ""
+        let slashGoalStatus = store.runtimeCatalogStatusText
+        let slashSetNotices = store.selectedThread.items.compactMap { item -> String? in
+            if case let .notice(notice) = item.kind {
+                return notice.text
+            }
+            return nil
+        }
+
+        store.prompt = "/goal-status"
+        await store.runPrompt()
+        let slashStatusNotices = store.selectedThread.items.compactMap { item -> String? in
+            if case let .notice(notice) = item.kind {
+                return notice.text
+            }
+            return nil
+        }
+
+        store.prompt = "/goal-clear"
+        await store.runPrompt()
+        let slashAfterClear = await store.refreshSelectedRuntimeGoal()
+        let slashClearStatus = store.runtimeCatalogStatusText
         await store.stopAppServerForTesting()
 
         let ok = !storeThreadID.isEmpty &&
@@ -5901,7 +5933,12 @@ enum SmokeTestRunner {
             storePausedStatus == .paused &&
             storeResumedGoal?.status == .active &&
             storeResumedStatus == .active &&
-            storeAfterClear == nil
+            storeAfterClear == nil &&
+            slashGoal?.objective == "RaytoneCodex slash goal smoke" &&
+            slashGoalTitle == "RaytoneCodex slash goal smoke" &&
+            slashSetNotices.contains("正在通过 thread/goal/set 设置目标…") &&
+            slashStatusNotices.contains { $0.contains("当前目标：RaytoneCodex slash goal smoke · active") } &&
+            slashAfterClear == nil
 
         return StoreGoalSmokeResult(
             ok: ok,
@@ -5920,7 +5957,19 @@ enum SmokeTestRunner {
             storeResumedStatus: storeResumedStatus?.rawValue ?? "",
             storeStatusAfterResume: storeStatusAfterResume,
             storeAfterClearObjective: storeAfterClear?.objective,
-            storeStatusAfterClear: storeStatusAfterClear
+            storeStatusAfterClear: storeStatusAfterClear,
+            slashGoalObjective: slashGoal?.objective,
+            slashGoalTitle: slashGoalTitle,
+            slashSetStatus: slashSetStatus,
+            slashSetErrors: slashSetErrors,
+            slashWasRunningBeforeSet: slashWasRunningBeforeSet,
+            slashWasRunningAfterSet: slashWasRunningAfterSet,
+            slashThreadIDBeforeSet: slashThreadIDBeforeSet,
+            slashThreadIDAfterSet: slashThreadIDAfterSet,
+            slashGoalStatus: slashGoalStatus,
+            slashStatusNotice: slashStatusNotices.last { $0.contains("当前目标：") },
+            slashAfterClearObjective: slashAfterClear?.objective,
+            slashClearStatus: slashClearStatus
         )
     }
 
@@ -5942,6 +5991,18 @@ enum SmokeTestRunner {
         let storeStatusAfterResume: String
         let storeAfterClearObjective: String?
         let storeStatusAfterClear: String
+        let slashGoalObjective: String?
+        let slashGoalTitle: String
+        let slashSetStatus: String
+        let slashSetErrors: [String]
+        let slashWasRunningBeforeSet: Bool
+        let slashWasRunningAfterSet: Bool
+        let slashThreadIDBeforeSet: String
+        let slashThreadIDAfterSet: String
+        let slashGoalStatus: String
+        let slashStatusNotice: String?
+        let slashAfterClearObjective: String?
+        let slashClearStatus: String
 
         var payload: [String: Any] {
             [
@@ -5960,7 +6021,19 @@ enum SmokeTestRunner {
                 "storeResumedStatus": storeResumedStatus,
                 "storeStatusAfterResume": storeStatusAfterResume,
                 "storeAfterClear": storeAfterClearObjective.map { ["objective": $0] } ?? NSNull(),
-                "storeStatusAfterClear": storeStatusAfterClear
+                "storeStatusAfterClear": storeStatusAfterClear,
+                "slashGoal": slashGoalObjective.map { ["objective": $0] } ?? NSNull(),
+                "slashGoalTitle": slashGoalTitle,
+                "slashSetStatus": slashSetStatus,
+                "slashSetErrors": slashSetErrors,
+                "slashWasRunningBeforeSet": slashWasRunningBeforeSet,
+                "slashWasRunningAfterSet": slashWasRunningAfterSet,
+                "slashThreadIDBeforeSet": slashThreadIDBeforeSet,
+                "slashThreadIDAfterSet": slashThreadIDAfterSet,
+                "slashGoalStatus": slashGoalStatus,
+                "slashStatusNotice": slashStatusNotice ?? "",
+                "slashAfterClear": slashAfterClearObjective.map { ["objective": $0] } ?? NSNull(),
+                "slashClearStatus": slashClearStatus
             ]
         }
     }
