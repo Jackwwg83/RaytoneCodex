@@ -225,6 +225,8 @@ enum SmokeTestRunner {
             runGitRepoCreateSmoke()
         } else if CommandLine.arguments.contains("--git-push-smoke-test") {
             runGitPushSmoke()
+        } else if CommandLine.arguments.contains("--git-pr-create-smoke-test") {
+            runGitPullRequestCreateSmoke()
         } else if CommandLine.arguments.contains("--slash-smoke-test") {
             runSlashSmoke()
         }
@@ -8742,6 +8744,155 @@ enum SmokeTestRunner {
                     "workspacePath": workspaceURL.path,
                     "remotePath": remoteURL.path,
                     "ghLog": (try? String(contentsOf: ghLogURL, encoding: .utf8)) ?? ""
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runGitPullRequestCreateSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexGitPRCreateSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let remoteURL = rootURL.appendingPathComponent("remote.git", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let fakeBinURL = rootURL.appendingPathComponent("bin", isDirectory: true)
+            let fakeGHURL = fakeBinURL.appendingPathComponent("gh")
+            let ghLogURL = rootURL.appendingPathComponent("gh.log")
+            let prStateURL = rootURL.appendingPathComponent("pr.created")
+            let branchName = "codex/git-pr-smoke"
+            let prURL = "https://github.com/raytone/raytone-pr-smoke/pull/12"
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: fakeBinURL, withIntermediateDirectories: true)
+
+                try """
+                #!/usr/bin/env bash
+                { printf '%s\n' "gh $*" >> "\(ghLogURL.path)"; } 2>/dev/null || true
+                state="${RAYTONE_GITHUB_FAKE_PR_STATE:?missing fake pr state}"
+                branch="${RAYTONE_GITHUB_FAKE_BRANCH:?missing fake branch}"
+                if [[ "$1" == "auth" && "$2" == "status" ]]; then
+                  exit 0
+                fi
+                if [[ "$1" == "pr" && "$2" == "view" ]]; then
+                  if [[ -f "$state" ]]; then
+                    echo "PR #12 OPEN · Raytone PR smoke · \(prURL)"
+                    exit 0
+                  fi
+                  echo "no pull requests found for branch $branch"
+                  exit 1
+                fi
+                if [[ "$1" == "pr" && "$2" == "create" ]]; then
+                  printf '%s\n' "$*" > "$state"
+                  echo "\(prURL)"
+                  exit 0
+                fi
+                echo "unsupported gh command: $*" >&2
+                exit 2
+                """.write(to: fakeGHURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeGHURL.path)
+
+                try "# Git PR create smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                _ = try runProcess(["git", "init"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.email", "raytone-smoke@example.com"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.name", "Raytone Smoke"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "README.md"], cwd: workspaceURL)
+                _ = try runProcess(["git", "commit", "-m", "Initial smoke commit"], cwd: workspaceURL)
+                _ = try runProcess(["git", "branch", "-M", branchName], cwd: workspaceURL)
+                _ = try runProcess(["git", "init", "--bare", remoteURL.path], cwd: rootURL)
+                _ = try runProcess(["git", "remote", "add", "origin", remoteURL.path], cwd: workspaceURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path,
+                    "PATH": "\(fakeBinURL.path):\(inheritedPath)",
+                    "RAYTONE_GH_PATH": fakeGHURL.path,
+                    "RAYTONE_GITHUB_FAKE_PR_STATE": prStateURL.path,
+                    "RAYTONE_GITHUB_FAKE_BRANCH": branchName
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "GitPRCreateSmoke"
+                }
+
+                await store.refreshRuntime()
+                await store.runGitCreatePullRequestInTerminal()
+                await waitForStoreToSettle(store)
+
+                let terminalRun = store.terminalRuns.last
+                let terminalOutput = terminalRun?.output ?? ""
+                let remoteRef = (try? runProcess([
+                    "git",
+                    "--git-dir",
+                    remoteURL.path,
+                    "show-ref",
+                    "refs/heads/\(branchName)"
+                ], cwd: rootURL).output) ?? ""
+                let ghLog = (try? String(contentsOf: ghLogURL, encoding: .utf8)) ?? ""
+                let prState = (try? String(contentsOf: prStateURL, encoding: .utf8)) ?? ""
+                let pullRequestStatus = store.workspacePullRequestStatusText
+                await store.stopAppServerForTesting()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    terminalRun?.exitCode == 0 &&
+                    terminalRun?.status == .succeeded &&
+                    terminalRun?.command.contains("GitHub PR 预检") == true &&
+                    terminalOutput.contains("== GitHub PR 预检 ==") &&
+                    terminalOutput.contains("执行：git push -u origin \(branchName)") &&
+                    terminalOutput.contains("执行：\(fakeGHURL.path) pr create --draft --fill --head \(branchName)") &&
+                    terminalOutput.contains("== PR 已创建 ==") &&
+                    terminalOutput.contains(prURL) &&
+                    remoteRef.contains("refs/heads/\(branchName)") &&
+                    prState.contains("pr create --draft --fill --head \(branchName)") &&
+                    ghLog.contains("gh auth status") &&
+                    ghLog.contains("gh pr view \(branchName)") &&
+                    ghLog.contains("gh pr create --draft --fill --head \(branchName)") &&
+                    pullRequestStatus.contains("PR #12")
+
+                emitJSON([
+                    "ok": ok,
+                    "source": "EnvironmentInfoPanel 创建 PR 按钮 -> process/spawn -> git push -> gh pr create/view",
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "remotePath": remoteURL.path,
+                    "branch": branchName,
+                    "prURL": prURL,
+                    "terminal": [
+                        "command": terminalRun?.command ?? "",
+                        "exitCode": Int(terminalRun?.exitCode ?? -999),
+                        "status": terminalStatusName(terminalRun?.status),
+                        "output": terminalOutput
+                    ] as [String: Any],
+                    "remoteRef": remoteRef,
+                    "ghLog": ghLog,
+                    "prState": prState,
+                    "pullRequestStatus": pullRequestStatus
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "error": error.localizedDescription,
+                    "workspacePath": workspaceURL.path,
+                    "remotePath": remoteURL.path,
+                    "ghLog": (try? String(contentsOf: ghLogURL, encoding: .utf8)) ?? "",
+                    "prState": (try? String(contentsOf: prStateURL, encoding: .utf8)) ?? ""
                 ])
                 exit(1)
             }

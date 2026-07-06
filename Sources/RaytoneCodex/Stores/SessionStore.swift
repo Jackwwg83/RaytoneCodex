@@ -5195,6 +5195,14 @@ final class SessionStore: ObservableObject {
         await refreshWorkspacePullRequestStatus()
     }
 
+    func runGitCreatePullRequestInTerminal() async {
+        showInspector = true
+        openToolPanel(.terminal)
+        terminalCommand = Self.gitCreatePullRequestCommand
+        await runTerminalCommand()
+        await refreshWorkspacePullRequestStatus()
+    }
+
     func runGitDiffInTerminal() async {
         showInspector = true
         openToolPanel(.terminal)
@@ -11424,6 +11432,95 @@ final class SessionStore: ObservableObject {
     echo "== 推送完成 =="
     "$gh_bin" pr view "$branch" --json number,state,title,url --jq '"PR #\\(.number) \\(.state) · \\(.title) · \\(.url)"' 2>/dev/null || \
       echo "当前分支没有 PR；需要时可执行：gh pr create --draft --fill"
+    """
+
+    private static let gitCreatePullRequestCommand = """
+    set +e
+    echo "== GitHub PR 预检 =="
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "不是 Git 工作区"
+      exit 2
+    fi
+
+    branch=$(git branch --show-current 2>/dev/null)
+    if [ -z "$branch" ]; then
+      echo "当前是 detached HEAD；请先切到一个分支，再创建 PR。"
+      exit 2
+    fi
+    gh_bin="${RAYTONE_GH_PATH:-gh}"
+
+    git_status_porcelain=$(git status --porcelain=v1 2>/dev/null)
+    if [ -n "$git_status_porcelain" ]; then
+      echo "当前还有未提交变更；请先提交或清理后再创建 PR。"
+      echo
+      git status --short --branch
+      exit 3
+    fi
+
+    origin=$(git remote get-url origin 2>/dev/null)
+    if [ -z "$origin" ]; then
+      echo "未配置 origin；请先创建 GitHub 仓库或添加远端。"
+      echo "可先点击“建库”，或手动执行：gh repo create --private --source=. --remote=origin"
+      exit 4
+    fi
+
+    if ! command -v "$gh_bin" >/dev/null 2>&1; then
+      echo "未安装 GitHub CLI，无法创建 PR。"
+      echo "安装后请运行：gh auth login"
+      exit 5
+    fi
+
+    if ! "$gh_bin" auth status -h github.com >/dev/null 2>&1; then
+      echo "GitHub CLI 未登录，无法创建 PR。请先运行：gh auth login"
+      exit 6
+    fi
+
+    existing_pr=$("$gh_bin" pr view "$branch" --json number,state,title,url --jq '"PR #\\(.number) \\(.state) · \\(.title) · \\(.url)"' 2>&1)
+    existing_rc=$?
+    if [ $existing_rc -eq 0 ]; then
+      echo "已有 PR：$existing_pr"
+      exit 0
+    fi
+    case "$existing_pr" in
+      *"no pull requests found"*|*"no pull request"*|*"not found"*)
+        echo "当前分支 $branch 暂无 PR，准备创建草稿 PR。"
+        ;;
+      *)
+        printf "PR 状态不可用：%s\\n" "$existing_pr"
+        exit $existing_rc
+        ;;
+    esac
+
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+    echo "分支：$branch"
+    echo "origin：$origin"
+    if [ -z "$upstream" ]; then
+      echo "执行：git push -u origin $branch"
+      git push -u origin "$branch"
+    else
+      echo "upstream：$upstream"
+      echo "执行：git push"
+      git push
+    fi
+    push_rc=$?
+    if [ $push_rc -ne 0 ]; then
+      echo "git push 失败：$push_rc"
+      exit $push_rc
+    fi
+
+    echo
+    echo "执行：$gh_bin pr create --draft --fill --head $branch"
+    pr_url=$("$gh_bin" pr create --draft --fill --head "$branch" 2>&1)
+    pr_rc=$?
+    if [ $pr_rc -ne 0 ]; then
+      printf "gh pr create 失败：%s\\n" "$pr_url"
+      exit $pr_rc
+    fi
+
+    echo "$pr_url"
+    echo
+    echo "== PR 已创建 =="
+    "$gh_bin" pr view "$branch" --json number,state,title,url --jq '"PR #\\(.number) \\(.state) · \\(.title) · \\(.url)"' 2>/dev/null || true
     """
 
     private static let gitMetadataCommand = """

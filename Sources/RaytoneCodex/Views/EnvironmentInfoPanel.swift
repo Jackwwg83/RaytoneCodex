@@ -144,6 +144,11 @@ struct EnvironmentInfoPanel: View {
             EnvironmentInfoRow(symbol: "shippingbox", title: "Sidecar", trailing: store.sidecarStatusText)
             EnvironmentInfoRow(symbol: "rectangle.split.3x1", title: "工作树", trailing: worktreeText)
             EnvironmentInfoActionRow(symbol: "chevron.left.forwardslash.chevron.right", title: "PR 状态", detail: pullRequestStatusText, secondary: true) {
+                Button("创建") {
+                    Task { await store.runGitCreatePullRequestInTerminal() }
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(store.terminalIsRunning)
                 Button {
                     Task { await store.refreshWorkspacePullRequestStatus() }
                 } label: {
