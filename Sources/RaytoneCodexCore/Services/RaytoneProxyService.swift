@@ -78,6 +78,7 @@ public enum RaytoneProxyServiceError: LocalizedError, Sendable {
     case launchFailed(String)
     case invalidListeningLine(String)
     case healthCheckFailed(String)
+    case upstreamUnauthorized(status: Int, body: String)
 
     public var errorDescription: String? {
         switch self {
@@ -91,6 +92,8 @@ public enum RaytoneProxyServiceError: LocalizedError, Sendable {
             "Raytone provider sidecar reported an invalid startup line: \(line)"
         case let .healthCheckFailed(message):
             "Raytone provider sidecar health check failed. \(message)"
+        case let .upstreamUnauthorized(status, body):
+            "Provider 上游拒绝了当前 API Key，HTTP \(status)。\(body)"
         }
     }
 }
@@ -189,7 +192,15 @@ public actor RaytoneProxyService {
         let url = Self.rootURL(for: session.baseURL, path: "/health/upstream")
         let (data, response) = try await URLSession.shared.data(from: url)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw RaytoneProxyServiceError.healthCheckFailed(String(data: data, encoding: .utf8) ?? "No response body.")
+            let body = String(data: data, encoding: .utf8) ?? "No response body."
+            if let http = response as? HTTPURLResponse,
+               http.statusCode == 401 || http.statusCode == 403 {
+                throw RaytoneProxyServiceError.upstreamUnauthorized(
+                    status: http.statusCode,
+                    body: body
+                )
+            }
+            throw RaytoneProxyServiceError.healthCheckFailed(body)
         }
 
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]

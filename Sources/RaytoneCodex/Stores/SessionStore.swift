@@ -6940,6 +6940,33 @@ final class SessionStore: ObservableObject {
         return false
     }
 
+    private func markProviderUnauthorized(
+        _ provider: RaytoneProviderConfiguration,
+        status: Int? = nil,
+        body: String? = nil
+    ) {
+        let providerName = provider.displayName
+        let statusText = status.map { "上游返回 HTTP \($0)" } ?? "上游拒绝当前 API Key"
+        let compactBody = body.map(Self.compactProviderErrorBody) ?? ""
+        let detail = compactBody.isEmpty ? statusText : "\(statusText) · \(compactBody)"
+
+        appServerConnectionState = .providerUnauthorized(providerName)
+        sidecarStatusText = "\(providerName) 授权失败"
+        providerConnectionStatusText = "\(providerName) API Key 无效或无权限"
+        providerConnectionDetailText = "\(detail) · 请在「模型与提供方」更新 Key 后重新测试"
+        runtimeCatalogStatusText = providerConnectionStatusText
+        runtimeCatalogErrors = [providerConnectionDetailText]
+    }
+
+    private static func compactProviderErrorBody(_ body: String) -> String {
+        let normalized = body
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.count > 240 else { return normalized }
+        return String(normalized.prefix(240)) + "…"
+    }
+
     func testProviderConnection(providerID: String? = nil) async {
         let id = providerID ?? selectedProviderID
         guard let provider = providers.first(where: { $0.id == id }) else {
@@ -6991,6 +7018,16 @@ final class SessionStore: ObservableObject {
                 providerConnectionCodexConfigPath = refreshedSession.codexHomeURL
                     .appendingPathComponent("config.toml")
                     .path
+            }
+        } catch let error as RaytoneProxyServiceError {
+            switch error {
+            case let .upstreamUnauthorized(status, body):
+                markProviderUnauthorized(provider, status: status, body: body)
+            default:
+                providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
+                providerConnectionDetailText = provider.apiKeyEnvironmentName.map { "Keychain 或 \($0)" } ?? "Keychain"
+                runtimeCatalogStatusText = providerConnectionStatusText
+                runtimeCatalogErrors = [error.localizedDescription]
             }
         } catch {
             providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
@@ -8099,7 +8136,11 @@ final class SessionStore: ObservableObject {
         let retryText = willRetry ? "Codex 将自动重试。" : "Codex 不会自动重试。"
 
         if Self.codexErrorInfoIsUnauthorized(error?["codexErrorInfo"]) {
-            appServerConnectionState = .loginRequired
+            if selectedProvider.usesSidecar {
+                markProviderUnauthorized(selectedProvider, body: additionalDetails ?? message)
+            } else {
+                appServerConnectionState = .loginRequired
+            }
         }
         if !willRetry, selectedThread.appServerThreadID == threadID || threadID == nil {
             isRunning = false
@@ -8811,7 +8852,14 @@ final class SessionStore: ObservableObject {
         if turn["status"]?.stringValue == "failed" {
             let error = turn["error"]
             if Self.codexErrorInfoIsUnauthorized(error?["codexErrorInfo"]) {
-                appServerConnectionState = .loginRequired
+                if selectedProvider.usesSidecar {
+                    markProviderUnauthorized(
+                        selectedProvider,
+                        body: error?["additionalDetails"]?.stringValue ?? error?["message"]?.stringValue
+                    )
+                } else {
+                    appServerConnectionState = .loginRequired
+                }
             }
             updateSelectedThread { thread in
                 thread.items.append(TranscriptItem(kind: .notice(Notice(

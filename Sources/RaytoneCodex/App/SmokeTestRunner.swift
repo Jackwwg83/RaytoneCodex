@@ -157,6 +157,8 @@ enum SmokeTestRunner {
             runProviderSidecarSmoke()
         } else if CommandLine.arguments.contains("--provider-onboarding-smoke-test") {
             runProviderOnboardingSmoke()
+        } else if CommandLine.arguments.contains("--provider-unauthorized-smoke-test") {
+            runProviderUnauthorizedSmoke()
         } else if CommandLine.arguments.contains("--reasoning-config-smoke-test") {
             runReasoningConfigSmoke()
         } else if CommandLine.arguments.contains("--instructions-config-smoke-test") {
@@ -4136,6 +4138,121 @@ enum SmokeTestRunner {
                     "providerID": providerID,
                     "status": store.providerOnboardingStatusText,
                     "connectionStatus": store.providerConnectionStatusText,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runProviderUnauthorizedSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let providerID = "unauthorized-\(UUID().uuidString.prefix(8))"
+        let model = "unauthorized-model"
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexProviderUnauthorizedSmoke-\(UUID().uuidString)", isDirectory: true)
+            let server: MockResponsesServer
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                server = try startMockModelsServer(models: [model], statusCode: 401)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "providerID": providerID,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+
+            let baseURL = "\(server.baseURL)/v1"
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+            store.providers.append(RaytoneProviderConfiguration(
+                id: providerID,
+                displayName: "Unauthorized Provider",
+                baseURL: baseURL,
+                model: model,
+                models: [model],
+                kind: .chatCompletionsSidecar
+            ))
+
+            do {
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+                try store.saveProviderAPIKey("raytone-bad-key", providerID: providerID)
+                await store.refreshRuntime()
+                await store.testProviderConnection(providerID: providerID)
+
+                let requestLog = (try? String(contentsOf: server.requestLogURL, encoding: .utf8)) ?? ""
+                let state = store.connectionState
+                let connectionStatus = store.providerConnectionStatusText
+                let connectionDetail = store.providerConnectionDetailText
+                let sidecarStatus = store.sidecarStatusText
+                let runtimeErrors = store.runtimeCatalogErrors
+                let providerUnauthorized: Bool
+                if case let .providerUnauthorized(providerName) = state {
+                    providerUnauthorized = providerName == "Unauthorized Provider"
+                } else {
+                    providerUnauthorized = false
+                }
+                let upstreamRequestVerified = (
+                    requestLog.contains("\"path\":\"/v1/models\"") ||
+                        requestLog.contains("\"path\":\"\\/v1\\/models\"")
+                ) &&
+                    requestLog.contains("\"authorization\":\"Bearer raytone-bad-key\"")
+                let ok = providerUnauthorized &&
+                    connectionStatus.contains("API Key 无效") &&
+                    connectionDetail.contains("HTTP 401") &&
+                    connectionDetail.contains("模型与提供方") &&
+                    sidecarStatus.contains("授权失败") &&
+                    runtimeErrors.contains { $0.contains("HTTP 401") } &&
+                    upstreamRequestVerified
+
+                await store.stopAppServerForTesting()
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+                server.stop()
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "providerID": providerID,
+                    "baseURL": baseURL,
+                    "connectionTitle": state.title,
+                    "connectionDetail": state.detail,
+                    "providerConnectionStatus": connectionStatus,
+                    "providerConnectionDetail": connectionDetail,
+                    "sidecar": sidecarStatus,
+                    "runtimeCatalogErrors": runtimeErrors,
+                    "upstreamRequestVerified": upstreamRequestVerified,
+                    "requestLog": requestLog
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+                server.stop()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "providerID": providerID,
+                    "status": store.providerConnectionStatusText,
                     "error": error.localizedDescription
                 ])
                 exit(1)
@@ -11667,7 +11784,7 @@ enum SmokeTestRunner {
         )
     }
 
-    private static func startMockModelsServer(models: [String]) throws -> MockResponsesServer {
+    private static func startMockModelsServer(models: [String], statusCode: Int = 200) throws -> MockResponsesServer {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory
             .appendingPathComponent("RaytoneCodexMockModels-\(UUID().uuidString)", isDirectory: true)
@@ -11683,7 +11800,7 @@ enum SmokeTestRunner {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["python3", scriptURL.path, modelsURL.path, portURL.path, logURL.path]
+        process.arguments = ["python3", scriptURL.path, modelsURL.path, portURL.path, logURL.path, "\(statusCode)"]
         process.standardOutput = Pipe()
         process.standardError = Pipe()
         try process.run()
@@ -15382,6 +15499,7 @@ enum SmokeTestRunner {
         models = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
         port_file = Path(sys.argv[2])
         log_file = Path(sys.argv[3])
+        status_code = int(sys.argv[4]) if len(sys.argv) > 4 else 200
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -15394,6 +15512,19 @@ enum SmokeTestRunner {
                 if self.path not in ("/v1/models", "/models"):
                     self.send_response(404)
                     self.end_headers()
+                    return
+                if status_code < 200 or status_code >= 300:
+                    payload = json.dumps({
+                        "error": {
+                            "message": "Raytone smoke upstream rejected the API key",
+                            "type": "authentication_error",
+                        }
+                    }, separators=(",", ":")).encode("utf-8")
+                    self.send_response(status_code)
+                    self.send_header("content-type", "application/json")
+                    self.send_header("content-length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
                     return
                 payload = json.dumps({
                     "object": "list",
@@ -15425,6 +15556,19 @@ enum SmokeTestRunner {
                 if self.path not in ("/v1/chat/completions", "/chat/completions"):
                     self.send_response(404)
                     self.end_headers()
+                    return
+                if status_code < 200 or status_code >= 300:
+                    payload = json.dumps({
+                        "error": {
+                            "message": "Raytone smoke upstream rejected the API key",
+                            "type": "authentication_error",
+                        }
+                    }, separators=(",", ":")).encode("utf-8")
+                    self.send_response(status_code)
+                    self.send_header("content-type", "application/json")
+                    self.send_header("content-length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
                     return
                 model = models[0] if models else "smoke-model"
                 if request_body.get("stream"):
