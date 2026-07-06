@@ -1864,7 +1864,8 @@ public actor CodexAppServerClient {
             "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
             "sandbox": .string(options.sandbox.rawValue),
             "serviceName": .string("RaytoneCodex"),
-            "sessionStartSource": .string("startup")
+            "sessionStartSource": .string("startup"),
+            "dynamicTools": .array(Self.raytoneDynamicTools())
         ]
         if let model = options.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             params["model"] = .string(model)
@@ -2002,6 +2003,27 @@ public actor CodexAppServerClient {
             ])
         })
         return .array(items)
+    }
+
+    public static func raytoneDynamicTools() -> [JSONValue] {
+        [
+            .object([
+                "namespace": .string("raytone_context"),
+                "name": .string("workspace_snapshot"),
+                "description": .string("返回 RaytoneCodex 当前工作区、线程、模型、权限和变更摘要。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "includeDiffStats": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否包含当前 transcript 和 git diff 的变更统计。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
+            ])
+        ]
     }
 
     public func interrupt(threadID: String, turnID: String) async throws {
@@ -3093,6 +3115,22 @@ public actor CodexAppServerClient {
         }
         try respond(requestID: requestID, result: .object([
             "answers": .object(answerValues)
+        ]))
+    }
+
+    public func respondDynamicToolCall(
+        requestID: CodexAppServerRequestID,
+        success: Bool,
+        text: String
+    ) async throws {
+        try respond(requestID: requestID, result: .object([
+            "success": .bool(success),
+            "contentItems": .array([
+                .object([
+                    "type": .string("inputText"),
+                    "text": .string(text)
+                ])
+            ])
         ]))
     }
 

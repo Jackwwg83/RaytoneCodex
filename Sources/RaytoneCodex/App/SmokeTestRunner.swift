@@ -33,6 +33,8 @@ enum SmokeTestRunner {
             runToolUserInputSmoke()
         } else if CommandLine.arguments.contains("--approval-compat-smoke-test") {
             runApprovalCompatSmoke()
+        } else if CommandLine.arguments.contains("--dynamic-tool-smoke-test") {
+            runDynamicToolSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--skill-read-smoke-test") {
@@ -1712,6 +1714,101 @@ enum SmokeTestRunner {
                     "approvalCount": approvals.count,
                     "isRunning": store.isRunning,
                     "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runDynamicToolSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexDynamicToolSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "raytone dynamic tool smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeDynamicToolAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-dynamic-tool"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_DYNAMIC_TOOL_LOG": logURL.path
+                ]
+                store.prompt = "触发 Raytone 动态工具"
+
+                await store.runPrompt()
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""dynamicToolResponse""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let commands = commandRuns(in: store.selectedThread.items)
+                let dynamicCommand = commands.last { command in
+                    command.command.contains("动态工具 raytone_context.workspace_snapshot")
+                }
+                let output = dynamicCommand?.output ?? ""
+                let normalizedOutput = output.replacingOccurrences(of: "\\/", with: "/")
+                let registeredDynamicTool = logText.contains(#""dynamicTools""#) &&
+                    logText.contains(#""namespace":"raytone_context""#) &&
+                    logText.contains(#""name":"workspace_snapshot""#)
+                let requestObserved = logText.contains(#""method":"item/tool/call""#) &&
+                    logText.contains(#""tool":"workspace_snapshot""#)
+                let responseObserved = logText.contains(#""dynamicToolResponse""#) &&
+                    logText.contains(#""success":true"#) &&
+                    logText.contains(#""contentItems""#)
+                let ok = registeredDynamicTool &&
+                    requestObserved &&
+                    responseObserved &&
+                    dynamicCommand?.status == .succeeded &&
+                    output.contains(#""workspacePath""#) &&
+                    normalizedOutput.contains(workspaceURL.path) &&
+                    output.contains(#""approvalPolicy""#) &&
+                    !store.isRunning
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "registeredDynamicTool": registeredDynamicTool,
+                    "requestObserved": requestObserved,
+                    "responseObserved": responseObserved,
+                    "isRunning": store.isRunning,
+                    "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
+                    "dynamicCommandOutputPreview": String(output.prefix(1200)),
+                    "requestLogPreview": String(logText.prefix(2400))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -9245,6 +9342,117 @@ enum SmokeTestRunner {
         """#
     }
 
+    private static var fakeDynamicToolAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_DYNAMIC_TOOL_LOG")
+        tool_arguments = {"includeDiffStats": True}
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        def send_dynamic_tool_request():
+            message = {
+                "id": "dynamic-tool-smoke",
+                "method": "item/tool/call",
+                "params": {
+                    "threadId": "thread-smoke",
+                    "turnId": "turn-smoke",
+                    "callId": "call-smoke",
+                    "namespace": "raytone_context",
+                    "tool": "workspace_snapshot",
+                    "arguments": tool_arguments
+                }
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id == "dynamic-tool-smoke" and "result" in request:
+                result = request.get("result") or {}
+                log({"dynamicToolResponse": result})
+                send_notification("item/completed", {
+                    "item": {
+                        "id": "call-smoke",
+                        "type": "dynamicToolCall",
+                        "namespace": "raytone_context",
+                        "tool": "workspace_snapshot",
+                        "arguments": tool_arguments,
+                        "status": "completed",
+                        "success": result.get("success"),
+                        "contentItems": result.get("contentItems") or []
+                    }
+                })
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "dynamic-tool-smoke"
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-smoke", "status": "completed"}
+                })
+                continue
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-smoke",
+                        "sessionId": "session-smoke",
+                        "preview": "Dynamic tool smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-smoke", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-smoke",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_dynamic_tool_request()
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
     private static var fakeAppListUpdatedAppServerScript: String {
         #"""
         #!/usr/bin/env python3
@@ -10106,6 +10314,19 @@ enum SmokeTestRunner {
                 return run
             }
             return nil
+        }
+    }
+
+    private static func runStatusName(_ status: RunStatus?) -> String {
+        switch status {
+        case .running:
+            return "running"
+        case .succeeded:
+            return "succeeded"
+        case .failed:
+            return "failed"
+        case .none:
+            return "none"
         }
     }
 

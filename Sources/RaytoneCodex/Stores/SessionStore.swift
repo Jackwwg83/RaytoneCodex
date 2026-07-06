@@ -6675,6 +6675,28 @@ final class SessionStore: ObservableObject {
                 serverItemID: "tool-user-input:\(id.description):\(itemID)",
                 kind: .toolUserInput(request)
             )
+        case "item/tool/call":
+            let callID = params?["callId"]?.stringValue ?? id.description
+            let namespace = params?["namespace"]?.stringValue
+            let tool = params?["tool"]?.stringValue ?? "unknown"
+            let arguments = params?["arguments"] ?? .object([:])
+            upsertDynamicToolCallTranscript(
+                callID: callID,
+                namespace: namespace,
+                tool: tool,
+                arguments: arguments,
+                status: .running,
+                responseText: nil
+            )
+            Task {
+                await respondToDynamicToolCall(
+                    requestID: id,
+                    callID: callID,
+                    namespace: namespace,
+                    tool: tool,
+                    arguments: arguments
+                )
+            }
         default:
             break
         }
@@ -6763,6 +6785,33 @@ final class SessionStore: ObservableObject {
                     exitCode: object["exitCode"]?.intValue.map(Int32.init),
                     status: status
                 ))
+            )
+        case "dynamicToolCall":
+            let namespace = object["namespace"]?.stringValue
+            let tool = object["tool"]?.stringValue ?? object["name"]?.stringValue ?? "unknown"
+            let arguments = object["arguments"] ?? object["input"] ?? .object([:])
+            let success = object["success"]?.boolValue
+            let responseText = Self.dynamicToolContentText(
+                object["contentItems"]?.arrayValue ?? object["content"]?.arrayValue ?? [],
+                success: success
+            )
+            let status: RunStatus
+            if success == false || object["status"]?.stringValue == "failed" {
+                status = .failed
+            } else if success == true ||
+                object["status"]?.stringValue == "completed" ||
+                object["status"]?.stringValue == "succeeded" {
+                status = .succeeded
+            } else {
+                status = .running
+            }
+            upsertDynamicToolCallTranscript(
+                callID: serverItemID,
+                namespace: namespace,
+                tool: tool,
+                arguments: arguments,
+                status: status,
+                responseText: responseText
             )
         case "enteredReviewMode":
             upsertTranscriptItem(
@@ -7066,6 +7115,155 @@ final class SessionStore: ObservableObject {
         case .denied:
             return .denied
         }
+    }
+
+    private static func dynamicToolQualifiedName(namespace: String?, tool: String) -> String {
+        [namespace, Optional(tool)]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ".")
+    }
+
+    private static func dynamicToolContentText(_ items: [JSONValue], success: Bool?) -> String? {
+        guard !items.isEmpty || success != nil else { return nil }
+
+        let content = items.compactMap { item -> String? in
+            switch item["type"]?.stringValue {
+            case "inputText":
+                return item["text"]?.stringValue
+            case "inputImage":
+                if let url = item["imageUrl"]?.stringValue ?? item["imageURL"]?.stringValue {
+                    return "图片：\(url)"
+                }
+                return item.prettyJSONString
+            default:
+                return item.prettyJSONString
+            }
+        }
+        let contentText = content.joined(separator: "\n")
+        if let success {
+            return contentText.isEmpty ? "成功：\(success)" : "成功：\(success)\n\(contentText)"
+        }
+        return contentText
+    }
+
+    private func respondToDynamicToolCall(
+        requestID: CodexAppServerRequestID,
+        callID: String,
+        namespace: String?,
+        tool: String,
+        arguments: JSONValue
+    ) async {
+        guard let client = appServerClient else {
+            return
+        }
+
+        let result = dynamicToolCallResult(namespace: namespace, tool: tool, arguments: arguments)
+        do {
+            try await client.respondDynamicToolCall(
+                requestID: requestID,
+                success: result.success,
+                text: result.text
+            )
+            upsertDynamicToolCallTranscript(
+                callID: callID,
+                namespace: namespace,
+                tool: tool,
+                arguments: arguments,
+                status: result.success ? .succeeded : .failed,
+                responseText: result.text
+            )
+        } catch {
+            let message = "动态工具结果未能回传给 app-server：\(error.localizedDescription)"
+            upsertDynamicToolCallTranscript(
+                callID: callID,
+                namespace: namespace,
+                tool: tool,
+                arguments: arguments,
+                status: .failed,
+                responseText: message
+            )
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: message
+                ))))
+            }
+        }
+    }
+
+    private func dynamicToolCallResult(
+        namespace: String?,
+        tool: String,
+        arguments: JSONValue
+    ) -> (success: Bool, text: String) {
+        if namespace == "raytone_context", tool == "workspace_snapshot" {
+            return (true, workspaceSnapshotText(arguments: arguments))
+        }
+
+        let qualifiedName = Self.dynamicToolQualifiedName(namespace: namespace, tool: tool)
+        return (
+            false,
+            "RaytoneCodex 暂未提供动态工具 \(qualifiedName.isEmpty ? tool : qualifiedName)。客户端已按 Codex app-server 协议返回失败，避免当前轮次挂起。"
+        )
+    }
+
+    private func workspaceSnapshotText(arguments: JSONValue) -> String {
+        let includeDiffStats = arguments["includeDiffStats"]?.boolValue ?? true
+        var snapshot: [String: JSONValue] = [
+            "workspacePath": .string(workspacePath),
+            "projectName": .string(selectedProject.name),
+            "projectBranch": .string(selectedProject.branch ?? Self.currentGitBranch(at: workspacePath) ?? ""),
+            "threadTitle": .string(selectedThread.title),
+            "threadId": .string(selectedThread.appServerThreadID ?? ""),
+            "model": .string(model.isEmpty ? "默认" : model),
+            "sandbox": .string(sandbox.rawValue),
+            "approvalPolicy": .string(approval.appServerValue),
+            "isRunning": .bool(isRunning),
+            "pendingTranscriptChanges": .number(Double(pendingChanges.count)),
+            "pendingAdditions": .number(Double(pendingAdditions)),
+            "pendingDeletions": .number(Double(pendingDeletions))
+        ]
+
+        if includeDiffStats {
+            let summary = Self.diffSummary(workspaceGitDiff?.diff ?? "")
+            snapshot["gitDiff"] = .object([
+                "files": .number(Double(summary.files)),
+                "additions": .number(Double(summary.additions)),
+                "deletions": .number(Double(summary.deletions)),
+                "status": .string(workspaceGitStatusText)
+            ])
+            snapshot["changedFiles"] = .array(pendingChanges.prefix(20).map { .string($0.path) })
+        }
+
+        return JSONValue.object(snapshot).prettyJSONString
+    }
+
+    private func upsertDynamicToolCallTranscript(
+        callID: String,
+        namespace: String?,
+        tool: String,
+        arguments: JSONValue,
+        status: RunStatus,
+        responseText: String?
+    ) {
+        let qualifiedName = Self.dynamicToolQualifiedName(namespace: namespace, tool: tool)
+        let output = [
+            "参数：",
+            arguments.prettyJSONString,
+            responseText.map { "\n结果：\n\($0)" }
+        ]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+        upsertTranscriptItem(
+            serverItemID: "dynamic-tool:\(callID)",
+            kind: .command(CommandRun(
+                command: "动态工具 \(qualifiedName.isEmpty ? tool : qualifiedName)",
+                directory: Project.abbreviate(workspacePath),
+                output: output,
+                status: status
+            ))
+        )
     }
 
     private func initializeToolUserInputState(itemID: UUID, questions: [ToolUserInputQuestion]) {
