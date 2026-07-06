@@ -111,6 +111,8 @@ enum SmokeTestRunner {
             runHomeConnectionActionsSmoke()
         } else if CommandLine.arguments.contains("--app-mention-config-smoke-test") {
             runAppMentionConfigSmoke()
+        } else if CommandLine.arguments.contains("--app-mention-turn-smoke-test") {
+            runAppMentionTurnSmoke()
         } else if CommandLine.arguments.contains("--app-list-updated-smoke-test") {
             runAppListUpdatedSmoke()
         } else if CommandLine.arguments.contains("--project-switch-smoke-test") {
@@ -9130,6 +9132,122 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runAppMentionTurnSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAppMentionTurnSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeAppMentionTurnAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let app = CodexRuntimeAppInfo(
+                    id: "raytone.app-demo",
+                    name: "Raytone Mail",
+                    description: "用于验证 app mention 被发送到 turn/start",
+                    category: "邮件",
+                    developer: "Raytone",
+                    website: nil,
+                    installURL: "https://chatgpt.com/apps/raytone/mail",
+                    isAccessible: true,
+                    isEnabled: true,
+                    pluginDisplayNames: ["Raytone Mail Plugin"],
+                    screenshotPrompts: ["打开邮件摘要"]
+                )
+                let marker = "Raytone app mention turn smoke OK"
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-app-mention-turn"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_APP_MENTION_TURN_LOG": logURL.path
+                ]
+                store.runtimeApps = [app]
+
+                fputs("app-mention-turn-smoke: useRuntimeAppInComposer\n", stderr)
+                let composerOK = await store.useRuntimeAppInComposer(app)
+                let preparedPrompt = store.prompt
+                fputs("app-mention-turn-smoke: runPrompt\n", stderr)
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""turnCompletedAfterMention":true"#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let userMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .userMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let promptContainsAppSlug = preparedPrompt.contains("$\(app.inputSlug)")
+                let mentionInTurnStart = logText.contains(#""method":"turn/start""#) &&
+                    logText.contains(#""type":"mention""#) &&
+                    logText.contains(#""name":"Raytone Mail""#) &&
+                    logText.contains(#""path":"app://raytone.app-demo""#)
+                let textInTurnStart = logText.contains(#""type":"text""#) &&
+                    logText.contains("最小可执行请求")
+                let ok = composerOK &&
+                    promptContainsAppSlug &&
+                    mentionInTurnStart &&
+                    textInTurnStart &&
+                    userMessages.contains(preparedPrompt) &&
+                    agentMessages.contains(marker) &&
+                    !store.isRunning &&
+                    store.selectedThread.appServerThreadID == "thread-app-mention"
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "appID": app.id,
+                    "appSlug": app.inputSlug,
+                    "composerOK": composerOK,
+                    "promptContainsAppSlug": promptContainsAppSlug,
+                    "mentionInTurnStart": mentionInTurnStart,
+                    "textInTurnStart": textInTurnStart,
+                    "isRunning": store.isRunning,
+                    "threadID": store.selectedThread.appServerThreadID ?? "",
+                    "preparedPrompt": preparedPrompt,
+                    "agentMessages": agentMessages,
+                    "requestLogPreview": String(logText.prefix(2600)),
+                    "source": "useRuntimeAppInComposer + turn/start mention input"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAppListUpdatedSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -12895,6 +13013,88 @@ enum SmokeTestRunner {
                     send_notification("app/list/updated", {"data": [app_payload()]})
             except Exception as error:
                 send_error(request_id, f"unsupported method {method}: {error}")
+        """#
+    }
+
+    private static var fakeAppMentionTurnAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_APP_MENTION_TURN_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({"id": request_id, "error": {"code": -32602, "message": message}})
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-app-mention",
+                        "sessionId": "session-app-mention",
+                        "preview": "App mention smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                log({"turnStartInput": params.get("input")})
+                send_result(request_id, {
+                    "turn": {"id": "turn-app-mention", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-app-mention",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_notification("item/completed", {
+                    "threadId": "thread-app-mention",
+                    "turnId": "turn-app-mention",
+                    "item": {
+                        "id": "agent-app-mention",
+                        "type": "agentMessage",
+                        "text": "Raytone app mention turn smoke OK"
+                    }
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-app-mention", "status": "completed"}
+                })
+                log({"turnCompletedAfterMention": True})
+            else:
+                send_error(request_id, f"unsupported method {method}")
         """#
     }
 
