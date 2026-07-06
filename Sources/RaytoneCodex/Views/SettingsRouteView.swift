@@ -2196,11 +2196,24 @@ struct SettingsRouteView: View {
                                             }
                                         }
                                         Spacer(minLength: 0)
-                                        Button(app.installURL == nil ? "无链接" : (app.isAccessible ? "打开" : "安装")) {
-                                            store.openRuntimeAppInstallURL(app)
+                                        HStack(spacing: 6) {
+                                            Button("使用") {
+                                                Task { await store.useRuntimeAppInComposer(app) }
+                                            }
+                                            .buttonStyle(ChipButtonStyle(prominent: app.isAccessible && app.isEnabled))
+                                            .disabled(!app.isAccessible || !app.isEnabled)
+
+                                            Button(app.isEnabled ? "停用" : "启用") {
+                                                Task { await store.setRuntimeAppEnabled(app, enabled: !app.isEnabled) }
+                                            }
+                                            .buttonStyle(ChipButtonStyle())
+
+                                            Button(app.installURL == nil ? "无链接" : (app.isAccessible ? "打开" : "安装")) {
+                                                store.openRuntimeAppInstallURL(app)
+                                            }
+                                            .buttonStyle(ChipButtonStyle(prominent: app.installURL != nil && !app.isAccessible))
+                                            .disabled(app.installURL == nil)
                                         }
-                                        .buttonStyle(ChipButtonStyle(prominent: app.installURL != nil && !app.isAccessible))
-                                        .disabled(app.installURL == nil)
                                     }
                                     if !app.pluginDisplayNames.isEmpty {
                                         Text("关联插件：\(app.pluginDisplayNames.prefix(3).joined(separator: "、"))")

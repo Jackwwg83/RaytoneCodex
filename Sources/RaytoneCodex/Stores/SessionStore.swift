@@ -998,7 +998,7 @@ final class SessionStore: ObservableObject {
         }
 
         do {
-            let mentions = await pluginMentions(in: trimmedPrompt)
+            let mentions = await inputMentions(in: trimmedPrompt)
             try await client.steer(
                 threadID: threadID,
                 expectedTurnID: turnID,
@@ -3782,6 +3782,56 @@ final class SessionStore: ObservableObject {
         return true
     }
 
+    @discardableResult
+    func setRuntimeAppEnabled(_ app: CodexRuntimeAppInfo, enabled: Bool) async -> Bool {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在写入 apps.\(app.id).enabled…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.writeConfigValue(
+                keyPath: "apps.\(Self.quotedConfigKeyPathSegment(app.id)).enabled",
+                value: .bool(enabled)
+            )
+            await refreshIntegrationRuntime(forceRefetchApps: true)
+            if let index = runtimeApps.firstIndex(where: { $0.id == app.id }) {
+                runtimeApps[index].isEnabled = enabled
+            }
+            let snapshotCount = runtimeApps.filter { !$0.screenshotPrompts.isEmpty }.count
+            runtimeCatalogStatusText = "config/value/write：\(app.name) 已\(enabled ? "启用" : "停用")"
+            runtimeAppsStatusText = "app/list：\(runtimeApps.count) 个 app · \(snapshotCount) 个含快照说明"
+            runtimeCatalogIsRefreshing = false
+            return true
+        } catch {
+            runtimeCatalogStatusText = "应用设置写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return false
+        }
+    }
+
+    @discardableResult
+    func useRuntimeAppInComposer(_ app: CodexRuntimeAppInfo) async -> Bool {
+        guard app.isAccessible else {
+            runtimeCatalogStatusText = "app/list：\(app.name) 尚未连接，无法在对话中使用"
+            return false
+        }
+        guard app.isEnabled else {
+            runtimeCatalogStatusText = "app/list：\(app.name) 已停用，先启用后才能使用"
+            return false
+        }
+
+        let slug = app.inputSlug.isEmpty ? CodexRuntimeAppInfo.slug(for: app.id) : app.inputSlug
+        let nextPrompt = "$\(slug) 请用中文说明你能读取哪些上下文，并给出一个最小可执行请求。"
+        prompt = nextPrompt
+        route = .thread
+        toolPanel = .launcher
+        _ = await previewInputMentions(for: nextPrompt)
+        runtimeCatalogStatusText = "app/list：已把 \(app.name) 放入输入框"
+        return lastMentionInputPreview.contains { $0["path"] == app.mentionPath }
+    }
+
     func refreshNewThreadHeroRuntime() async {
         homeConnectionStatusText = "正在读取新对话连接状态…"
 
@@ -5372,7 +5422,7 @@ final class SessionStore: ObservableObject {
     private func runPromptWithAppServer(_ trimmedPrompt: String, localImagePaths: [String] = []) async throws {
         let options = appServerOptions()
         let client = try await ensureAppServerClient()
-        let mentions = await pluginMentions(in: trimmedPrompt)
+        let mentions = await inputMentions(in: trimmedPrompt)
         let threadID = try await ensureAppServerThread(client: client, options: options)
 
         let turn = try await client.startTurn(
@@ -5715,18 +5765,26 @@ final class SessionStore: ObservableObject {
     }
 
     func previewPluginMentions(for prompt: String) async -> [CodexAppServerMention] {
-        await pluginMentions(in: prompt)
+        await inputMentions(in: prompt).filter { $0.path.hasPrefix("plugin://") }
     }
 
-    private func pluginMentions(in prompt: String) async -> [CodexAppServerMention] {
+    func previewInputMentions(for prompt: String) async -> [CodexAppServerMention] {
+        await inputMentions(in: prompt)
+    }
+
+    private func inputMentions(in prompt: String) async -> [CodexAppServerMention] {
         let mentionTokens = Self.pluginMentionTokens(in: prompt)
-        guard !mentionTokens.isEmpty else {
+        let appTokens = Self.appMentionTokens(in: prompt)
+        guard !mentionTokens.isEmpty || !appTokens.isEmpty else {
             lastMentionInputPreview = []
             return []
         }
 
-        if runtimePlugins.isEmpty {
+        if !mentionTokens.isEmpty && runtimePlugins.isEmpty {
             await refreshRuntimeCatalog()
+        }
+        if !appTokens.isEmpty && runtimeApps.isEmpty {
+            await refreshIntegrationRuntime(forceRefetchApps: false)
         }
 
         var pluginsByName: [String: CodexRuntimePlugin] = [:]
@@ -5734,7 +5792,7 @@ final class SessionStore: ObservableObject {
             pluginsByName[plugin.name.lowercased()] = plugin
         }
         var seenPaths = Set<String>()
-        let mentions = mentionTokens.compactMap { token -> CodexAppServerMention? in
+        var mentions = mentionTokens.compactMap { token -> CodexAppServerMention? in
             guard let plugin = pluginsByName[token.lowercased()],
                   plugin.installed,
                   plugin.enabled,
@@ -5743,6 +5801,31 @@ final class SessionStore: ObservableObject {
             }
             seenPaths.insert(plugin.mentionPath)
             return CodexAppServerMention(name: plugin.displayName, path: plugin.mentionPath)
+        }
+
+        if !appTokens.isEmpty {
+            var appsByToken: [String: CodexRuntimeAppInfo] = [:]
+            for app in runtimeApps {
+                let candidates = [
+                    app.id.lowercased(),
+                    app.inputSlug.lowercased(),
+                    CodexRuntimeAppInfo.slug(for: app.id).lowercased()
+                ]
+                for candidate in candidates where !candidate.isEmpty && appsByToken[candidate] == nil {
+                    appsByToken[candidate] = app
+                }
+            }
+
+            for token in appTokens {
+                guard let app = appsByToken[token.lowercased()],
+                      app.isAccessible,
+                      app.isEnabled,
+                      !seenPaths.contains(app.mentionPath) else {
+                    continue
+                }
+                seenPaths.insert(app.mentionPath)
+                mentions.append(CodexAppServerMention(name: app.name, path: app.mentionPath))
+            }
         }
 
         lastMentionInputPreview = mentions.map {
@@ -6469,6 +6552,28 @@ final class SessionStore: ObservableObject {
             }
             return String(text[tokenRange])
         }
+    }
+
+    private static func appMentionTokens(in text: String) -> [String] {
+        let pattern = #"(?<![\p{L}\p{N}_\-])\$([A-Za-z0-9][A-Za-z0-9_\-]*)(?![\p{L}\p{N}_\-])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return []
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let tokenRange = Range(match.range(at: 1), in: text) else {
+                return nil
+            }
+            return String(text[tokenRange])
+        }
+    }
+
+    private static func quotedConfigKeyPathSegment(_ segment: String) -> String {
+        let escaped = segment
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
     }
 
     private static func currentGitBranch(at path: String) -> String? {

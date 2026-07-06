@@ -70,6 +70,8 @@ enum SmokeTestRunner {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
             runIntegrationPagesSmoke()
+        } else if CommandLine.arguments.contains("--app-mention-config-smoke-test") {
+            runAppMentionConfigSmoke()
         } else if CommandLine.arguments.contains("--app-list-updated-smoke-test") {
             runAppListUpdatedSmoke()
         } else if CommandLine.arguments.contains("--project-switch-smoke-test") {
@@ -6394,6 +6396,103 @@ enum SmokeTestRunner {
                 "worktrees": store.workspaceWorktrees
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAppMentionConfigSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAppMentionConfigSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let configURL = codexHomeURL.appendingPathComponent("config.toml")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+
+                let app = CodexRuntimeAppInfo(
+                    id: "raytone.app-demo",
+                    name: "Raytone Mail",
+                    description: "用于验证 app mention 和 Codex apps 配置写入",
+                    category: "邮件",
+                    developer: "Raytone",
+                    website: nil,
+                    installURL: "https://chatgpt.com/apps/raytone/mail",
+                    isAccessible: true,
+                    isEnabled: true,
+                    pluginDisplayNames: ["Raytone Mail Plugin"],
+                    screenshotPrompts: ["打开邮件摘要"]
+                )
+                let prompt = "$\(app.inputSlug) 汇总今天的邮件"
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeApps = [app]
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("app-mention-config-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("app-mention-config-smoke: previewInputMentions\n", stderr)
+                let mentions = await store.previewInputMentions(for: prompt)
+                let inputItems = CodexAppServerClient.userInputItems(prompt: prompt, mentions: mentions)
+                let inputJSONObject = jsonObject(from: inputItems)
+                let mentionOK = mentions.count == 1 &&
+                    mentions.first?.path == app.mentionPath &&
+                    inputItems.arrayValue?.last?["type"]?.stringValue == "mention"
+
+                fputs("app-mention-config-smoke: useRuntimeAppInComposer\n", stderr)
+                store.runtimeApps = [app]
+                let composerOK = await store.useRuntimeAppInComposer(app)
+
+                fputs("app-mention-config-smoke: setRuntimeAppEnabled\n", stderr)
+                let configWriteOK = await store.setRuntimeAppEnabled(app, enabled: false)
+                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let configArtifactOK = configText.contains(#"[apps."raytone.app-demo"]"#) &&
+                    configText.contains("enabled = false")
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    mentionOK &&
+                    composerOK &&
+                    configWriteOK &&
+                    configArtifactOK
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "configPath": configURL.path,
+                    "appID": app.id,
+                    "appSlug": app.inputSlug,
+                    "mentionOK": mentionOK,
+                    "composerOK": composerOK,
+                    "configWriteOK": configWriteOK,
+                    "configArtifactOK": configArtifactOK,
+                    "mentions": mentions.map { ["name": $0.name, "path": $0.path] },
+                    "turnInput": inputJSONObject,
+                    "prompt": store.prompt,
+                    "status": store.runtimeCatalogStatusText,
+                    "errors": store.runtimeCatalogErrors,
+                    "configPreview": configText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()

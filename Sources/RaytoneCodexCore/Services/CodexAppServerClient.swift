@@ -1502,6 +1502,12 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
     public var isEnabled: Bool
     public var pluginDisplayNames: [String]
     public var screenshotPrompts: [String]
+    public var mentionPath: String {
+        "app://\(id)"
+    }
+    public var inputSlug: String {
+        Self.slug(for: name)
+    }
 
     public init(
         id: String,
@@ -1527,6 +1533,22 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
         self.isEnabled = isEnabled
         self.pluginDisplayNames = pluginDisplayNames
         self.screenshotPrompts = screenshotPrompts
+    }
+
+    public static func slug(for value: String) -> String {
+        let lowercased = value.lowercased()
+        var scalars: [UnicodeScalar] = []
+        var previousWasDash = false
+        for scalar in lowercased.unicodeScalars {
+            if (scalar.value >= 97 && scalar.value <= 122) || (scalar.value >= 48 && scalar.value <= 57) {
+                scalars.append(scalar)
+                previousWasDash = false
+            } else if !previousWasDash {
+                scalars.append("-")
+                previousWasDash = true
+            }
+        }
+        return String(String.UnicodeScalarView(scalars)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 }
 
