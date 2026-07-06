@@ -12,6 +12,7 @@ struct CodexRuntimeScaffoldResult: Equatable {
     var readBackSnippets: [String: String]
     var discoveredPluginID: String?
     var discoveredSkillPath: String?
+    var source: String
 }
 
 @MainActor
@@ -5774,12 +5775,10 @@ final class SessionStore: ObservableObject {
             try await client.createDirectory(path: manifestURL.deletingLastPathComponent().path)
             try await client.createDirectory(path: skillURL.deletingLastPathComponent().path)
 
-            let existingMarketplaceData: Data?
-            if FileManager.default.fileExists(atPath: marketplaceURL.path) {
-                existingMarketplaceData = try await client.readFile(path: marketplaceURL.path)
-            } else {
-                existingMarketplaceData = nil
-            }
+            let (existingMarketplaceData, marketplaceSource) = try await Self.optionalAppServerFileData(
+                client: client,
+                path: marketplaceURL.path
+            )
             let marketplaceData = try Self.marketplaceTemplateData(
                 existingData: existingMarketplaceData,
                 marketplaceName: marketplaceName,
@@ -5831,10 +5830,11 @@ final class SessionStore: ObservableObject {
                 files: [marketplaceURL.path, manifestURL.path, skillURL.path],
                 readBackSnippets: readBacks,
                 discoveredPluginID: discoveredPlugin?.id,
-                discoveredSkillPath: discoveredSkill?.path
+                discoveredSkillPath: discoveredSkill?.path,
+                source: "\(marketplaceSource) + fs/writeFile + fs/readFile + plugin/list + skills/list"
             )
             let loadedText = discoveredPlugin == nil ? "已写入，等待 plugin/list 加载" : "plugin/list 已发现 \(discoveredPlugin?.displayName ?? pluginName)"
-            runtimeCatalogStatusText = "fs/writeFile：已创建 \(pluginName) · \(loadedText)"
+            runtimeCatalogStatusText = "\(result.source)：已创建 \(pluginName) · \(loadedText)"
             return result
         } catch {
             runtimeCatalogStatusText = "创建本地插件失败：\(error.localizedDescription)"
@@ -5884,10 +5884,11 @@ final class SessionStore: ObservableObject {
                 files: [skillURL.path],
                 readBackSnippets: readBacks,
                 discoveredPluginID: nil,
-                discoveredSkillPath: discoveredSkill?.path
+                discoveredSkillPath: discoveredSkill?.path,
+                source: "fs/createDirectory + fs/writeFile + fs/readFile + skills/list"
             )
             let loadedText = discoveredSkill == nil ? "已写入，等待 skills/list 加载" : "skills/list 已发现 \(discoveredSkill?.displayName ?? skillName)"
-            runtimeCatalogStatusText = "fs/writeFile：已创建 \(skillName) · \(loadedText)"
+            runtimeCatalogStatusText = "\(result.source)：已创建 \(skillName) · \(loadedText)"
             return result
         } catch {
             runtimeCatalogStatusText = "创建本地技能失败：\(error.localizedDescription)"
@@ -10800,6 +10801,22 @@ final class SessionStore: ObservableObject {
             snippets[path] = String(text.prefix(240))
         }
         return snippets
+    }
+
+    private static func optionalAppServerFileData(
+        client: CodexAppServerClient,
+        path: String
+    ) async throws -> (Data?, String) {
+        do {
+            let metadata = try await client.getMetadata(path: path)
+            guard metadata.isFile else {
+                return (nil, "fs/getMetadata non-file")
+            }
+            let data = try await client.readFile(path: path)
+            return (data, "fs/getMetadata + fs/readFile")
+        } catch {
+            return (nil, "fs/getMetadata missing")
+        }
     }
 
     private static func defaultCodexConfigURL(overrideCodexHome: String? = nil) -> URL {

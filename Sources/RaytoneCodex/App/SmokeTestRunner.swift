@@ -2743,6 +2743,11 @@ enum SmokeTestRunner {
                     localSkillText.contains(skillName) &&
                     pluginResult.readBackSnippets[pluginManifestURL.path]?.contains("Raytone 本地插件") == true &&
                     skillResult.readBackSnippets[localSkillURL.path]?.contains(skillName) == true &&
+                    pluginResult.source.contains("fs/getMetadata") &&
+                    pluginResult.source.contains("fs/writeFile") &&
+                    pluginResult.source.contains("fs/readFile") &&
+                    skillResult.source.contains("fs/writeFile") &&
+                    skillResult.source.contains("fs/readFile") &&
                     pluginDiscovered &&
                     localSkillDiscovered
 
@@ -15603,7 +15608,8 @@ enum SmokeTestRunner {
             "files": result.files,
             "readBackSnippets": result.readBackSnippets,
             "discoveredPluginID": result.discoveredPluginID ?? "",
-            "discoveredSkillPath": result.discoveredSkillPath ?? ""
+            "discoveredSkillPath": result.discoveredSkillPath ?? "",
+            "source": result.source
         ]
     }
 
