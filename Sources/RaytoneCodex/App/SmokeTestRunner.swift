@@ -87,6 +87,8 @@ enum SmokeTestRunner {
             runFileChangeStreamSmoke()
         } else if CommandLine.arguments.contains("--runtime-diagnostics-smoke-test") {
             runRuntimeDiagnosticsSmoke()
+        } else if CommandLine.arguments.contains("--process-stream-smoke-test") {
+            runProcessStreamSmoke()
         } else if CommandLine.arguments.contains("--hook-controls-smoke-test") {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
@@ -7301,6 +7303,116 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runProcessStreamSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexProcessStreamSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# Process stream smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeProcessStreamAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-process-stream"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_PROCESS_STREAM_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "ProcessStreamSmoke"
+                }
+
+                store.prompt = "触发进程流式通知"
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline,
+                      !store.runtimeCatalogStatusText.contains("process/exited") {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let processRun = store.terminalRuns.first { $0.processID == "process-stream-smoke" }
+                let command = commandRuns(in: store.selectedThread.items).first { $0.command == "cat" }
+                let commandOutput = command?.output ?? ""
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let expectedMethods = [
+                    "process/outputDelta",
+                    "process/exited",
+                    "item/commandExecution/outputDelta",
+                    "item/commandExecution/terminalInteraction"
+                ]
+                let logHasAllMethods = expectedMethods.allSatisfy { method in
+                    logText.contains(#""method":"\#(method)""#)
+                }
+                let ok = !store.isRunning &&
+                    processRun?.command == "process/spawn process-stream-smoke" &&
+                    processRun?.output.contains("process stdout stream") == true &&
+                    processRun?.output.contains("process stderr stream") == true &&
+                    processRun?.output.contains("stderr 输出已截断") == true &&
+                    processRun?.exitCode == 0 &&
+                    processRun?.status == .succeeded &&
+                    command?.status == .running &&
+                    commandOutput.contains("command ready") &&
+                    commandOutput.contains("[stdin → command-process-smoke]") &&
+                    commandOutput.contains("raytone stdin smoke") &&
+                    commandOutput.contains("command done") &&
+                    store.runtimeCatalogStatusText.contains("process/exited") &&
+                    logHasAllMethods
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "terminalRuns": store.terminalRuns.map { run in
+                        [
+                            "command": run.command,
+                            "processID": run.processID ?? "",
+                            "output": run.output,
+                            "exitCode": run.exitCode.map { Int($0) as Any } ?? NSNull(),
+                            "status": terminalStatusName(run.status)
+                        ] as [String: Any]
+                    },
+                    "commandOutput": commandOutput,
+                    "runtimeCatalogStatus": store.runtimeCatalogStatusText,
+                    "isRunning": store.isRunning,
+                    "logHasAllMethods": logHasAllMethods,
+                    "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAccountAuthSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
@@ -9631,6 +9743,148 @@ enum SmokeTestRunner {
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-runtime-diagnostics", "status": "completed"}
+                })
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeProcessStreamAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import base64
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_PROCESS_STREAM_LOG")
+        cwd = os.getcwd()
+
+        def b64(text):
+            return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        def thread_payload():
+            return {
+                "id": "thread-process-stream",
+                "sessionId": "session-process-stream",
+                "name": "进程流式线程",
+                "preview": "Process stream smoke",
+                "cwd": cwd,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000001,
+                "status": {"type": "active", "activeFlags": []},
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "workspace-write",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-process-stream", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-process-stream",
+                        "status": "inProgress",
+                        "startedAt": 1700000000,
+                    }
+                })
+                send_notification("process/outputDelta", {
+                    "processHandle": "process-stream-smoke",
+                    "stream": "stdout",
+                    "deltaBase64": b64("process stdout stream\n"),
+                    "capReached": False,
+                })
+                send_notification("process/outputDelta", {
+                    "processHandle": "process-stream-smoke",
+                    "stream": "stderr",
+                    "deltaBase64": b64("process stderr stream\n"),
+                    "capReached": True,
+                })
+                send_notification("process/exited", {
+                    "processHandle": "process-stream-smoke",
+                    "exitCode": 0,
+                    "stdout": "",
+                    "stdoutCapReached": False,
+                    "stderr": "",
+                    "stderrCapReached": True,
+                })
+                send_notification("item/started", {
+                    "threadId": "thread-process-stream",
+                    "turnId": "turn-process-stream",
+                    "item": {
+                        "id": "command-interaction-item",
+                        "type": "commandExecution",
+                        "command": "cat",
+                        "cwd": cwd,
+                        "status": "inProgress",
+                        "aggregatedOutput": "",
+                    },
+                })
+                send_notification("item/commandExecution/outputDelta", {
+                    "threadId": "thread-process-stream",
+                    "turnId": "turn-process-stream",
+                    "itemId": "command-interaction-item",
+                    "delta": "command ready\n",
+                })
+                send_notification("item/commandExecution/terminalInteraction", {
+                    "threadId": "thread-process-stream",
+                    "turnId": "turn-process-stream",
+                    "itemId": "command-interaction-item",
+                    "processId": "command-process-smoke",
+                    "stdin": "raytone stdin smoke\n",
+                })
+                send_notification("item/commandExecution/outputDelta", {
+                    "threadId": "thread-process-stream",
+                    "turnId": "turn-process-stream",
+                    "itemId": "command-interaction-item",
+                    "delta": "command done\n",
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-process-stream", "status": "completed"}
                 })
             else:
                 send_error(request_id, f"unsupported method {method}")

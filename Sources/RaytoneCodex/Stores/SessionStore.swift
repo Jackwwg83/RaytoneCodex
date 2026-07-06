@@ -6521,12 +6521,18 @@ final class SessionStore: ObservableObject {
             handleFileSystemChanged(params)
         case "command/exec/outputDelta":
             handleTerminalOutputDelta(params)
+        case "process/outputDelta":
+            handleProcessOutputDelta(params)
+        case "process/exited":
+            handleProcessExited(params)
         case "item/agentMessage/delta":
             appendAgentDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
             appendReasoningDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/commandExecution/outputDelta":
             appendCommandOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
+        case "item/commandExecution/terminalInteraction":
+            appendTerminalInteraction(params)
         case "item/fileChange/outputDelta":
             appendFileChangeOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/fileChange/patchUpdated":
@@ -7007,6 +7013,71 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func handleProcessOutputDelta(_ params: JSONValue?) {
+        guard let processHandle = params?["processHandle"]?.stringValue,
+              let deltaBase64 = params?["deltaBase64"]?.stringValue,
+              let data = Data(base64Encoded: deltaBase64) else {
+            return
+        }
+
+        let stream = params?["stream"]?.stringValue ?? "stdout"
+        let output = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        let cappedSuffix = params?["capReached"]?.boolValue == true ? "\n[\(stream) 输出已截断]\n" : ""
+        let runID = ensureTerminalRun(processID: processHandle, command: "process/spawn \(processHandle)")
+        appendTerminalRunOutput(id: runID, text: output + cappedSuffix)
+        runtimeCatalogStatusText = "process/outputDelta：\(processHandle) · \(stream)"
+    }
+
+    private func handleProcessExited(_ params: JSONValue?) {
+        guard let processHandle = params?["processHandle"]?.stringValue,
+              let exitCode = params?["exitCode"]?.intValue else {
+            return
+        }
+
+        let runID = ensureTerminalRun(processID: processHandle, command: "process/spawn \(processHandle)")
+        let stdout = params?["stdout"]?.stringValue ?? ""
+        let stderr = params?["stderr"]?.stringValue ?? ""
+        let bufferedOutput = [stdout, stderr]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n")
+        if !bufferedOutput.isEmpty {
+            appendTerminalRunOutput(id: runID, text: bufferedOutput)
+        }
+        appendTerminalCapNoticeIfNeeded(runID: runID, stream: "stdout", capReached: params?["stdoutCapReached"]?.boolValue == true)
+        appendTerminalCapNoticeIfNeeded(runID: runID, stream: "stderr", capReached: params?["stderrCapReached"]?.boolValue == true)
+        updateTerminalRun(
+            id: runID,
+            output: terminalRuns.first(where: { $0.id == runID })?.output ?? "",
+            exitCode: Int32(exitCode),
+            status: exitCode == 0 ? .succeeded : .failed
+        )
+        runtimeCatalogStatusText = "process/exited：\(processHandle) · 退出 \(exitCode)"
+        if activeTerminalProcessID == processHandle {
+            terminalIsRunning = false
+            resetActiveTerminal()
+        }
+    }
+
+    private func ensureTerminalRun(processID: String, command: String) -> UUID {
+        if let existing = terminalRuns.first(where: { $0.processID == processID }) {
+            return existing.id
+        }
+        let id = UUID()
+        terminalRuns.append(TerminalCommandRecord(id: id, command: command, processID: processID))
+        return id
+    }
+
+    private func appendTerminalCapNoticeIfNeeded(runID: UUID, stream: String, capReached: Bool) {
+        guard capReached,
+              let run = terminalRuns.first(where: { $0.id == runID }) else {
+            return
+        }
+        let marker = "[\(stream) 输出已截断]"
+        if !run.output.contains(marker) {
+            appendTerminalRunOutput(id: runID, text: "\n\(marker)\n")
+        }
+    }
+
     private func handleThreadSettingsUpdated(_ params: JSONValue?) {
         guard let threadID = params?["threadId"]?.stringValue,
               let settings = params?["threadSettings"] else {
@@ -7423,6 +7494,30 @@ final class SessionStore: ObservableObject {
                 thread.items.append(TranscriptItem(
                     id: transcriptID,
                     kind: .command(CommandRun(command: "命令运行中", output: delta, status: .running))
+                ))
+            }
+        }
+    }
+
+    private func appendTerminalInteraction(_ params: JSONValue?) {
+        guard let itemID = params?["itemId"]?.stringValue else { return }
+        let stdin = params?["stdin"]?.stringValue ?? ""
+        let processID = params?["processId"]?.stringValue ?? "process"
+        let interactionText = "\n[stdin → \(processID)]\n\(stdin)"
+        let transcriptID = transcriptUUID(for: itemID)
+        updateSelectedThread { thread in
+            if let index = thread.items.firstIndex(where: { $0.id == transcriptID }),
+               case var .command(run) = thread.items[index].kind {
+                run.output += interactionText
+                thread.items[index].kind = .command(run)
+            } else {
+                thread.items.append(TranscriptItem(
+                    id: transcriptID,
+                    kind: .command(CommandRun(
+                        command: "终端交互",
+                        output: interactionText.trimmingCharacters(in: .newlines),
+                        status: .running
+                    ))
                 ))
             }
         }
