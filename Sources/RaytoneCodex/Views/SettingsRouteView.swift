@@ -452,6 +452,25 @@ struct SettingsRouteView: View {
                     modeCard(id: "coding", symbol: "terminal", title: "适用于编程", subtitle: "更具技术性的回复和控制")
                     modeCard(id: "daily", symbol: "sparkles", title: "适用于日常工作", subtitle: "同样强大，技术细节更少")
                 }
+                HStack(spacing: 8) {
+                    statusBadge(
+                        store.runtimeCollaborationModes.isEmpty ? "未读取 preset" : "\(store.runtimeCollaborationModes.count) 个 preset",
+                        ok: !store.runtimeCollaborationModes.isEmpty
+                    )
+                    Text(store.runtimeCollaborationModeStatusText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button("刷新") {
+                        Task { @MainActor in
+                            await store.refreshRuntimeCollaborationModes()
+                        }
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.info)
+                }
             }
 
             SettingsSection(title: "权限") {

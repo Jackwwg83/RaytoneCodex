@@ -4488,40 +4488,65 @@ enum SmokeTestRunner {
                 let configURL = codexHome.appendingPathComponent("config.toml")
 
                 await store.saveRuntimeWorkMode(id: "coding")
+                await waitForCollaborationModeUpdate(in: store, expectedKind: "default")
                 let codingConfig = store.runtimeConfig
                 let codingText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
                 let codingState: [String: Any] = [
                     "workModeID": store.runtimeWorkModeID,
+                    "collaborationModeKind": store.selectedCollaborationModeKind,
+                    "collaborationModeStatus": store.runtimeCollaborationModeStatusText,
+                    "threadID": store.selectedThread.appServerThreadID ?? "",
                     "modelVerbosity": codingConfig?.modelVerbosity ?? "",
                     "configText": codingText
                 ]
 
                 await store.saveRuntimeWorkMode(id: "daily")
+                await waitForCollaborationModeUpdate(in: store, expectedKind: "plan")
                 let dailyConfig = store.runtimeConfig
                 let dailyText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let collaborationModePayload = store.runtimeCollaborationModes.map { preset in
+                    [
+                        "name": preset.name,
+                        "mode": preset.mode ?? "",
+                        "model": preset.model ?? "",
+                        "reasoningEffort": preset.reasoningEffort ?? ""
+                    ]
+                }
                 let dailyState: [String: Any] = [
                     "workModeID": store.runtimeWorkModeID,
+                    "collaborationModeKind": store.selectedCollaborationModeKind,
+                    "collaborationModeStatus": store.runtimeCollaborationModeStatusText,
+                    "threadID": store.selectedThread.appServerThreadID ?? "",
                     "modelVerbosity": dailyConfig?.modelVerbosity ?? "",
                     "configText": dailyText
                 ]
 
                 await store.stopAppServerForTesting()
 
+                let modes = Set(store.runtimeCollaborationModes.compactMap(\.mode))
                 let ok = codingConfig?.modelVerbosity == "high" &&
                     codingText.contains("model_verbosity = \"high\"") &&
                     codingState["workModeID"] as? String == "coding" &&
+                    codingState["collaborationModeKind"] as? String == "default" &&
+                    (codingState["threadID"] as? String)?.isEmpty == false &&
                     dailyConfig?.modelVerbosity == "low" &&
                     dailyText.contains("model_verbosity = \"low\"") &&
-                    dailyState["workModeID"] as? String == "daily"
+                    dailyState["workModeID"] as? String == "daily" &&
+                    dailyState["collaborationModeKind"] as? String == "plan" &&
+                    (dailyState["threadID"] as? String)?.isEmpty == false &&
+                    modes.contains("default") &&
+                    modes.contains("plan")
 
                 emitJSON([
                     "ok": ok,
+                    "source": "collaborationMode/list + thread/settings/update.collaborationMode + config/write model_verbosity",
                     "runtimeSource": runtime.executable?.source.rawValue ?? "none",
                     "runtimePath": runtime.executable?.url.path ?? "",
                     "runtimeVersion": runtime.version ?? "",
                     "workspacePath": workspacePath,
                     "codexHome": codexHome.path,
                     "configPath": configURL.path,
+                    "collaborationModes": collaborationModePayload,
                     "coding": codingState,
                     "daily": dailyState,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText
@@ -6029,6 +6054,22 @@ enum SmokeTestRunner {
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return store.runtimeCatalogStatusText.contains(needle)
+    }
+
+    @MainActor
+    private static func waitForCollaborationModeUpdate(
+        in store: SessionStore,
+        expectedKind: String,
+        timeout: TimeInterval = 8
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if store.selectedCollaborationModeKind == expectedKind,
+               store.runtimeCollaborationModeStatusText.contains("thread/settings/updated") {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
     }
 
     @MainActor

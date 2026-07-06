@@ -111,6 +111,9 @@ final class SessionStore: ObservableObject {
     @Published var runtimeRemoteControlPairingClaimed: Bool?
     @Published var runtimeRemoteControlClients: [CodexRemoteControlClient] = []
     @Published var runtimeRemoteControlClientsNextCursor: String?
+    @Published var runtimeCollaborationModes: [CodexCollaborationModePreset] = []
+    @Published var runtimeCollaborationModeStatusText = "未读取"
+    @Published var selectedCollaborationModeKind = "default"
     @Published var runtimeRealtimeVoices: CodexRealtimeVoices?
     @Published var runtimeRealtimeVoicesUpdatedAt: Date?
     @Published var voiceInputStatusText = "麦克风"
@@ -379,11 +382,43 @@ final class SessionStore: ObservableObject {
     }
 
     var runtimeWorkModeID: String {
-        Self.workModeID(for: runtimeConfig?.modelVerbosity)
+        Self.workModeID(forCollaborationModeKind: selectedCollaborationModeKind)
     }
 
     var runtimeServiceTierLabel: String {
         Self.serviceTierLabel(for: runtimeConfig?.serviceTier)
+    }
+
+    func collaborationModePreset(
+        forWorkModeID id: String,
+        modes: [CodexCollaborationModePreset]? = nil
+    ) -> CodexCollaborationModePreset {
+        let modeKind = Self.collaborationModeKind(forWorkModeID: id)
+        let availableModes = modes ?? runtimeCollaborationModes
+        if let preset = availableModes.first(where: { $0.mode == modeKind }) {
+            return preset
+        }
+        if let preset = availableModes.first(where: { $0.name.localizedCaseInsensitiveCompare(modeKind) == .orderedSame }) {
+            return preset
+        }
+        return CodexCollaborationModePreset(
+            name: modeKind == "plan" ? "Plan" : "Default",
+            mode: modeKind,
+            model: nil,
+            reasoningEffort: modeKind == "plan" ? "medium" : nil
+        )
+    }
+
+    func effectiveCollaborationModeModel(for preset: CodexCollaborationModePreset) -> String {
+        if let presetModel = preset.model?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !presetModel.isEmpty {
+            return presetModel
+        }
+        if selectedProvider.usesSidecar {
+            return selectedProvider.model
+        }
+        let selectedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return selectedModel.isEmpty ? selectedProvider.model : selectedModel
     }
 
     var runtimeMemoryEnabled: Bool {
@@ -1753,17 +1788,46 @@ final class SessionStore: ObservableObject {
 
     func saveRuntimeWorkMode(id: String) async {
         let verbosity = Self.modelVerbosityValue(forWorkModeID: id)
-        runtimeCatalogStatusText = "正在写入 model_verbosity…"
+        let modeKind = Self.collaborationModeKind(forWorkModeID: id)
+        selectedCollaborationModeKind = modeKind
+        runtimeCatalogStatusText = "正在读取 collaborationMode/list…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let modes = try await client.listCollaborationModes()
+            runtimeCollaborationModes = modes
+            runtimeCollaborationModeStatusText = "collaborationMode/list：\(modes.count) 个 preset"
+            let preset = collaborationModePreset(forWorkModeID: id, modes: modes)
+            let effectiveModel = effectiveCollaborationModeModel(for: preset)
+
             try await client.writeConfigValue(
                 keyPath: "model_verbosity",
                 value: .string(verbosity)
             )
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
+            try await client.updateThreadCollaborationMode(
+                threadID: threadID,
+                preset: preset,
+                effectiveModel: effectiveModel
+            )
             applyRuntimeConfig(try await client.readConfig(cwd: workspacePath, includeLayers: true))
-            runtimeCatalogStatusText = "model_verbosity 已写入 config.toml：\(verbosity)"
+            runtimeCatalogStatusText = "collaborationMode/list + thread/settings/update：\(preset.name)"
         } catch {
-            runtimeCatalogStatusText = "工作模式写入失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = "工作模式更新失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func refreshRuntimeCollaborationModes() async {
+        runtimeCollaborationModeStatusText = "正在读取 collaborationMode/list…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let modes = try await client.listCollaborationModes()
+            runtimeCollaborationModes = modes
+            runtimeCollaborationModeStatusText = "collaborationMode/list：\(modes.count) 个 preset"
+            runtimeCatalogStatusText = runtimeCollaborationModeStatusText
+        } catch {
+            runtimeCollaborationModeStatusText = "collaborationMode/list 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimeCollaborationModeStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
     }
@@ -6792,7 +6856,8 @@ final class SessionStore: ObservableObject {
             sandbox: sandbox,
             approvalPolicy: approval,
             approvalsReviewer: approvalsReviewer,
-            personality: personality
+            personality: personality,
+            collaborationMode: collaborationModePreset(forWorkModeID: runtimeWorkModeID)
         )
     }
 
@@ -7748,6 +7813,16 @@ final class SessionStore: ObservableObject {
         guard let threadID = params?["threadId"]?.stringValue,
               let settings = params?["threadSettings"] else {
             return
+        }
+
+        if let mode = settings["collaborationMode"]?["mode"]?.stringValue ??
+            settings["collaboration_mode"]?["mode"]?.stringValue {
+            selectedCollaborationModeKind = mode
+            runtimeCollaborationModeStatusText = "thread/settings/updated：\(mode)"
+            runtimeCatalogStatusText = "thread/settings/updated：工作模式 \(Self.workModeName(forCollaborationModeKind: mode))"
+            updateThread(appServerThreadID: threadID) { thread in
+                thread.updatedAt = Date()
+            }
         }
 
         if let rawPersonality = settings["personality"]?.stringValue,
@@ -10112,6 +10187,21 @@ final class SessionStore: ObservableObject {
         case "low": "daily"
         default: "coding"
         }
+    }
+
+    static func collaborationModeKind(forWorkModeID id: String) -> String {
+        id == "daily" ? "plan" : "default"
+    }
+
+    static func workModeID(forCollaborationModeKind kind: String?) -> String {
+        switch kind?.lowercased() {
+        case "plan": "daily"
+        default: "coding"
+        }
+    }
+
+    static func workModeName(forCollaborationModeKind kind: String?) -> String {
+        workModeID(forCollaborationModeKind: kind) == "daily" ? "适用于日常工作" : "适用于编程"
     }
 
     static func serviceTierConfigValue(for label: String) -> String {

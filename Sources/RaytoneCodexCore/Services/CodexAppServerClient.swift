@@ -196,6 +196,32 @@ public struct CodexAppServerTurn: Equatable, Sendable {
     }
 }
 
+public struct CodexCollaborationModePreset: Equatable, Sendable, Identifiable {
+    public var id: String { mode ?? name }
+    public var name: String
+    public var mode: String?
+    public var model: String?
+    public var reasoningEffort: String?
+
+    public init(name: String, mode: String?, model: String?, reasoningEffort: String?) {
+        self.name = name
+        self.mode = mode
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+    }
+
+    public func collaborationModeValue(effectiveModel: String) -> JSONValue {
+        .object([
+            "mode": .string(mode ?? "default"),
+            "settings": .object([
+                "model": .string(model?.isEmpty == false ? model! : effectiveModel),
+                "reasoning_effort": reasoningEffort.map(JSONValue.string) ?? .null,
+                "developer_instructions": .null
+            ])
+        ])
+    }
+}
+
 public struct CodexFeedbackUploadResult: Equatable, Sendable {
     public var threadID: String
 
@@ -1754,6 +1780,7 @@ public struct CodexAppServerOptions: Equatable, Sendable {
     public var approvalPolicy: CodexApprovalPolicy
     public var approvalsReviewer: CodexApprovalsReviewer
     public var personality: CodexPersonality?
+    public var collaborationMode: CodexCollaborationModePreset?
 
     public init(
         workspaceURL: URL,
@@ -1761,7 +1788,8 @@ public struct CodexAppServerOptions: Equatable, Sendable {
         sandbox: CodexSandboxMode = .workspaceWrite,
         approvalPolicy: CodexApprovalPolicy = .onRequest,
         approvalsReviewer: CodexApprovalsReviewer = .user,
-        personality: CodexPersonality? = nil
+        personality: CodexPersonality? = nil,
+        collaborationMode: CodexCollaborationModePreset? = nil
     ) {
         self.workspaceURL = workspaceURL
         self.model = model
@@ -1769,6 +1797,7 @@ public struct CodexAppServerOptions: Equatable, Sendable {
         self.approvalPolicy = approvalPolicy
         self.approvalsReviewer = approvalsReviewer
         self.personality = personality
+        self.collaborationMode = collaborationMode
     }
 }
 
@@ -2045,6 +2074,12 @@ public actor CodexAppServerClient {
         }
         if let personality = options.personality {
             params["personality"] = .string(personality.rawValue)
+        }
+        if let collaborationMode = options.collaborationMode {
+            let effectiveModel = options.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+            params["collaborationMode"] = collaborationMode.collaborationModeValue(
+                effectiveModel: effectiveModel?.isEmpty == false ? effectiveModel! : "gpt-5.5"
+            )
         }
 
         let result = try await request(method: "turn/start", params: .object(params))
@@ -2828,6 +2863,23 @@ public actor CodexAppServerClient {
         _ = try await request(method: "thread/settings/update", params: .object([
             "threadId": .string(threadID),
             "personality": .string(personality.rawValue)
+        ]))
+    }
+
+    public func listCollaborationModes() async throws -> [CodexCollaborationModePreset] {
+        let result = try await request(method: "collaborationMode/list", params: .object([:]))
+        let items = result["data"]?.arrayValue ?? result.arrayValue ?? []
+        return items.map(Self.collaborationModePreset(from:))
+    }
+
+    public func updateThreadCollaborationMode(
+        threadID: String,
+        preset: CodexCollaborationModePreset,
+        effectiveModel: String
+    ) async throws {
+        _ = try await request(method: "thread/settings/update", params: .object([
+            "threadId": .string(threadID),
+            "collaborationMode": preset.collaborationModeValue(effectiveModel: effectiveModel)
         ]))
     }
 
@@ -4491,6 +4543,15 @@ public actor CodexAppServerClient {
             return nil
         }
         return CodexThreadMemoryMode(rawValue: rawValue)
+    }
+
+    private static func collaborationModePreset(from value: JSONValue) -> CodexCollaborationModePreset {
+        CodexCollaborationModePreset(
+            name: value["name"]?.stringValue ?? value["mode"]?.stringValue ?? "default",
+            mode: value["mode"]?.stringValue,
+            model: value["model"]?.stringValue,
+            reasoningEffort: value["reasoning_effort"]?.stringValue ?? value["reasoningEffort"]?.stringValue
+        )
     }
 
     public static func runtimeGoal(from value: JSONValue?) -> CodexRuntimeGoal? {
