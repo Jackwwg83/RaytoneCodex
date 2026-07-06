@@ -728,19 +728,23 @@ enum SmokeTestRunner {
         await store.duplicatePreviewedFileSystemItem()
         let duplicateURL = sourceDirectory.appendingPathComponent("NeedleRuntimeFile 副本.swift")
         let statusAfterDuplicate = store.filePanelStatusText
+        let sourceAfterDuplicate = store.filePanelLastOperationSource
         let duplicateWasCreated = store.filePreview?.fileName == duplicateURL.lastPathComponent &&
             fileManager.fileExists(atPath: duplicateURL.path)
         await store.removePreviewedFileSystemItem(confirm: false)
         let statusAfterRemove = store.filePanelStatusText
+        let sourceAfterRemove = store.filePanelLastOperationSource
         let duplicateWasRemoved = !fileManager.fileExists(atPath: duplicateURL.path)
 
         await store.createFileInCurrentPanelDirectory(named: "CreatedByAppServer.txt")
         let statusAfterCreateFile = store.filePanelStatusText
+        let sourceAfterCreateFile = store.filePanelLastOperationSource
         let createdFileURL = sourceDirectory.appendingPathComponent("CreatedByAppServer.txt")
         let createdFileExists = fileManager.fileExists(atPath: createdFileURL.path)
 
         await store.createDirectoryInCurrentPanelDirectory(named: "CreatedFolder")
         let statusAfterCreateFolder = store.filePanelStatusText
+        let sourceAfterCreateFolder = store.filePanelLastOperationSource
         let createdFolderURL = sourceDirectory.appendingPathComponent("CreatedFolder", isDirectory: true)
         var createdFolderIsDirectory: ObjCBool = false
         let createdFolderExists = fileManager.fileExists(
@@ -767,10 +771,14 @@ enum SmokeTestRunner {
             statusAfterPreviewReference.contains("已加入下次对话") &&
             previewReferenceSource == "openFilePathInPanel + fs/getMetadata + fs/readFile" &&
             duplicateWasCreated &&
+            sourceAfterDuplicate.contains("fs/copy") &&
             duplicateWasRemoved &&
+            sourceAfterRemove.contains("fs/remove") &&
             createdFileExists &&
+            sourceAfterCreateFile.contains("fs/writeFile") &&
             createdFolderExists &&
             createdFolderIsDirectory.boolValue &&
+            sourceAfterCreateFolder.contains("fs/createDirectory") &&
             mutationPreview?.path == createdFileURL.path &&
             mutationPreview?.byteCount == 0 &&
             watchedStatus.contains("已监听") &&
@@ -814,6 +822,10 @@ enum SmokeTestRunner {
             "statusAfterRemove": statusAfterRemove,
             "statusAfterCreateFile": statusAfterCreateFile,
             "statusAfterCreateFolder": statusAfterCreateFolder,
+            "sourceAfterDuplicate": sourceAfterDuplicate,
+            "sourceAfterRemove": sourceAfterRemove,
+            "sourceAfterCreateFile": sourceAfterCreateFile,
+            "sourceAfterCreateFolder": sourceAfterCreateFolder,
             "status": store.filePanelStatusText
         ]
 

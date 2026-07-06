@@ -2500,16 +2500,18 @@ final class SessionStore: ObservableObject {
     }
 
     func createFileInCurrentPanelDirectory(named name: String) async {
-        guard let path = filePanelChildPath(named: name) else { return }
-
         filePanelStatusText = "正在创建文件…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            guard let path = try await filePanelChildPath(named: name, client: client) else { return }
+            filePanelLastOperationSource = "fs/readDirectory + fs/writeFile"
             try await client.writeFile(path: path, data: Data())
             await loadFilePanelDirectory(currentFilePanelDirectoryPath)
             if let entry = fileEntry(matching: path) {
                 await openFileEntry(entry)
+                filePanelLastOperationSource = "fs/readDirectory + fs/writeFile + fs/getMetadata + fs/readFile"
             } else {
+                filePanelLastOperationSource = "fs/readDirectory + fs/writeFile"
                 filePanelStatusText = "已创建 \(Project.abbreviate(path))"
             }
         } catch {
@@ -2527,13 +2529,14 @@ final class SessionStore: ObservableObject {
     }
 
     func createDirectoryInCurrentPanelDirectory(named name: String) async {
-        guard let path = filePanelChildPath(named: name) else { return }
-
         filePanelStatusText = "正在创建文件夹…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            guard let path = try await filePanelChildPath(named: name, client: client) else { return }
+            filePanelLastOperationSource = "fs/readDirectory + fs/createDirectory"
             try await client.createDirectory(path: path, recursive: true)
             await loadFilePanelDirectory(path)
+            filePanelLastOperationSource = "fs/readDirectory + fs/createDirectory + fs/watch"
         } catch {
             filePanelStatusText = "创建失败：\(error.localizedDescription)"
         }
@@ -2545,10 +2548,11 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        let destinationPath = nextFilePanelCopyPath(for: preview.path)
         filePanelStatusText = "正在复制文件…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let destinationPath = try await nextFilePanelCopyPath(for: preview.path, client: client)
+            filePanelLastOperationSource = "fs/readDirectory + fs/copy"
             try await client.copyFileSystemItem(
                 sourcePath: preview.path,
                 destinationPath: destinationPath,
@@ -2557,7 +2561,9 @@ final class SessionStore: ObservableObject {
             await loadFilePanelDirectory(currentFilePanelDirectoryPath)
             if let entry = fileEntry(matching: destinationPath) {
                 await openFileEntry(entry)
+                filePanelLastOperationSource = "fs/readDirectory + fs/copy + fs/getMetadata + fs/readFile"
             } else {
+                filePanelLastOperationSource = "fs/readDirectory + fs/copy"
                 filePanelStatusText = "已复制到 \(Project.abbreviate(destinationPath))"
             }
         } catch {
@@ -2579,6 +2585,7 @@ final class SessionStore: ObservableObject {
             try await client.removeFileSystemItem(path: preview.path, recursive: false, force: false)
             filePreview = nil
             await loadFilePanelDirectory(parentPath)
+            filePanelLastOperationSource = "fs/remove + fs/readDirectory"
             filePanelStatusText = "已删除 \(Project.abbreviate(preview.path))"
         } catch {
             filePanelStatusText = "删除失败：\(error.localizedDescription)"
@@ -2665,7 +2672,7 @@ final class SessionStore: ObservableObject {
         return field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func filePanelChildPath(named rawName: String) -> String? {
+    private func filePanelChildPath(named rawName: String, client: CodexAppServerClient) async throws -> String? {
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
             filePanelStatusText = "名称不能为空"
@@ -2679,29 +2686,30 @@ final class SessionStore: ObservableObject {
         let url = URL(fileURLWithPath: currentFilePanelDirectoryPath)
             .appendingPathComponent(name)
             .standardizedFileURL
-        guard !FileManager.default.fileExists(atPath: url.path) else {
+        guard !(try await appServerFilePanelPathExists(url.path, client: client)) else {
             filePanelStatusText = "已存在：\(name)"
             return nil
         }
         return url.path
     }
 
-    private func nextFilePanelCopyPath(for path: String) -> String {
+    private func nextFilePanelCopyPath(for path: String, client: CodexAppServerClient) async throws -> String {
         let url = URL(fileURLWithPath: path)
         let directory = url.deletingLastPathComponent()
         let extensionName = url.pathExtension
         let baseName = extensionName.isEmpty
             ? url.lastPathComponent
             : String(url.lastPathComponent.dropLast(extensionName.count + 1))
+        let existingNames = Set(try await client.readDirectory(path: directory.path).map(\.fileName))
+        filePanelLastOperationSource = "fs/readDirectory"
 
         for index in 1...999 {
             let suffix = index == 1 ? " 副本" : " 副本 \(index)"
             let candidateName = extensionName.isEmpty
                 ? "\(baseName)\(suffix)"
                 : "\(baseName)\(suffix).\(extensionName)"
-            let candidateURL = directory.appendingPathComponent(candidateName)
-            if !FileManager.default.fileExists(atPath: candidateURL.path) {
-                return candidateURL.path
+            if !existingNames.contains(candidateName) {
+                return directory.appendingPathComponent(candidateName).path
             }
         }
 
@@ -2709,6 +2717,15 @@ final class SessionStore: ObservableObject {
             ? "\(baseName) 副本 \(UUID().uuidString)"
             : "\(baseName) 副本 \(UUID().uuidString).\(extensionName)"
         return directory.appendingPathComponent(fallbackName).path
+    }
+
+    private func appServerFilePanelPathExists(_ path: String, client: CodexAppServerClient) async throws -> Bool {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let parentPath = url.deletingLastPathComponent().path
+        let fileName = url.lastPathComponent
+        let entries = try await client.readDirectory(path: parentPath)
+        filePanelLastOperationSource = "fs/readDirectory"
+        return entries.contains { $0.fileName == fileName || Self.filePanelPathsEqual($0.path, url.path) }
     }
 
     private func confirmFilePanelRemoval(path: String) -> Bool {
