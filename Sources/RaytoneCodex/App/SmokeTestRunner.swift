@@ -119,6 +119,8 @@ enum SmokeTestRunner {
             runProjectSwitchSmoke()
         } else if CommandLine.arguments.contains("--workspace-switch-smoke-test") {
             runWorkspaceSwitchSmoke()
+        } else if CommandLine.arguments.contains("--branch-switch-smoke-test") {
+            runBranchSwitchSmoke()
         } else if CommandLine.arguments.contains("--worktree-switch-smoke-test") {
             runWorktreeSwitchSmoke()
         } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
@@ -10046,6 +10048,98 @@ enum SmokeTestRunner {
                     "error": error.localizedDescription
                 ])
                 try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runBranchSwitchSmoke() {
+        Task { @MainActor in
+            let baseWorkspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+            let workspaceURL = URL(fileURLWithPath: baseWorkspacePath)
+                .appendingPathComponent(".build/raytone-branch-switch-smoke-\(UUID().uuidString)", isDirectory: true)
+            let targetBranch = "raytone-branch-smoke"
+
+            do {
+                try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "branch smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                _ = try runProcess(["git", "init"], cwd: workspaceURL)
+                _ = try runProcess(["git", "checkout", "-b", "main"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "README.md"], cwd: workspaceURL)
+                _ = try runProcess([
+                    "git",
+                    "-c", "user.email=raytone@example.com",
+                    "-c", "user.name=Raytone Smoke",
+                    "commit",
+                    "-m", "initial"
+                ], cwd: workspaceURL)
+                _ = try runProcess(["git", "branch", targetBranch], cwd: workspaceURL)
+
+                let store = SessionStore()
+                let project = Project(name: "分支切换 Smoke", path: workspaceURL.path, branch: "main")
+                let thread = ChatThread(title: "分支切换", projectID: project.id, items: [])
+                store.projects = [project]
+                store.threads = [thread]
+                store.selectedThreadID = thread.id
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+
+                fputs("branch-switch-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+
+                fputs("branch-switch-smoke: refreshWorkspaceBranches\n", stderr)
+                await store.refreshWorkspaceBranches()
+                let initialBranches = store.workspaceBranches
+                let initialBranch = store.selectedProject.branch ?? ""
+
+                fputs("branch-switch-smoke: checkoutWorkspaceBranch\n", stderr)
+                await store.checkoutWorkspaceBranch(targetBranch)
+
+                let gitBranchResult = try runProcess(["git", "branch", "--show-current"], cwd: workspaceURL)
+                let actualBranch = gitBranchResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                let finalBranches = store.workspaceBranches
+                let finalBranch = store.selectedProject.branch ?? ""
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    initialBranch == "main" &&
+                    initialBranches.contains("main") &&
+                    initialBranches.contains(targetBranch) &&
+                    actualBranch == targetBranch &&
+                    finalBranch == targetBranch &&
+                    finalBranches.contains(targetBranch) &&
+                    store.workspaceBranchStatusText.contains("Git 分支")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "source": "NewThreadHero branch pill -> SessionStore.checkoutWorkspaceBranch -> command/exec git switch",
+                    "initialBranch": initialBranch,
+                    "initialBranches": initialBranches,
+                    "targetBranch": targetBranch,
+                    "actualGitBranch": actualBranch,
+                    "selectedProjectBranch": finalBranch,
+                    "finalBranches": finalBranches,
+                    "branchStatus": store.workspaceBranchStatusText,
+                    "runtimeStatus": store.runtimeCatalogStatusText
+                ])
+                try? FileManager.default.removeItem(at: workspaceURL)
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "targetBranch": targetBranch,
+                    "error": error.localizedDescription
+                ])
+                try? FileManager.default.removeItem(at: workspaceURL)
                 exit(1)
             }
         }

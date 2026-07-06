@@ -4715,7 +4715,7 @@ final class SessionStore: ObservableObject {
             let result = try await client.execCommand(
                 ["/usr/bin/git", "switch", branchName],
                 cwd: URL(fileURLWithPath: workspacePath),
-                sandbox: .workspaceWrite,
+                sandbox: sandbox,
                 timeoutMs: 20_000
             )
             if result.exitCode == 0 {
@@ -4760,7 +4760,7 @@ final class SessionStore: ObservableObject {
             let result = try await client.execCommand(
                 ["/usr/bin/git", "switch", "-c", branchName],
                 cwd: URL(fileURLWithPath: workspacePath),
-                sandbox: .workspaceWrite,
+                sandbox: sandbox,
                 timeoutMs: 20_000
             )
             if result.exitCode == 0 {
