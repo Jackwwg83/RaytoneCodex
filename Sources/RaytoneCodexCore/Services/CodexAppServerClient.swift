@@ -2235,6 +2235,56 @@ public actor CodexAppServerClient {
                         .string("path")
                     ])
                 ])
+            ]),
+            .object([
+                "namespace": .string("raytone_mcp"),
+                "name": .string("read_resource"),
+                "description": .string("通过 Codex app-server 的 mcpServer/resource/read 读取已配置 MCP 服务器资源。"),
+                "deferLoading": .bool(true),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "server": .object([
+                            "type": .string("string"),
+                            "description": .string("MCP 服务器名称，来自 mcpServerStatus/list 的 name。")
+                        ]),
+                        "uri": .object([
+                            "type": .string("string"),
+                            "description": .string("要读取的 MCP 资源 URI。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("server"),
+                        .string("uri")
+                    ])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_mcp"),
+                "name": .string("call_tool"),
+                "description": .string("通过 Codex app-server 的 mcpServer/tool/call 调用当前线程已配置 MCP 服务器工具。"),
+                "deferLoading": .bool(true),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "server": .object([
+                            "type": .string("string"),
+                            "description": .string("MCP 服务器名称，来自 mcpServerStatus/list 的 name。")
+                        ]),
+                        "tool": .object([
+                            "type": .string("string"),
+                            "description": .string("MCP 工具名称。")
+                        ]),
+                        "arguments": .object([
+                            "type": .string("object"),
+                            "description": .string("传给 MCP 工具的 JSON 参数。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("server"),
+                        .string("tool")
+                    ])
+                ])
             ])
         ]
     }

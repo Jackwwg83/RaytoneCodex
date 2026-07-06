@@ -8146,6 +8146,7 @@ final class SessionStore: ObservableObject {
             )
         case "item/tool/call":
             let callID = params?["callId"]?.stringValue ?? id.description
+            let threadID = params?["threadId"]?.stringValue
             let namespace = params?["namespace"]?.stringValue
             let tool = params?["tool"]?.stringValue ?? "unknown"
             let arguments = params?["arguments"] ?? .object([:])
@@ -8161,6 +8162,7 @@ final class SessionStore: ObservableObject {
                 await respondToDynamicToolCall(
                     requestID: id,
                     callID: callID,
+                    threadID: threadID,
                     namespace: namespace,
                     tool: tool,
                     arguments: arguments
@@ -9322,6 +9324,7 @@ final class SessionStore: ObservableObject {
     private func respondToDynamicToolCall(
         requestID: CodexAppServerRequestID,
         callID: String,
+        threadID: String?,
         namespace: String?,
         tool: String,
         arguments: JSONValue
@@ -9330,7 +9333,12 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        let result = await dynamicToolCallResult(namespace: namespace, tool: tool, arguments: arguments)
+        let result = await dynamicToolCallResult(
+            threadID: threadID,
+            namespace: namespace,
+            tool: tool,
+            arguments: arguments
+        )
         do {
             try await client.respondDynamicToolCall(
                 requestID: requestID,
@@ -9365,6 +9373,7 @@ final class SessionStore: ObservableObject {
     }
 
     private func dynamicToolCallResult(
+        threadID: String?,
         namespace: String?,
         tool: String,
         arguments: JSONValue
@@ -9380,6 +9389,12 @@ final class SessionStore: ObservableObject {
         }
         if namespace == "raytone_context", tool == "read_workspace_file" {
             return await readWorkspaceFileDynamicToolText(arguments: arguments)
+        }
+        if namespace == "raytone_mcp", tool == "read_resource" {
+            return await readMCPResourceDynamicToolText(threadID: threadID, arguments: arguments)
+        }
+        if namespace == "raytone_mcp", tool == "call_tool" {
+            return await callMCPToolDynamicToolText(threadID: threadID, arguments: arguments)
         }
 
         let qualifiedName = Self.dynamicToolQualifiedName(namespace: namespace, tool: tool)
@@ -9472,6 +9487,97 @@ final class SessionStore: ObservableObject {
         } catch {
             return (false, "fs/readFile 失败：\(error.localizedDescription)")
         }
+    }
+
+    private func readMCPResourceDynamicToolText(
+        threadID: String?,
+        arguments: JSONValue
+    ) async -> (success: Bool, text: String) {
+        guard let client = appServerClient else {
+            return (false, "Codex app-server 尚未连接，无法读取 MCP 资源。")
+        }
+        guard let server = Self.trimmedDynamicToolString(arguments["server"]),
+              let uri = Self.trimmedDynamicToolString(arguments["uri"]) else {
+            return (false, "必须提供 MCP server 和 uri。")
+        }
+
+        do {
+            let result = try await client.readMCPResource(
+                server: server,
+                uri: uri,
+                threadID: Self.trimmedDynamicToolString(.string(threadID ?? ""))
+            )
+            mcpResourcePreview = result
+            mcpResourceStatusText = "mcpServer/resource/read：动态工具 \(server) · \(result.contents.count) 段内容"
+            runtimeCatalogStatusText = mcpResourceStatusText
+            let contents: [JSONValue] = result.contents.map { content in
+                .object([
+                    "uri": .string(content.uri),
+                    "mimeType": content.mimeType.map(JSONValue.string) ?? .null,
+                    "text": content.text.map(JSONValue.string) ?? .null,
+                    "blobBase64ByteCount": .number(Double(content.blobBase64?.utf8.count ?? 0))
+                ])
+            }
+            let payload: JSONValue = .object([
+                "server": .string(result.server),
+                "requestedURI": .string(result.requestedURI),
+                "contentCount": .number(Double(result.contents.count)),
+                "textPreview": .string(result.textPreview),
+                "contents": .array(contents)
+            ])
+            return (true, payload.prettyJSONString)
+        } catch {
+            return (false, "mcpServer/resource/read 失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func callMCPToolDynamicToolText(
+        threadID: String?,
+        arguments: JSONValue
+    ) async -> (success: Bool, text: String) {
+        guard let client = appServerClient else {
+            return (false, "Codex app-server 尚未连接，无法调用 MCP 工具。")
+        }
+        guard let resolvedThreadID = Self.trimmedDynamicToolString(.string(threadID ?? "")) else {
+            return (false, "动态 MCP 工具调用缺少 threadId。")
+        }
+        guard let server = Self.trimmedDynamicToolString(arguments["server"]),
+              let tool = Self.trimmedDynamicToolString(arguments["tool"]) else {
+            return (false, "必须提供 MCP server 和 tool。")
+        }
+
+        do {
+            let result = try await client.callMCPTool(
+                threadID: resolvedThreadID,
+                server: server,
+                tool: tool,
+                arguments: arguments["arguments"] ?? .object([:]),
+                meta: .object(["source": .string("RaytoneCodex dynamic tool")])
+            )
+            mcpToolCallPreview = result
+            mcpToolCallStatusText = "mcpServer/tool/call：动态工具 \(server)/\(tool) · \(result.isError ? "工具返回错误" : "调用成功")"
+            runtimeCatalogStatusText = mcpToolCallStatusText
+            let payload: JSONValue = .object([
+                "server": .string(result.server),
+                "tool": .string(result.tool),
+                "isError": .bool(result.isError),
+                "textPreview": .string(result.textPreview),
+                "content": .array(result.content),
+                "structuredContent": result.structuredContent ?? .null,
+                "meta": result.meta ?? .null
+            ])
+            return (!result.isError, payload.prettyJSONString)
+        } catch {
+            return (false, "mcpServer/tool/call 失败：\(error.localizedDescription)")
+        }
+    }
+
+    private static func trimmedDynamicToolString(_ value: JSONValue?) -> String? {
+        guard let text = value?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            return nil
+        }
+        return text
     }
 
     private static func dynamicToolWorkspacePath(_ rawPath: String, workspacePath: String) -> String? {
