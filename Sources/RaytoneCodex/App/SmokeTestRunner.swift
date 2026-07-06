@@ -193,6 +193,8 @@ enum SmokeTestRunner {
             runThreadBootstrapActionsSmoke()
         } else if CommandLine.arguments.contains("--thread-lifecycle-smoke-test") {
             runThreadLifecycleSmoke()
+        } else if CommandLine.arguments.contains("--thread-resume-smoke-test") {
+            runThreadResumeSmoke()
         } else if CommandLine.arguments.contains("--history-smoke-test") {
             runHistorySmoke()
         } else if CommandLine.arguments.contains("--loaded-threads-smoke-test") {
@@ -6627,11 +6629,33 @@ enum SmokeTestRunner {
                     (thread.appServerThreadID.flatMap { reloaded.runtimeThreadSearchSnippets[$0] } ?? "")
                         .localizedCaseInsensitiveContains(marker)
             }
+            var historyLocalID: UUID?
             if let historyThread {
+                historyLocalID = historyThread.id
                 reloaded.selectThread(historyThread)
-                await reloaded.loadRuntimeThreadTranscript(localThreadID: historyThread.id)
+            }
+
+            let resumeDeadline = Date().addingTimeInterval(12)
+            while Date() < resumeDeadline {
+                let selected = reloaded.selectedThread
+                let hasSession = selected.appServerThreadID == createdThreadID &&
+                    selected.appServerSessionID?.isEmpty == false
+                let loadedTranscript = selected.items.contains { item in
+                    if case let .agentMessage(text) = item.kind {
+                        return text.contains(marker)
+                    }
+                    return false
+                }
+                if hasSession && loadedTranscript {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
             }
             let historyTranscriptStatus = reloaded.runtimeThreadSyncStatusText
+            let resumedSessionID = historyLocalID.flatMap { localID in
+                reloaded.threads.first { $0.id == localID }?.appServerSessionID
+            } ?? ""
+            let resumedLoadedThread = reloaded.loadedRuntimeThreadIDs.contains(createdThreadID)
 
             let loadedItems = historyThread == nil ? [] : reloaded.selectedThread.items
             let loadedUserMessages = loadedItems.compactMap { item -> String? in
@@ -6650,6 +6674,8 @@ enum SmokeTestRunner {
                 historySearchStatus.hasPrefix("thread/search") &&
                 historySearchSnippet.localizedCaseInsensitiveContains(marker) &&
                 historyTranscriptStatus.hasPrefix("thread/turns/list") &&
+                !resumedSessionID.isEmpty &&
+                resumedLoadedThread &&
                 historyThread != nil &&
                 loadedUserMessages.contains(prompt) &&
                 loadedAgentMessages == [marker]
@@ -6666,6 +6692,8 @@ enum SmokeTestRunner {
                 "historySyncStatus": historySearchStatus,
                 "historyTranscriptStatus": historyTranscriptStatus,
                 "historySearchSnippet": historySearchSnippet,
+                "resumedSessionID": resumedSessionID,
+                "resumedLoadedThread": resumedLoadedThread,
                 "historyThreadFound": historyThread != nil,
                 "loadedTranscriptItemCount": loadedItems.count,
                 "initialAgentMessages": initialAgentMessages,
@@ -6673,6 +6701,133 @@ enum SmokeTestRunner {
                 "loadedAgentMessages": loadedAgentMessages
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runThreadResumeSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadResumeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+            let serverThreadID = "thread-resume-smoke"
+            let sessionID = "session-resume-smoke"
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# Thread resume smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeThreadResumeAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "gpt-5-codex"
+                store.sandbox = .workspaceWrite
+                store.approval = .onRequest
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-thread-resume"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_THREAD_RESUME_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "ThreadResumeSmoke"
+                }
+
+                let historyThread = ChatThread(
+                    title: "历史恢复 smoke",
+                    projectID: store.selectedThread.projectID,
+                    items: [],
+                    model: store.model,
+                    sandbox: store.sandbox,
+                    approval: store.approval,
+                    approvalsReviewer: store.approvalsReviewer,
+                    personality: store.personality,
+                    appServerThreadID: serverThreadID,
+                    appServerSessionID: nil
+                )
+                store.threads.append(historyThread)
+                store.selectThread(historyThread)
+
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline {
+                    let selected = store.selectedThread
+                    let hasSession = selected.appServerSessionID == sessionID
+                    let hasTranscript = selected.items.contains { item in
+                        if case let .agentMessage(text) = item.kind {
+                            return text == "历史恢复后的回复"
+                        }
+                        return false
+                    }
+                    if hasSession && hasTranscript {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let selected = store.selectedThread
+                let loadedUserMessages = selected.items.compactMap { item -> String? in
+                    if case let .userMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let loadedAgentMessages = selected.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let loggedResume = logText.contains(#""method":"thread/resume""#) &&
+                    logText.contains(#""threadId":"thread-resume-smoke""#) &&
+                    logText.contains(#""excludeTurns":true"#)
+                let loggedTurnsList = logText.contains(#""method":"thread/turns/list""#) &&
+                    logText.contains(#""itemsView":"full""#) &&
+                    logText.contains(#""sortDirection":"asc""#)
+                let ok = loggedResume &&
+                    loggedTurnsList &&
+                    selected.appServerThreadID == serverThreadID &&
+                    selected.appServerSessionID == sessionID &&
+                    store.loadedRuntimeThreadIDs.contains(serverThreadID) &&
+                    store.runtimeThreadSyncStatusText.hasPrefix("thread/turns/list") &&
+                    loadedUserMessages == ["历史恢复问题"] &&
+                    loadedAgentMessages == ["历史恢复后的回复"]
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "loggedResume": loggedResume,
+                    "loggedTurnsList": loggedTurnsList,
+                    "resumedSessionID": selected.appServerSessionID ?? "",
+                    "loadedRuntimeThreadIDs": store.loadedRuntimeThreadIDs,
+                    "runtimeThreadSyncStatus": store.runtimeThreadSyncStatusText,
+                    "loadedUserMessages": loadedUserMessages,
+                    "loadedAgentMessages": loadedAgentMessages,
+                    "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
@@ -11326,6 +11481,105 @@ enum SmokeTestRunner {
                 send_notification("thread/unarchived", {"threadId": "thread-life"})
             elif method == "thread/list":
                 send_result(request_id, thread_list(params))
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeThreadResumeAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_THREAD_RESUME_LOG")
+        thread_id = "thread-resume-smoke"
+        session_id = "session-resume-smoke"
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def thread_payload():
+            return {
+                "id": thread_id,
+                "sessionId": session_id,
+                "name": "历史恢复 smoke",
+                "preview": "历史恢复后的回复",
+                "cwd": cwd,
+                "archived": False,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000042,
+                "modelProvider": "mock_provider",
+                "source": {"type": "local"},
+                "memoryMode": "enabled",
+                "status": {"type": "idle"},
+            }
+
+        def turns_page():
+            return {
+                "data": [{
+                    "id": "turn-resume-smoke",
+                    "status": "completed",
+                    "startedAt": 1700000030,
+                    "completedAt": 1700000042,
+                    "items": [
+                        {
+                            "id": "user-resume-smoke",
+                            "type": "userMessage",
+                            "content": [{"type": "text", "text": "历史恢复问题"}],
+                        },
+                        {
+                            "id": "agent-resume-smoke",
+                            "type": "agentMessage",
+                            "text": "历史恢复后的回复",
+                        },
+                    ],
+                }],
+                "nextCursor": None,
+                "backwardsCursor": None,
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/resume":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": params.get("approvalPolicy", "on-request"),
+                    "approvalsReviewer": params.get("approvalsReviewer", "user"),
+                    "sandbox": params.get("sandbox", "workspace-write"),
+                })
+            elif method == "thread/turns/list":
+                send_result(request_id, turns_page())
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

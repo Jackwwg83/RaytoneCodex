@@ -2936,13 +2936,18 @@ public actor CodexAppServerClient {
         ]))
     }
 
-    public func resumeThread(id threadID: String, options: CodexAppServerOptions) async throws -> CodexAppServerThread {
+    public func resumeThread(
+        id threadID: String,
+        options: CodexAppServerOptions,
+        excludeTurns: Bool = true
+    ) async throws -> CodexAppServerThread {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
             "cwd": .string(options.workspaceURL.path),
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
             "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
-            "sandbox": .string(options.sandbox.rawValue)
+            "sandbox": .string(options.sandbox.rawValue),
+            "excludeTurns": .bool(excludeTurns)
         ]
         if let model = options.model {
             params["model"] = .string(model)

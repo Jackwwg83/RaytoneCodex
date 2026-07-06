@@ -682,7 +682,7 @@ final class SessionStore: ObservableObject {
         toolPanel = .launcher
         route = .thread
         if thread.appServerThreadID != nil, thread.items.isEmpty {
-            Task { await loadRuntimeThreadTranscript(localThreadID: thread.id) }
+            Task { await resumeRuntimeThread(localThreadID: thread.id, loadTranscript: true) }
         }
     }
 
@@ -3873,6 +3873,49 @@ final class SessionStore: ObservableObject {
         } catch {
             runtimeThreadSyncStatusText = "历史 transcript 读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
+    func resumeRuntimeThread(localThreadID: UUID? = nil, loadTranscript: Bool = false) async {
+        let targetID = localThreadID ?? selectedThreadID
+        guard let localIndex = threads.firstIndex(where: { $0.id == targetID }),
+              let serverThreadID = threads[localIndex].appServerThreadID else {
+            if loadTranscript {
+                await loadRuntimeThreadTranscript(localThreadID: targetID)
+            }
+            return
+        }
+        guard !isRunning else {
+            runtimeThreadSyncStatusText = "当前有运行中的轮次，暂不能恢复历史线程"
+            return
+        }
+
+        runtimeThreadSyncStatusText = "正在调用 thread/resume…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let serverThread = try await client.resumeThread(
+                id: serverThreadID,
+                options: appServerOptions(),
+                excludeTurns: true
+            )
+            updateThread(localThreadID: targetID) { thread in
+                thread.appServerThreadID = serverThread.id
+                thread.appServerSessionID = serverThread.sessionID
+                if let memoryMode = serverThread.memoryMode {
+                    thread.memoryMode = memoryMode
+                }
+            }
+            if !loadedRuntimeThreadIDs.contains(serverThread.id) {
+                loadedRuntimeThreadIDs.insert(serverThread.id, at: 0)
+            }
+            runtimeThreadSyncStatusText = "thread/resume：已恢复 \(serverThread.id)"
+        } catch {
+            runtimeThreadSyncStatusText = "thread/resume 失败，降级读取历史：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        if loadTranscript {
+            await loadRuntimeThreadTranscript(localThreadID: targetID)
         }
     }
 
@@ -9609,6 +9652,14 @@ final class SessionStore: ObservableObject {
 
     private func updateThread(appServerThreadID: String, _ update: (inout ChatThread) -> Void) {
         guard let index = threads.firstIndex(where: { $0.appServerThreadID == appServerThreadID }) else {
+            return
+        }
+        update(&threads[index])
+        threads[index].updatedAt = Date()
+    }
+
+    private func updateThread(localThreadID: UUID, _ update: (inout ChatThread) -> Void) {
+        guard let index = threads.firstIndex(where: { $0.id == localThreadID }) else {
             return
         }
         update(&threads[index])
