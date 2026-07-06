@@ -12,6 +12,8 @@ enum SmokeTestRunner {
             runToolsSmoke()
         } else if CommandLine.arguments.contains("--terminal-stream-smoke-test") {
             runTerminalStreamSmoke()
+        } else if CommandLine.arguments.contains("--terminal-resize-smoke-test") {
+            runTerminalResizeSmoke()
         } else if CommandLine.arguments.contains("--file-search-smoke-test") {
             runFileSearchSmoke()
         } else if CommandLine.arguments.contains("--local-image-input-smoke-test") {
@@ -441,6 +443,95 @@ enum SmokeTestRunner {
                     "terminatedExitCode": Int(terminatedRun?.exitCode ?? -999),
                     "terminatedStatus": terminalStatusName(terminatedRun?.status),
                     "terminatedOutput": terminatedOutput
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runTerminalResizeSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexTerminalResizeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexTerminalResizeCodexHome-\(UUID().uuidString)", isDirectory: true)
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.sandbox = .dangerFullAccess
+                store.terminalRows = 24
+                store.terminalCols = 80
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                await store.refreshRuntime()
+
+                store.terminalCommand = "printf 'ready\\n'; read line; printf 'line:%s\\n' \"$line\"; stty size"
+                let terminalTask = Task { @MainActor in
+                    await store.runTerminalCommand()
+                }
+
+                let readyDeadline = Date().addingTimeInterval(8)
+                while Date() < readyDeadline,
+                      store.terminalRuns.last?.output.contains("ready") != true {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let streamedBeforeResize = store.terminalIsRunning &&
+                    store.terminalRuns.last?.output.contains("ready") == true
+
+                await store.resizeTerminal(rows: 42, cols: 132)
+                let resizeStatus = store.terminalResizeStatusText
+
+                store.terminalCommand = "raytone-resize-smoke"
+                await store.runTerminalCommand()
+                _ = await terminalTask.value
+
+                let run = store.terminalRuns.last
+                let output = run?.output ?? ""
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    streamedBeforeResize &&
+                    resizeStatus.contains("command/exec/resize") &&
+                    output.contains("line:raytone-resize-smoke") &&
+                    output.contains("42 132") &&
+                    run?.status == .succeeded &&
+                    store.terminalRows == 42 &&
+                    store.terminalCols == 132
+
+                await store.stopAppServerForTesting()
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "streamedBeforeResize": streamedBeforeResize,
+                    "resizeStatus": resizeStatus,
+                    "terminalRows": store.terminalRows,
+                    "terminalCols": store.terminalCols,
+                    "runStatus": terminalStatusName(run?.status),
+                    "output": output,
+                    "source": "command/exec/resize"
                 ])
                 exit(ok ? 0 : 1)
             } catch {

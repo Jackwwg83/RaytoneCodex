@@ -461,6 +461,8 @@ private struct TerminalToolPanel: View {
                     .buttonStyle(GhostIconButtonStyle(size: 30))
                     .help(store.terminalIsRunning ? "停止" : "运行")
                 }
+
+                TerminalSizeControls(store: store)
             }
             .padding(12)
             .overlay(alignment: .bottom) { Hairline() }
@@ -556,31 +558,34 @@ struct BottomTerminalToolPanel: View {
             .overlay(alignment: .top) { Hairline() }
             .overlay(alignment: .bottom) { Hairline() }
 
-            HStack(spacing: 8) {
-                TextField(store.terminalIsRunning ? "发送 stdin" : "输入 shell 命令", text: $store.terminalCommand)
-                    .textFieldStyle(.plain)
-                    .font(Theme.mono(12))
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .background(Theme.fill)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
-                    .onSubmit {
-                        Task { await store.runTerminalCommand() }
-                    }
-                Button {
-                    Task {
-                        if store.terminalIsRunning {
-                            await store.stopTerminalCommand()
-                        } else {
-                            await store.runTerminalCommand()
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField(store.terminalIsRunning ? "发送 stdin" : "输入 shell 命令", text: $store.terminalCommand)
+                        .textFieldStyle(.plain)
+                        .font(Theme.mono(12))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Theme.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                        .onSubmit {
+                            Task { await store.runTerminalCommand() }
                         }
+                    Button {
+                        Task {
+                            if store.terminalIsRunning {
+                                await store.stopTerminalCommand()
+                            } else {
+                                await store.runTerminalCommand()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: store.terminalIsRunning ? "stop.fill" : "play.fill")
+                            .font(.system(size: 12, weight: .semibold))
                     }
-                } label: {
-                    Image(systemName: store.terminalIsRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                    .buttonStyle(GhostIconButtonStyle(size: 30))
+                    .help(store.terminalIsRunning ? "停止" : "运行")
                 }
-                .buttonStyle(GhostIconButtonStyle(size: 30))
-                .help(store.terminalIsRunning ? "停止" : "运行")
+                TerminalSizeControls(store: store)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -617,6 +622,70 @@ struct BottomTerminalToolPanel: View {
         .frame(height: 260)
         .frame(maxWidth: .infinity)
         .background(Theme.panel)
+    }
+}
+
+private struct TerminalSizeControls: View {
+    @ObservedObject var store: SessionStore
+
+    private let presets: [(rows: Int, cols: Int)] = [
+        (24, 80),
+        (30, 100),
+        (40, 120),
+        (42, 132)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(presets, id: \.cols) { preset in
+                        Button("\(preset.rows)×\(preset.cols)") {
+                            Task { await store.resizeTerminal(rows: preset.rows, cols: preset.cols) }
+                        }
+                    }
+                } label: {
+                    Label("\(store.terminalRows)×\(store.terminalCols)", systemImage: "rectangle.inset.filled")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .menuStyle(.button)
+                .fixedSize()
+
+                Stepper("行 \(store.terminalRows)", value: $store.terminalRows, in: 10...80, step: 1)
+                    .font(.system(size: 11.5))
+                    .labelsHidden()
+                    .help("终端行数")
+                Text("\(store.terminalRows)")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 22, alignment: .trailing)
+
+                Stepper("列 \(store.terminalCols)", value: $store.terminalCols, in: 40...240, step: 5)
+                    .font(.system(size: 11.5))
+                    .labelsHidden()
+                    .help("终端列数")
+                Text("\(store.terminalCols)")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 30, alignment: .trailing)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    Task { await store.resizeTerminal() }
+                } label: {
+                    Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help(store.terminalIsRunning ? "应用到当前终端" : "保存为下次运行尺寸")
+            }
+
+            Text(store.terminalResizeStatusText)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+        }
     }
 }
 

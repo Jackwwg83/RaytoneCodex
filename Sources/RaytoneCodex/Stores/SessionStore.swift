@@ -52,8 +52,11 @@ final class SessionStore: ObservableObject {
     @Published var fileSearchStatusText = ""
     @Published var fileSearchIsRunning = false
     @Published var terminalCommand = "pwd && ls -la"
+    @Published var terminalRows = 30
+    @Published var terminalCols = 100
     @Published var terminalRuns: [TerminalCommandRecord] = []
     @Published var terminalIsRunning = false
+    @Published var terminalResizeStatusText = "30×100"
     @Published var sideChatDraft = ""
     @Published var sideChatStatusText = "未发送"
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
@@ -2232,7 +2235,10 @@ final class SessionStore: ObservableObject {
                 ["/bin/zsh", "-lc", command],
                 processID: processID,
                 cwd: URL(fileURLWithPath: workspacePath),
-                sandbox: sandbox
+                sandbox: sandbox,
+                tty: true,
+                rows: terminalRows,
+                cols: terminalCols
             )
             let output = [result.stdout, result.stderr]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -2259,6 +2265,33 @@ final class SessionStore: ObservableObject {
         } catch {
             if let runID = activeTerminalRunID {
                 appendTerminalRunOutput(id: runID, text: "\n终止失败：\(error.localizedDescription)\n")
+            }
+        }
+    }
+
+    func resizeTerminal(rows: Int? = nil, cols: Int? = nil) async {
+        let normalizedRows = min(max(rows ?? terminalRows, 10), 80)
+        let normalizedCols = min(max(cols ?? terminalCols, 40), 240)
+        terminalRows = normalizedRows
+        terminalCols = normalizedCols
+
+        guard terminalIsRunning,
+              let processID = activeTerminalProcessID,
+              let client = appServerClient else {
+            terminalResizeStatusText = "\(normalizedRows)×\(normalizedCols) · 下次运行生效"
+            return
+        }
+
+        do {
+            try await client.resizeCommand(processID: processID, rows: normalizedRows, cols: normalizedCols)
+            terminalResizeStatusText = "command/exec/resize：\(normalizedRows)×\(normalizedCols)"
+            if let runID = activeTerminalRunID {
+                appendTerminalRunOutput(id: runID, text: "\n[终端尺寸 \(normalizedRows)×\(normalizedCols)]\n")
+            }
+        } catch {
+            terminalResizeStatusText = "resize 失败：\(error.localizedDescription)"
+            if let runID = activeTerminalRunID {
+                appendTerminalRunOutput(id: runID, text: "\n调整终端尺寸失败：\(error.localizedDescription)\n")
             }
         }
     }
