@@ -97,6 +97,8 @@ enum SmokeTestRunner {
             runProcessStreamSmoke()
         } else if CommandLine.arguments.contains("--app-server-notification-smoke-test") {
             runAppServerNotificationSmoke()
+        } else if CommandLine.arguments.contains("--guardian-denial-approve-smoke-test") {
+            runGuardianDeniedApproveSmoke()
         } else if CommandLine.arguments.contains("--hook-controls-smoke-test") {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
@@ -6077,6 +6079,21 @@ enum SmokeTestRunner {
         return nil
     }
 
+    @MainActor
+    private static func waitForGuardianDeniedAction(
+        in store: SessionStore,
+        timeout: TimeInterval = 8
+    ) async -> GuardianDeniedAction? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let action = store.recentGuardianDeniedActions.first {
+                return action
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return store.recentGuardianDeniedActions.first
+    }
+
     private struct StoreThreadManagementSmokeResult: Sendable {
         let ok: Bool
         let originalLocalID: String
@@ -8096,6 +8113,94 @@ enum SmokeTestRunner {
                     "noticeText": notices.joined(separator: "\n"),
                     "logHasAllMethods": logHasAllMethods,
                     "requestLogPreview": String(logText.prefix(3200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runGuardianDeniedApproveSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexGuardianDeniedSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeGuardianDeniedApproveAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-guardian-denied"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_GUARDIAN_APPROVE_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "GuardianDeniedSmoke"
+                }
+
+                store.prompt = "触发自动审批拒绝"
+                await store.runPrompt()
+
+                guard let denial = await waitForGuardianDeniedAction(in: store) else {
+                    throw NSError(
+                        domain: "RaytoneCodexGuardianDeniedSmoke",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "guardian denial action did not appear"]
+                    )
+                }
+                await store.approveGuardianDeniedAction(denial)
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""method":"thread/approveGuardianDeniedAction""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let requestLogged = logText.contains(#""method":"thread/approveGuardianDeniedAction""#) &&
+                    logText.contains(#""threadId":"thread-guardian-denied-smoke""#) &&
+                    logText.contains(#""id":"guardian-denied-smoke""#) &&
+                    logText.contains(#""status":"denied""#) &&
+                    logText.contains(#""command":"cat README.md""#)
+                let ok = requestLogged &&
+                    store.recentGuardianDeniedActions.isEmpty &&
+                    store.runtimeCatalogStatusText.contains("已批准一次")
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "denialSummary": denial.summary,
+                    "denialTurnID": denial.turnID,
+                    "approvalRequestLogged": requestLogged,
+                    "runtimeCatalogStatus": store.runtimeCatalogStatusText,
+                    "requestLogPreview": String(logText.prefix(2600))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -10828,6 +10933,122 @@ enum SmokeTestRunner {
                     "turn": {"id": "turn-notification-smoke", "status": "inProgress"}
                 })
                 emit_notification_sequence()
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeGuardianDeniedApproveAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_GUARDIAN_APPROVE_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        def thread_payload():
+            return {
+                "id": "thread-guardian-denied-smoke",
+                "sessionId": "session-guardian-denied-smoke",
+                "name": "自动审批拒绝线程",
+                "preview": "Guardian denied smoke",
+                "cwd": cwd,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000001,
+                "status": {"type": "active", "activeFlags": []},
+            }
+
+        def guardian_denial_payload():
+            return {
+                "threadId": "thread-guardian-denied-smoke",
+                "turnId": "turn-guardian-denied-smoke",
+                "reviewId": "guardian-denied-smoke",
+                "startedAtMs": 1700000000000,
+                "completedAtMs": 1700000000750,
+                "decisionSource": "agent",
+                "targetItemId": "command-guardian-target",
+                "action": {
+                    "type": "command",
+                    "source": "agent",
+                    "command": "cat README.md",
+                    "cwd": cwd,
+                },
+                "review": {
+                    "status": "denied",
+                    "riskLevel": "high",
+                    "userAuthorization": "missing",
+                    "rationale": "Guardian smoke denied this command before manual approval.",
+                },
+            }
+
+        def emit_denial():
+            send_notification("turn/started", {
+                "turn": {
+                    "id": "turn-guardian-denied-smoke",
+                    "status": "inProgress",
+                    "startedAt": 1700000000,
+                }
+            })
+            send_notification("item/autoApprovalReview/completed", guardian_denial_payload())
+            send_notification("turn/completed", {
+                "turn": {"id": "turn-guardian-denied-smoke", "status": "completed"}
+            })
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "auto",
+                    "sandbox": "workspace-write",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-guardian-denied-smoke", "status": "inProgress"}
+                })
+                emit_denial()
+            elif method == "thread/approveGuardianDeniedAction":
+                send_result(request_id, {})
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

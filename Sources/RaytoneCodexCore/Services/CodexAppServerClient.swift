@@ -2658,6 +2658,13 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func approveGuardianDeniedAction(threadID: String, event: JSONValue) async throws {
+        _ = try await request(method: "thread/approveGuardianDeniedAction", params: .object([
+            "threadId": .string(threadID),
+            "event": event
+        ]))
+    }
+
     public func injectThreadItems(threadID: String, items: [JSONValue]) async throws {
         _ = try await request(method: "thread/inject_items", params: .object([
             "threadId": .string(threadID),

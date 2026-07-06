@@ -133,6 +133,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeCatalogStatusText = "未刷新"
     @Published var runtimeCatalogErrors: [String] = []
     @Published var runtimeCatalogIsRefreshing = false
+    @Published var recentGuardianDeniedActions: [GuardianDeniedAction] = []
     @Published var homeConnectionsRefreshedAt: Date?
     @Published var homeConnectionStatusText = "未刷新"
     @Published var lastMentionInputPreview: [[String: String]] = []
@@ -611,6 +612,7 @@ final class SessionStore: ObservableObject {
         mcpElicitationDrafts.removeAll()
         toolUserInputDrafts.removeAll()
         toolUserInputSelections.removeAll()
+        recentGuardianDeniedActions.removeAll()
         appServerItemIDs.removeAll()
         resetActiveTerminal()
         resetFilePanelWatch()
@@ -2533,6 +2535,33 @@ final class SessionStore: ObservableObject {
                 thread.items.append(TranscriptItem(kind: .notice(Notice(
                     level: .warning,
                     text: threadShellCommandStatusText
+                ))))
+            }
+        }
+    }
+
+    func approveGuardianDeniedAction(_ denial: GuardianDeniedAction) async {
+        runtimeCatalogStatusText = "正在调用 thread/approveGuardianDeniedAction…"
+        do {
+            let client: CodexAppServerClient
+            if let existing = appServerClient {
+                client = existing
+            } else {
+                client = try await ensureAppServerClient(useProviderConfiguration: true)
+            }
+            try await client.approveGuardianDeniedAction(threadID: denial.threadID, event: denial.event)
+            recentGuardianDeniedActions.removeAll { $0.reviewID == denial.reviewID }
+            runtimeCatalogStatusText = "thread/approveGuardianDeniedAction：已批准一次"
+            updateSelectedThread { thread in
+                thread.progressSteps.append(ProgressStep(title: "已批准自动审批拒绝：\(denial.summary)", state: .done))
+                thread.updatedAt = Date()
+            }
+        } catch {
+            runtimeCatalogStatusText = "thread/approveGuardianDeniedAction 失败：\(error.localizedDescription)"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: runtimeCatalogStatusText
                 ))))
             }
         }
@@ -6289,6 +6318,7 @@ final class SessionStore: ObservableObject {
             mcpElicitationDrafts.removeAll()
             toolUserInputDrafts.removeAll()
             toolUserInputSelections.removeAll()
+            recentGuardianDeniedActions.removeAll()
             resetActiveTerminal()
             resetFilePanelWatch()
         }
@@ -7590,10 +7620,80 @@ final class SessionStore: ObservableObject {
             }
         }
 
+        if completed {
+            if status == "denied",
+               let threadID = params?["threadId"]?.stringValue ?? selectedThread.appServerThreadID,
+               let event = Self.guardianAssessmentEvent(
+                   reviewID: reviewID,
+                   params: params,
+                   review: review,
+                   action: action,
+                   fallbackTurnID: activeAppServerTurnID
+               ) {
+                recordGuardianDeniedAction(GuardianDeniedAction(
+                    reviewID: reviewID,
+                    threadID: threadID,
+                    turnID: event["turnId"]?.stringValue ?? "",
+                    summary: actionSummary,
+                    rationale: review?["rationale"]?.stringValue,
+                    riskLevel: review?["riskLevel"]?.stringValue,
+                    event: event,
+                    createdAt: Date()
+                ))
+            } else {
+                recentGuardianDeniedActions.removeAll { $0.reviewID == reviewID }
+            }
+        }
+
         runtimeCatalogStatusText = completed
             ? "item/autoApprovalReview/completed：\(statusName)"
             : "item/autoApprovalReview/started：\(actionSummary)"
         runtimeCatalogErrors = []
+    }
+
+    private func recordGuardianDeniedAction(_ denial: GuardianDeniedAction) {
+        recentGuardianDeniedActions.removeAll { $0.reviewID == denial.reviewID }
+        recentGuardianDeniedActions.insert(denial, at: 0)
+        if recentGuardianDeniedActions.count > 10 {
+            recentGuardianDeniedActions.removeLast(recentGuardianDeniedActions.count - 10)
+        }
+    }
+
+    private static func guardianAssessmentEvent(
+        reviewID: String,
+        params: JSONValue?,
+        review: JSONValue?,
+        action: JSONValue?,
+        fallbackTurnID: String?
+    ) -> JSONValue? {
+        guard let action,
+              let turnID = params?["turnId"]?.stringValue ?? fallbackTurnID else {
+            return nil
+        }
+
+        let startedAt = params?["startedAtMs"] ?? .number(Date().timeIntervalSince1970 * 1000)
+        let status = review?["status"]?.stringValue ?? "denied"
+        var event: [String: JSONValue] = [
+            "id": .string(reviewID),
+            "turnId": .string(turnID),
+            "startedAtMs": startedAt,
+            "status": .string(status),
+            "action": action
+        ]
+
+        for key in ["targetItemId", "completedAtMs", "decisionSource"] {
+            if let value = params?[key], value != .null {
+                event[key] = value
+            }
+        }
+
+        for key in ["riskLevel", "userAuthorization", "rationale"] {
+            if let value = review?[key], value != .null {
+                event[key] = value
+            }
+        }
+
+        return .object(event)
     }
 
     private func handleRawResponseItemCompleted(_ params: JSONValue?) {

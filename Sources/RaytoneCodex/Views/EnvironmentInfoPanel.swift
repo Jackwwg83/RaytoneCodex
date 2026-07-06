@@ -12,6 +12,9 @@ struct EnvironmentInfoPanel: View {
                 VStack(alignment: .leading, spacing: 18) {
                     environmentRows
                     progressSection
+                    if !store.recentGuardianDeniedActions.isEmpty {
+                        guardianDeniedSection
+                    }
                     sourcesSection
                 }
                 .padding(16)
@@ -186,6 +189,19 @@ struct EnvironmentInfoPanel: View {
         }
     }
 
+    private var guardianDeniedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "自动审批拒绝")
+            VStack(spacing: 8) {
+                ForEach(Array(store.recentGuardianDeniedActions.prefix(3))) { denial in
+                    GuardianDeniedActionRow(denial: denial) {
+                        Task { await store.approveGuardianDeniedAction(denial) }
+                    }
+                }
+            }
+        }
+    }
+
     private var sourcesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "来源")
@@ -283,6 +299,78 @@ struct EnvironmentInfoPanel: View {
             .split(separator: "\n", omittingEmptySubsequences: true)
             .filter { !$0.hasPrefix("##") }
             .count
+    }
+}
+
+private struct GuardianDeniedActionRow: View {
+    let denial: GuardianDeniedAction
+    let approve: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.warning)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(denial.summary)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                    Text(detailText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(3)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Text(denial.turnID.isEmpty ? denial.reviewID : denial.turnID)
+                    .font(Theme.mono(10.5, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Button("批准一次") {
+                    approve()
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .help("把这次被自动审批拒绝的操作发回 Codex 批准一次")
+    }
+
+    private var detailText: String {
+        var parts: [String] = []
+        if let riskLevel = denial.riskLevel, !riskLevel.isEmpty {
+            parts.append("风险 \(riskName(riskLevel))")
+        }
+        if let rationale = denial.rationale?.trimmingCharacters(in: .whitespacesAndNewlines), !rationale.isEmpty {
+            parts.append(rationale)
+        }
+        return parts.isEmpty ? "Codex 自动审批审查已拒绝此操作，可手动批准一次继续。" : parts.joined(separator: " · ")
+    }
+
+    private func riskName(_ risk: String) -> String {
+        switch risk {
+        case "low": "低"
+        case "medium": "中"
+        case "high": "高"
+        case "critical": "严重"
+        default: risk
+        }
     }
 }
 

@@ -161,6 +161,18 @@ struct ProgressStep: Identifiable, Equatable {
     }
 }
 
+struct GuardianDeniedAction: Identifiable, Equatable {
+    var id: String { reviewID }
+    var reviewID: String
+    var threadID: String
+    var turnID: String
+    var summary: String
+    var rationale: String?
+    var riskLevel: String?
+    var event: JSONValue
+    var createdAt: Date
+}
+
 struct EnvironmentSourceFact: Identifiable, Equatable {
     var id: String { title }
     var symbol: String
