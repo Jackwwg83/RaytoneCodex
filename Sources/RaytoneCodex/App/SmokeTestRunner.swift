@@ -7828,6 +7828,7 @@ enum SmokeTestRunner {
                     "turn/moderationMetadata",
                     "windows/worldWritableWarning",
                     "windowsSandbox/setupCompleted",
+                    "error",
                     "deprecationNotice"
                 ]
                 let logHasAllMethods = expectedMethods.allSatisfy { method in
@@ -7844,6 +7845,10 @@ enum SmokeTestRunner {
                     noticeText.contains("安全元数据") &&
                     noticeText.contains("Windows 路径权限警告") &&
                     noticeText.contains("Windows 沙箱设置失败") &&
+                    noticeText.contains("Codex 轮次错误：provider returned 500 smoke") &&
+                    noticeText.contains("Codex 不会自动重试") &&
+                    noticeText.contains("内部服务器错误") &&
+                    noticeText.contains("raytone error notification smoke") &&
                     noticeText.contains("旧版协议即将移除") &&
                     store.runtimeCatalogStatusText.contains("deprecationNotice") &&
                     store.runtimeCatalogErrors.contains(where: { $0.contains("旧版协议即将移除") }) &&
@@ -10707,6 +10712,16 @@ enum SmokeTestRunner {
                     "mode": "unelevated",
                     "success": False,
                     "error": "sandbox setup smoke failure",
+                })
+                send_notification("error", {
+                    "threadId": "thread-runtime-diagnostics",
+                    "turnId": "turn-runtime-diagnostics",
+                    "willRetry": False,
+                    "error": {
+                        "message": "provider returned 500 smoke",
+                        "additionalDetails": "raytone error notification smoke",
+                        "codexErrorInfo": "internalServerError",
+                    },
                 })
                 send_notification("deprecationNotice", {
                     "summary": "旧版协议即将移除",

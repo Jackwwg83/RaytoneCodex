@@ -6871,6 +6871,8 @@ final class SessionStore: ObservableObject {
              "thread/realtime/outputAudio/delta", "thread/realtime/sdp",
              "thread/realtime/error", "thread/realtime/closed":
             handleRealtimeNotification(method: method, params: params)
+        case "error":
+            handleTurnErrorNotification(params)
         case "warning", "guardianWarning", "deprecationNotice", "configWarning",
              "model/rerouted", "model/verification", "turn/moderationMetadata",
              "windows/worldWritableWarning", "windowsSandbox/setupCompleted":
@@ -7127,6 +7129,45 @@ final class SessionStore: ObservableObject {
         )
     }
 
+    private func handleTurnErrorNotification(_ params: JSONValue?) {
+        let threadID = params?["threadId"]?.stringValue
+        let turnID = params?["turnId"]?.stringValue ?? activeAppServerTurnID
+        let error = params?["error"]
+        let willRetry = params?["willRetry"]?.boolValue ?? false
+        let message = error?["message"]?.stringValue ?? "Codex 轮次发生错误"
+        let additionalDetails = error?["additionalDetails"]?.stringValue
+        let errorInfo = Self.codexErrorInfoDisplayName(error?["codexErrorInfo"])
+        let retryText = willRetry ? "Codex 将自动重试。" : "Codex 不会自动重试。"
+
+        if Self.codexErrorInfoIsUnauthorized(error?["codexErrorInfo"]) {
+            appServerConnectionState = .loginRequired
+        }
+        if !willRetry, selectedThread.appServerThreadID == threadID || threadID == nil {
+            isRunning = false
+            activeAppServerTurnID = nil
+            clearLocalActiveGoalIfNeeded()
+        }
+
+        var detail = ["Codex 轮次错误：\(message)", retryText]
+        if let turnID, !turnID.isEmpty {
+            detail.append("轮次：\(turnID)")
+        }
+        if let errorInfo, !errorInfo.isEmpty {
+            detail.append("错误类型：\(errorInfo)")
+        }
+        if let additionalDetails, !additionalDetails.isEmpty {
+            detail.append("详情：\(additionalDetails)")
+        }
+        let text = detail.joined(separator: "\n")
+        runtimeCatalogStatusText = willRetry ? "error：\(message) · 将重试" : "error：\(message)"
+        runtimeCatalogErrors = [text]
+        appendRuntimeDiagnosticNotice(
+            threadID: threadID,
+            level: willRetry ? .warning : .error,
+            text: text
+        )
+    }
+
     private func appendRuntimeDiagnosticNotice(threadID: String?, level: Notice.Level, text: String) {
         let notice = Notice(level: level, text: text)
         if let threadID, !threadID.isEmpty {
@@ -7227,6 +7268,74 @@ final class SessionStore: ObservableObject {
             let detail = params.map(Self.compactJSONString) ?? "{}"
             return (threadID, .info, method, "\(method)：\(detail)")
         }
+    }
+
+    private static func codexErrorInfoIsUnauthorized(_ value: JSONValue?) -> Bool {
+        switch value {
+        case let .string(raw):
+            raw.caseInsensitiveCompare("unauthorized") == .orderedSame
+        default:
+            false
+        }
+    }
+
+    private static func codexErrorInfoDisplayName(_ value: JSONValue?) -> String? {
+        switch value {
+        case let .string(raw):
+            return switch raw {
+            case "contextWindowExceeded":
+                "上下文窗口超限"
+            case "usageLimitExceeded":
+                "使用额度不足"
+            case "serverOverloaded":
+                "服务器繁忙"
+            case "cyberPolicy":
+                "网络安全策略"
+            case "internalServerError":
+                "内部服务器错误"
+            case "unauthorized", "Unauthorized":
+                "未授权"
+            case "badRequest":
+                "请求无效"
+            case "threadRollbackFailed":
+                "回滚失败"
+            case "sandboxError":
+                "沙箱错误"
+            case "other":
+                "其他错误"
+            default:
+                raw
+            }
+        case let .object(object):
+            if let payload = object["httpConnectionFailed"] {
+                return codexHTTPErrorInfoDisplayName("HTTP 连接失败", payload: payload)
+            }
+            if let payload = object["responseStreamConnectionFailed"] {
+                return codexHTTPErrorInfoDisplayName("响应流连接失败", payload: payload)
+            }
+            if let payload = object["responseStreamDisconnected"] {
+                return codexHTTPErrorInfoDisplayName("响应流中断", payload: payload)
+            }
+            if let payload = object["responseTooManyFailedAttempts"] {
+                return codexHTTPErrorInfoDisplayName("响应重试次数过多", payload: payload)
+            }
+            if let payload = object["activeTurnNotSteerable"],
+               let turnKind = payload["turnKind"]?.stringValue {
+                return "当前轮次不可追加输入：\(turnKind)"
+            }
+            return compactJSONString(.object(object))
+        case .null, nil:
+            return nil
+        default:
+            return value.map(compactJSONString)
+        }
+    }
+
+    private static func codexHTTPErrorInfoDisplayName(_ title: String, payload: JSONValue) -> String {
+        if let status = payload["httpStatusCode"]?.intValue {
+            return "\(title)（HTTP \(status)）"
+        }
+        return title
     }
 
     private static func configWarningRangeText(_ range: JSONValue?) -> String? {
@@ -7667,7 +7776,7 @@ final class SessionStore: ObservableObject {
         guard let turn else { return }
         if turn["status"]?.stringValue == "failed" {
             let error = turn["error"]
-            if error?["codexErrorInfo"]?.stringValue == "Unauthorized" {
+            if Self.codexErrorInfoIsUnauthorized(error?["codexErrorInfo"]) {
                 appServerConnectionState = .loginRequired
             }
             updateSelectedThread { thread in
