@@ -175,6 +175,8 @@ enum SmokeTestRunner {
             runGoalSmoke()
         } else if CommandLine.arguments.contains("--browser-navigation-smoke-test") {
             runBrowserNavigationSmoke()
+        } else if CommandLine.arguments.contains("--browser-clear-data-smoke-test") {
+            runBrowserClearDataSmoke()
         } else if CommandLine.arguments.contains("--browser-snapshot-smoke-test") {
             runBrowserSnapshotSmoke()
         } else if CommandLine.arguments.contains("--browser-snapshot-input-smoke-test") {
@@ -5195,6 +5197,41 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    private static func runBrowserClearDataSmoke() {
+        Task { @MainActor in
+            let store = SessionStore()
+            store.openBrowserAddress("https://raytone.example/clear-data-smoke")
+            store.updateBrowserNavigationState(
+                url: URL(string: "https://raytone.example/clear-data-smoke"),
+                title: "Raytone Clear Data Smoke",
+                canGoBack: true,
+                canGoForward: true
+            )
+            let reloadTokenBefore = store.browserReloadToken
+
+            await store.clearBrowserWebsiteData()
+
+            let ok = store.browserDataStatusText == "已清除浏览数据和缓存" &&
+                store.browserCanGoBack == false &&
+                store.browserCanGoForward == false &&
+                store.browserReloadToken != reloadTokenBefore
+
+            emitJSON([
+                "ok": ok,
+                "browserURL": store.browserURL?.absoluteString ?? "",
+                "browserTitle": store.browserTitle,
+                "browserCanGoBack": store.browserCanGoBack,
+                "browserCanGoForward": store.browserCanGoForward,
+                "reloadTokenChanged": store.browserReloadToken != reloadTokenBefore,
+                "browserDataStatusText": store.browserDataStatusText,
+                "source": "SessionStore.clearBrowserWebsiteData -> WKWebsiteDataStore.default.removeData"
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        CFRunLoopRun()
     }
 
     private static func runBrowserSnapshotSmoke() {
