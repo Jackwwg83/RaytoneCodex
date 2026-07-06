@@ -70,6 +70,7 @@ struct InspectorView: View {
             if store.filePanelPath != store.workspacePath || store.fileEntries.isEmpty {
                 await store.loadFilePanelDirectory(store.workspacePath)
             }
+            await store.refreshInspectorRecommendedFiles()
         }
     }
 

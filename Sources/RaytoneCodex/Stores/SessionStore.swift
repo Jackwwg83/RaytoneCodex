@@ -50,6 +50,8 @@ final class SessionStore: ObservableObject {
     @Published var filePreview: FilePreview?
     @Published var filePanelStatusText = "未加载"
     @Published var filePanelLastOperationSource = "fs/readDirectory"
+    @Published var inspectorRecommendedFilePaths: [String] = []
+    @Published var inspectorRecommendedFilesSource = "未刷新"
     @Published var fileSearchQuery = ""
     @Published var fileSearchResults: [WorkspaceFileEntry] = []
     @Published var fileSearchStatusText = ""
@@ -194,6 +196,11 @@ final class SessionStore: ObservableObject {
     private static let workspacePermissionsProfile = ":workspace"
     private static let dangerFullAccessPermissionsProfile = ":danger-full-access"
     private static let providerOnboardingCompletedKey = "RaytoneCodex.providerOnboardingCompleted.v1"
+    static let inspectorPriorityFilePaths = [
+        "Sources/RaytoneCodex/Views/ContentView.swift",
+        "Sources/RaytoneCodex/Stores/SessionStore.swift",
+        "docs/codex-screens-spec.md"
+    ]
 
     private enum PendingApprovalResponseKind {
         case appServerDecision
@@ -2413,6 +2420,34 @@ final class SessionStore: ObservableObject {
                     text: "文件面板无法通过 app-server 读取目录：\(error.localizedDescription)"
                 ))))
             }
+        }
+    }
+
+    func refreshInspectorRecommendedFiles() async {
+        let workspaceURL = URL(fileURLWithPath: workspacePath)
+        var recommended: [String] = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            for relativePath in Self.inspectorPriorityFilePaths {
+                let path = workspaceURL.appendingPathComponent(relativePath).standardizedFileURL.path
+                do {
+                    let metadata = try await client.getMetadata(path: path)
+                    if metadata.isFile, !recommended.contains(path) {
+                        recommended.append(path)
+                    }
+                } catch {
+                    continue
+                }
+            }
+
+            inspectorRecommendedFilePaths = recommended
+            inspectorRecommendedFilesSource = recommended.isEmpty
+                ? "fs/getMetadata：未找到推荐文件"
+                : "fs/getMetadata：\(recommended.count) 个推荐文件"
+        } catch {
+            inspectorRecommendedFilePaths = []
+            inspectorRecommendedFilesSource = "fs/getMetadata 失败：\(error.localizedDescription)"
         }
     }
 

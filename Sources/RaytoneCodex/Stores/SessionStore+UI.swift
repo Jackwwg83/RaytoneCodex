@@ -495,20 +495,8 @@ extension SessionStore {
             }
         }
 
-        let priorityPaths = [
-            "Sources/RaytoneCodex/Views/ContentView.swift",
-            "Sources/RaytoneCodex/Stores/SessionStore.swift",
-            "docs/codex-screens-spec.md"
-        ]
-        for path in priorityPaths {
-            let absolutePath = URL(fileURLWithPath: workspacePath)
-                .appendingPathComponent(path)
-                .standardizedFileURL
-                .path
-            if FileManager.default.fileExists(atPath: absolutePath),
-               !selected.contains(absolutePath) {
-                selected.append(absolutePath)
-            }
+        for path in inspectorRecommendedFilePaths where !selected.contains(path) {
+            selected.append(path)
         }
 
         for entry in files where !selected.contains(entry.path) {

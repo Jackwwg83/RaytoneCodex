@@ -356,6 +356,8 @@ enum SmokeTestRunner {
             await store.refreshRuntime()
             fputs("tools-smoke: loadFilePanelDirectory\n", stderr)
             await store.loadFilePanelDirectory(workspacePath)
+            fputs("tools-smoke: refreshInspectorRecommendedFiles\n", stderr)
+            await store.refreshInspectorRecommendedFiles()
             fputs("tools-smoke: runTerminalCommand\n", stderr)
             await store.runTerminalCommand()
             fputs("tools-smoke: addFileReferencesToPrompt\n", stderr)
@@ -397,12 +399,18 @@ enum SmokeTestRunner {
             let foundEntries = Set(store.fileEntries.map(\.name))
             let filePreview = store.filePreview
             let currentBranch = store.selectedProject.branch ?? ""
+            let metadataRecommendedObserved = store.inspectorRecommendedFilesSource.contains("fs/getMetadata") &&
+                store.inspectorRecommendedFilePaths.contains { path in
+                    path.hasSuffix("Sources/RaytoneCodex/Views/ContentView.swift") ||
+                        path.hasSuffix("Sources/RaytoneCodex/Stores/SessionStore.swift")
+                }
             let ok = requiredEntries.isSubset(of: foundEntries) &&
                 lastRun?.exitCode == 0 &&
                 lastRun?.output.contains("Package.swift") == true &&
                 filePreview?.fileName == "Package.swift" &&
                 filePreview?.path == expectedRecommendedPath &&
                 recommendedTarget != nil &&
+                metadataRecommendedObserved &&
                 store.prompt.contains("Package.swift") &&
                 !currentBranch.isEmpty &&
                 store.workspaceBranches.contains(currentBranch)
@@ -419,6 +427,9 @@ enum SmokeTestRunner {
                 "fileEntriesPreview": Array(store.fileEntries.map(\.name).prefix(12)),
                 "fileReferencePrompt": store.prompt,
                 "recommendedFiles": recommendedFiles,
+                "inspectorRecommendedFilesSource": store.inspectorRecommendedFilesSource,
+                "inspectorRecommendedFilePaths": store.inspectorRecommendedFilePaths,
+                "metadataRecommendedObserved": metadataRecommendedObserved,
                 "recommendedTarget": recommendedTarget ?? "",
                 "recommendedExpectedPath": expectedRecommendedPath,
                 "filePreview": [
