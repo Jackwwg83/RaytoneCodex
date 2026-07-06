@@ -1451,7 +1451,7 @@ struct SettingsRouteView: View {
 
     private var configurationPane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            paneTitle("配置", subtitle: "配置审批策略和沙盒设置 了解更多")
+            paneTitle("配置", subtitle: "配置审批策略、沙盒设置和 externalAgentConfig 迁移 了解更多")
 
             SettingsSection(title: "自定义 config.toml 设置") {
                 SettingsCard {

@@ -71,7 +71,15 @@ settings_runtime = {
     "modelsProviders": ["model/list", "modelProvider/capabilities/read", "RaytoneKeychainService", "RaytoneProxyService", "--model-catalog-smoke-test", "--model-provider-capabilities-smoke-test", "--provider-sidecar-smoke-test", "--provider-onboarding-smoke-test", "--provider-unauthorized-smoke-test"],
     "profile": ["account/read", "account/usage/read", "feedback/upload", "--profile-share-smoke-test"],
     "appearance": ["saveRuntimeAppearance", "--desktop-settings-smoke-test"],
-    "configuration": ["config/read", "config/value/write", "saveRuntimeApprovalPolicy", "--config-write-smoke-test"],
+    "configuration": [
+        "config/read",
+        "config/value/write",
+        "saveRuntimeApprovalPolicy",
+        "externalAgentConfig/detect",
+        "externalAgentConfig/import",
+        "--config-write-smoke-test",
+        "--external-agent-config-smoke-test",
+    ],
     "experimentalFeatures": ["experimentalFeature/list", "experimentalFeature/enable", "--experimental-features-smoke-test"],
     "personalization": [
         "thread/settings/update",
