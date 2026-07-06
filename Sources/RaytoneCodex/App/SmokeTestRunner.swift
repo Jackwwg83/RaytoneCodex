@@ -8542,7 +8542,8 @@ enum SmokeTestRunner {
                 } &&
                 environmentSourceFacts.contains {
                     $0.title == "终端" &&
-                        $0.source == "command/exec" &&
+                        ($0.source == "command/exec" ||
+                         $0.source == "process/spawn") &&
                         !$0.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }
             let ok = store.runtimeSnapshot.executable != nil &&
