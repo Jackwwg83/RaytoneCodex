@@ -2597,12 +2597,15 @@ enum SmokeTestRunner {
                 let persistedConfigText = (try? String(contentsOf: persistedConfigURL, encoding: .utf8)) ?? ""
                 let persistedProvider = store.runtimeConfig?.raytoneProviders.first { $0.id == providerID }
                 let providerUsage = store.providerUsage
+                let syncedModels = [editedModel, "smoke-secondary-model"]
                 let ok = store.runtimeSnapshot.executable != nil &&
                     store.selectedProviderID == providerID &&
                     store.providerConnectionStatusText.contains("上游已验证") &&
                     store.providerConnectionBaseURL.contains("127.0.0.1") &&
                     store.providerConnectionDetailText.contains("/v1/models") &&
                     store.providerConnectionDetailText.contains("2 个模型") &&
+                    store.providerConnectionDetailText.contains("已同步 2 个") &&
+                    store.selectedProvider.models == syncedModels &&
                     store.selectedProvider.baseURL == editedBaseURL &&
                     store.selectedProvider.model == editedModel &&
                     codexConfigText.contains("model_provider = \"raytone-\(providerID)\"") &&
@@ -2612,12 +2615,15 @@ enum SmokeTestRunner {
                     store.runtimeConfig?.raytoneSelectedProviderID == providerID &&
                     persistedProvider?.baseURL == editedBaseURL &&
                     persistedProvider?.model == editedModel &&
+                    persistedProvider?.models == syncedModels &&
                     persistedConfigText.contains("selected_provider_id") &&
                     persistedConfigText.contains("providers_json") &&
                     persistedConfigText.contains(providerID) &&
+                    persistedConfigText.contains("smoke-secondary-model") &&
                     proxyConfigText.contains("current_provider = \"\(providerID)\"") &&
                     proxyConfigText.contains("base_url = \"\(editedBaseURL)\"") &&
                     proxyConfigText.contains("model = \"\(editedModel)\"") &&
+                    proxyConfigText.contains("smoke-secondary-model") &&
                     proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"") &&
                     usageResponse.contains("\"total_tokens\":18") &&
                     providerUsage?.provider == providerID &&
@@ -2654,6 +2660,7 @@ enum SmokeTestRunner {
                     "sidecar": store.sidecarStatusText,
                     "usageStatus": store.providerUsageStatusText,
                     "usageResponse": usageResponse,
+                    "syncedModels": store.selectedProvider.models,
                     "providerUsage": providerUsage.map { usage in
                         [
                             "provider": usage.provider,

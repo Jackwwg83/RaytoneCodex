@@ -5455,16 +5455,56 @@ final class SessionStore: ObservableObject {
             providerConnectionCodexConfigPath = session.codexHomeURL
                 .appendingPathComponent("config.toml")
                 .path
+            let syncedModelCount = syncProviderModelsFromUpstream(providerID: provider.id, upstreamModels: upstream.models)
             providerConnectionStatusText = "上游已验证：\(provider.displayName)"
-            providerConnectionDetailText = "\(upstream.modelsEndpoint) · \(upstream.modelCount) 个模型 · 当前 \(upstream.model)"
+            providerConnectionDetailText = "\(upstream.modelsEndpoint) · \(upstream.modelCount) 个模型 · 已同步 \(syncedModelCount) 个 · 当前 \(upstream.model)"
+            modelCatalogStatusText = "\(provider.displayName) 模型目录已从 \(upstream.modelsEndpoint) 同步"
             runtimeCatalogStatusText = "Provider 测试通过：\(provider.displayName) via \(providerConnectionBaseURL)"
             await persistRuntimeProviderSettings(statusName: "\(provider.displayName) 连接")
+            await resetAppServerForProviderChange()
+            _ = try await appServerEnvironmentOverrides()
+            if let refreshedSession = activeProxySession {
+                providerConnectionBaseURL = refreshedSession.baseURL.absoluteString
+                providerConnectionProxyConfigPath = refreshedSession.configURL.path
+                providerConnectionCodexConfigPath = refreshedSession.codexHomeURL
+                    .appendingPathComponent("config.toml")
+                    .path
+            }
         } catch {
             providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
             providerConnectionDetailText = provider.apiKeyEnvironmentName.map { "Keychain 或 \($0)" } ?? "Keychain"
             runtimeCatalogStatusText = providerConnectionStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    private func syncProviderModelsFromUpstream(providerID: String, upstreamModels: [String]) -> Int {
+        guard let index = providers.firstIndex(where: { $0.id == providerID }) else {
+            return 0
+        }
+        let upstreamModelNames = upstreamModels
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !upstreamModelNames.isEmpty else {
+            return providers[index].models.count
+        }
+
+        var seen = Set<String>()
+        var normalizedModels: [String] = []
+        func appendModel(_ rawModel: String) {
+            let modelName = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !modelName.isEmpty, !seen.contains(modelName) else { return }
+            seen.insert(modelName)
+            normalizedModels.append(modelName)
+        }
+
+        appendModel(providers[index].model)
+        upstreamModelNames.forEach(appendModel)
+
+        if !normalizedModels.isEmpty {
+            providers[index].models = normalizedModels
+        }
+        return providers[index].models.count
     }
 
     func evaluateProviderOnboarding(force: Bool = false) {
