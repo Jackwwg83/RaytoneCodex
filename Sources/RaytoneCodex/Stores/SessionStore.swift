@@ -1389,9 +1389,7 @@ final class SessionStore: ObservableObject {
     }
 
     func setWorkspacePathForSelectedProject(_ path: String) {
-        let normalizedPath = URL(fileURLWithPath: path)
-            .standardizedFileURL
-            .path
+        let normalizedPath = Self.canonicalPath(path)
         workspacePath = normalizedPath
         filePanelPath = normalizedPath
         updateSelectedProject(path: normalizedPath)
@@ -1402,6 +1400,36 @@ final class SessionStore: ObservableObject {
             await loadFilePanelDirectory(normalizedPath)
             await refreshWorkspaceGitDiff()
         }
+    }
+
+    @discardableResult
+    func openWorkspaceWorktree(_ path: String, revealFiles: Bool = false) async -> Bool {
+        let normalizedPath = Self.canonicalPath(path)
+        guard FileManager.default.fileExists(atPath: normalizedPath) else {
+            runtimeCatalogStatusText = "工作树不存在：\(Project.abbreviate(normalizedPath))"
+            return false
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogErrors = []
+        runtimeCatalogStatusText = "正在切换工作树：\(Project.abbreviate(normalizedPath))"
+        workspacePath = normalizedPath
+        filePanelPath = normalizedPath
+        updateSelectedProject(path: normalizedPath)
+
+        if revealFiles {
+            route = .thread
+            openToolPanel(.files)
+        }
+
+        await refreshWorkspaceBranches()
+        await loadFilePanelDirectory(normalizedPath)
+        await refreshWorkspaceGitDiff()
+        await refreshWorkspaceWorktrees()
+
+        runtimeCatalogStatusText = "已切换工作树：\(Project.abbreviate(normalizedPath))"
+        runtimeCatalogIsRefreshing = false
+        return true
     }
 
     func resetThread() {
@@ -6853,14 +6881,21 @@ final class SessionStore: ObservableObject {
             .map(String.init)
         let porcelain = lines.compactMap { line -> String? in
             guard line.hasPrefix("worktree ") else { return nil }
-            return String(line.dropFirst("worktree ".count))
+            return canonicalPath(String(line.dropFirst("worktree ".count)))
         }
         if !porcelain.isEmpty {
             return porcelain
         }
         return lines.compactMap { line in
-            line.split(separator: " ").first.map(String.init)
+            line.split(separator: " ").first.map { canonicalPath(String($0)) }
         }
+    }
+
+    static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
     }
 
     private static func runStatus(from value: String?) -> RunStatus {

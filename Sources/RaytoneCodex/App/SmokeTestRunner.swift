@@ -83,6 +83,8 @@ enum SmokeTestRunner {
             runProjectSwitchSmoke()
         } else if CommandLine.arguments.contains("--workspace-switch-smoke-test") {
             runWorkspaceSwitchSmoke()
+        } else if CommandLine.arguments.contains("--worktree-switch-smoke-test") {
+            runWorktreeSwitchSmoke()
         } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
             runRemoteControlSmoke()
         } else if CommandLine.arguments.contains("--remote-control-mode-smoke-test") {
@@ -7382,6 +7384,103 @@ enum SmokeTestRunner {
             } catch {
                 emitJSON([
                     "ok": false,
+                    "error": error.localizedDescription
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runWorktreeSwitchSmoke() {
+        Task { @MainActor in
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexWorktreeSwitchSmoke-\(UUID().uuidString)", isDirectory: true)
+            let mainWorkspace = temporaryRoot.appendingPathComponent("main", isDirectory: true)
+            let linkedWorktree = temporaryRoot.appendingPathComponent("linked", isDirectory: true)
+
+            do {
+                try FileManager.default.createDirectory(at: mainWorkspace, withIntermediateDirectories: true)
+                try "main worktree\n".write(to: mainWorkspace.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+                _ = try runProcess(["git", "init"], cwd: mainWorkspace)
+                _ = try runProcess(["git", "checkout", "-b", "main"], cwd: mainWorkspace)
+                _ = try runProcess(["git", "add", "README.md"], cwd: mainWorkspace)
+                _ = try runProcess([
+                    "git",
+                    "-c", "user.email=raytone@example.com",
+                    "-c", "user.name=Raytone Smoke",
+                    "commit",
+                    "-m", "initial"
+                ], cwd: mainWorkspace)
+                _ = try runProcess(["git", "worktree", "add", "-b", "raytone-linked", linkedWorktree.path], cwd: mainWorkspace)
+                try "linked worktree\n".write(to: linkedWorktree.appendingPathComponent("LINKED.md"), atomically: true, encoding: .utf8)
+
+                let store = SessionStore()
+                store.workspacePath = mainWorkspace.path
+                store.filePanelPath = mainWorkspace.path
+
+                fputs("worktree-switch-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+
+                fputs("worktree-switch-smoke: refreshWorkspaceWorktrees\n", stderr)
+                await store.refreshWorkspaceWorktrees()
+                let initialWorktrees = store.workspaceWorktrees
+                let initialStatus = store.runtimeCatalogStatusText
+
+                fputs("worktree-switch-smoke: openWorkspaceWorktree\n", stderr)
+                let switched = await store.openWorkspaceWorktree(linkedWorktree.path, revealFiles: true)
+                let fileNames = store.fileEntries.map(\.name)
+                let finalStatus = store.runtimeCatalogStatusText
+                let branch = store.selectedProject.branch ?? ""
+                let normalizedLinked = SessionStore.canonicalPath(linkedWorktree.path)
+                let normalizedMain = SessionStore.canonicalPath(mainWorkspace.path)
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    switched &&
+                    initialWorktrees.contains(normalizedMain) &&
+                    initialWorktrees.contains(normalizedLinked) &&
+                    store.workspacePath == normalizedLinked &&
+                    store.filePanelPath == normalizedLinked &&
+                    store.selectedProject.path == normalizedLinked &&
+                    store.route == .thread &&
+                    store.toolPanel == .files &&
+                    fileNames.contains("LINKED.md") &&
+                    branch == "raytone-linked" &&
+                    store.workspaceWorktrees.contains(normalizedMain) &&
+                    store.workspaceWorktrees.contains(normalizedLinked) &&
+                    finalStatus.contains("已切换工作树")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "mainWorkspace": normalizedMain,
+                    "linkedWorktree": normalizedLinked,
+                    "initialStatus": initialStatus,
+                    "initialWorktrees": initialWorktrees,
+                    "switched": switched,
+                    "workspacePath": store.workspacePath,
+                    "filePanelPath": store.filePanelPath,
+                    "selectedProjectPath": store.selectedProject.path,
+                    "route": "\(store.route)",
+                    "toolPanel": "\(store.toolPanel)",
+                    "fileEntries": fileNames,
+                    "branch": branch,
+                    "branchStatus": store.workspaceBranchStatusText,
+                    "finalStatus": finalStatus,
+                    "worktrees": store.workspaceWorktrees,
+                    "source": "command/exec git worktree list + command/exec git branch + fs/readDirectory"
+                ])
+                try? FileManager.default.removeItem(at: temporaryRoot)
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "mainWorkspace": mainWorkspace.path,
+                    "linkedWorktree": linkedWorktree.path,
                     "error": error.localizedDescription
                 ])
                 try? FileManager.default.removeItem(at: temporaryRoot)

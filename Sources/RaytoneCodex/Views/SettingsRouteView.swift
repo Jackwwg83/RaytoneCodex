@@ -2301,10 +2301,47 @@ struct SettingsRouteView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(store.workspaceWorktrees, id: \.self) { path in
-                        SettingsCard {
-                            metricRow(Project.abbreviate(path), path == store.workspacePath ? "当前" : "可用")
-                        }
+                        worktreeRow(path)
                     }
+                }
+            }
+        }
+    }
+
+    private func worktreeRow(_ path: String) -> some View {
+        let isCurrent = SessionStore.canonicalPath(path) == SessionStore.canonicalPath(store.workspacePath)
+        return SettingsCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isCurrent ? "checkmark.circle.fill" : "rectangle.split.3x1")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isCurrent ? Theme.success : Theme.textSecondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(Project.abbreviate(path))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(path)
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    statusBadge(isCurrent ? "当前" : "可切换", ok: true)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 6) {
+                    Button(isCurrent ? "当前" : "切换") {
+                        Task { await store.openWorkspaceWorktree(path) }
+                    }
+                    .buttonStyle(ChipButtonStyle(prominent: !isCurrent))
+                    .disabled(isCurrent || store.runtimeCatalogIsRefreshing)
+
+                    Button("文件") {
+                        Task { await store.openWorkspaceWorktree(path, revealFiles: true) }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.runtimeCatalogIsRefreshing)
                 }
             }
         }
