@@ -1995,6 +1995,7 @@ struct SettingsRouteView: View {
                 metricRow("当前页面", store.browserURL?.absoluteString ?? "未打开")
                 metricRow("标题", store.browserTitle)
                 metricRow("截图状态", store.browserScreenshotStatusText.isEmpty ? "未截图" : store.browserScreenshotStatusText)
+                metricRow("下次对话图片", browserAttachedImageText)
                 metricRow("工具面板", store.toolPanel == .browser ? "浏览器已打开" : "未打开")
             }
 
@@ -2003,6 +2004,12 @@ struct SettingsRouteView: View {
                 plugins: matchingPlugins(["browser", "chrome"])
             )
         }
+    }
+
+    private var browserAttachedImageText: String {
+        store.browserAttachedSnapshotPath.isEmpty
+            ? "\(store.pendingLocalImagePaths.count) 张"
+            : Project.abbreviate(store.browserAttachedSnapshotPath)
     }
 
     private var computerControlPane: some View {

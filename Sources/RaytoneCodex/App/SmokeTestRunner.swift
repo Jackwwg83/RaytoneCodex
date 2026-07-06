@@ -139,6 +139,8 @@ enum SmokeTestRunner {
             runBrowserNavigationSmoke()
         } else if CommandLine.arguments.contains("--browser-snapshot-smoke-test") {
             runBrowserSnapshotSmoke()
+        } else if CommandLine.arguments.contains("--browser-snapshot-input-smoke-test") {
+            runBrowserSnapshotInputSmoke()
         } else if CommandLine.arguments.contains("--config-write-smoke-test") {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
@@ -4203,6 +4205,138 @@ enum SmokeTestRunner {
                 "snapshotFileExists": request.map { FileManager.default.fileExists(atPath: $0.outputURL.path) } ?? false
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runBrowserSnapshotInputSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexBrowserSnapshotInputSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexBrowserSnapshotInputCodexHome-\(UUID().uuidString)", isDirectory: true)
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                let docsURL = workspaceURL.appendingPathComponent("docs", isDirectory: true)
+                try fileManager.createDirectory(at: docsURL, withIntermediateDirectories: true)
+                try """
+                <!doctype html>
+                <title>Raytone browser snapshot input</title>
+                <h1>Raytone browser snapshot input</h1>
+                """.write(to: docsURL.appendingPathComponent("browser-sample.html"), atomically: true, encoding: .utf8)
+
+                mockServer = try startMockResponsesServer(message: "Raytone browser snapshot input OK")
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "BrowserSnapshotInputSmoke"
+                }
+
+                fputs("browser-snapshot-input-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                store.openBrowserSample()
+                store.captureBrowserPanelScreenshot()
+                guard let request = store.browserSnapshotRequest else {
+                    throw NSError(
+                        domain: "RaytoneCodexBrowserSnapshotInputSmoke",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "browser snapshot request was not created"]
+                    )
+                }
+
+                let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+                guard let pngData = Data(base64Encoded: pngBase64) else {
+                    throw NSError(
+                        domain: "RaytoneCodexBrowserSnapshotInputSmoke",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "failed to decode smoke PNG"]
+                    )
+                }
+                try fileManager.createDirectory(at: request.outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try pngData.write(to: request.outputURL)
+
+                store.completeBrowserPanelScreenshot(request: request, result: .success(request.outputURL))
+                let queuedImages = store.pendingLocalImagePaths
+                let promptAfterSnapshot = store.prompt
+                store.prompt = "\(promptAfterSnapshot)\n\n请回复：Raytone browser snapshot input OK"
+                let turnInput = CodexAppServerClient.userInputItems(
+                    prompt: store.prompt,
+                    localImagePaths: store.pendingLocalImagePaths
+                )
+
+                fputs("browser-snapshot-input-smoke: runPrompt\n", stderr)
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+                await store.stopAppServerForTesting()
+
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
+                let canonicalSnapshotPath = SessionStore.canonicalPath(request.outputURL.path)
+                let requestContainsSnapshot = requestLog.contains("input_image") ||
+                    requestLog.contains("localImage") ||
+                    requestLog.contains(request.outputURL.lastPathComponent)
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    !store.isRunning &&
+                    queuedImages == [canonicalSnapshotPath] &&
+                    store.browserAttachedSnapshotPath == canonicalSnapshotPath &&
+                    store.browserScreenshotStatusText.contains("已加入下次对话图片") &&
+                    promptAfterSnapshot.contains("请参考这张浏览器截图") &&
+                    store.lastLocalImageInputPreview == [canonicalSnapshotPath] &&
+                    store.pendingLocalImagePaths.isEmpty &&
+                    agentMessages.contains("Raytone browser snapshot input OK") &&
+                    requestLog.contains("/v1/responses") &&
+                    requestContainsSnapshot
+
+                mockServer?.stop()
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "browserURL": store.browserURL?.path ?? "",
+                    "snapshotOutput": request.outputURL.path,
+                    "browserScreenshotStatus": store.browserScreenshotStatusText,
+                    "browserAttachedSnapshotPath": store.browserAttachedSnapshotPath,
+                    "queuedImagesBeforePrompt": queuedImages,
+                    "lastLocalImageInputPreview": store.lastLocalImageInputPreview,
+                    "pendingLocalImageCount": store.pendingLocalImagePaths.count,
+                    "turnInput": jsonObject(from: turnInput),
+                    "requestContainsSnapshot": requestContainsSnapshot,
+                    "agentMessages": agentMessages,
+                    "mockRequestLogPreview": String(requestLog.prefix(1200)),
+                    "source": "WKWebView snapshot PNG -> localImagePaths -> turn/start"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()

@@ -42,6 +42,7 @@ final class SessionStore: ObservableObject {
     @Published var browserNavigationCommand: BrowserNavigationCommand?
     @Published var browserSnapshotRequest: BrowserSnapshotRequest?
     @Published var browserScreenshotStatusText = ""
+    @Published var browserAttachedSnapshotPath = ""
     @Published var browserDataStatusText = ""
     @Published var filePanelPath = ""
     @Published var fileEntries: [WorkspaceFileEntry] = []
@@ -2473,6 +2474,7 @@ final class SessionStore: ObservableObject {
         browserNavigationCommand = nil
         browserSnapshotRequest = nil
         browserScreenshotStatusText = ""
+        browserAttachedSnapshotPath = ""
         browserDataStatusText = ""
         openToolPanel(.browser)
     }
@@ -2524,10 +2526,31 @@ final class SessionStore: ObservableObject {
 
         switch result {
         case let .success(url):
-            browserScreenshotStatusText = "网页截图：\(Project.abbreviate(url.path))"
+            attachBrowserSnapshotToNextPrompt(url)
+            browserScreenshotStatusText = "网页截图：\(Project.abbreviate(url.path)) · 已加入下次对话图片"
         case let .failure(error):
             browserScreenshotStatusText = "截图失败：\(error.localizedDescription)"
         }
+    }
+
+    private func attachBrowserSnapshotToNextPrompt(_ url: URL) {
+        let path = Self.canonicalPath(url.path)
+        guard !path.isEmpty else { return }
+
+        if !pendingLocalImagePaths.contains(path) {
+            pendingLocalImagePaths.append(path)
+        }
+        browserAttachedSnapshotPath = path
+
+        let reference = Self.promptReferencePath(for: path, workspacePath: workspacePath)
+        guard !prompt.contains(reference) else { return }
+
+        let block = """
+        请参考这张浏览器截图：
+        - `\(reference)`
+        """
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        prompt = trimmed.isEmpty ? block : "\(trimmed)\n\n\(block)"
     }
 
     private nonisolated static func clearDefaultBrowserWebsiteData(timeoutSeconds: TimeInterval) async -> Bool {
