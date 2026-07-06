@@ -156,6 +156,15 @@ struct ProgressStep: Identifiable, Equatable {
     }
 }
 
+struct EnvironmentSourceFact: Identifiable, Equatable {
+    var id: String { title }
+    var symbol: String
+    var title: String
+    var detail: String
+    var source: String
+    var active: Bool
+}
+
 struct WorkspaceFileEntry: Identifiable, Equatable {
     var id: String { path }
     var name: String

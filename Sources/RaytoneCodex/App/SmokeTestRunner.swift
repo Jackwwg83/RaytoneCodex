@@ -4396,8 +4396,10 @@ enum SmokeTestRunner {
         Task { @MainActor in
             let store = SessionStore()
             store.workspacePath = workspacePath
+            store.filePanelPath = workspacePath
 
             await store.refreshRuntime()
+            await store.loadFilePanelDirectory(workspacePath, updateWatch: false)
             await store.refreshWorkspaceBranches()
             let branchStatus = store.workspaceBranchStatusText
 
@@ -4417,6 +4419,16 @@ enum SmokeTestRunner {
             await store.runGitCommitPushPreflightInTerminal()
             let terminalRun = store.terminalRuns.last
             let terminalOutput = terminalRun?.output ?? ""
+            let environmentSourceFacts = store.environmentSourceFacts
+            let sourceFactsPayload = environmentSourceFacts.map { fact in
+                [
+                    "title": fact.title,
+                    "source": fact.source,
+                    "detail": fact.detail,
+                    "active": fact.active
+                ] as [String: Any]
+            }
+            let activeSourceTitles = Set(environmentSourceFacts.filter(\.active).map(\.title))
 
             let gitDataAvailable = store.workspaceGitDiff != nil || !fallbackGitStatus.isEmpty
             let pullRequestStatusAvailable = !pullRequestStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -4425,13 +4437,34 @@ enum SmokeTestRunner {
             let terminalPreflightOk = terminalRun?.exitCode == 0 &&
                 terminalOutput.contains("== Git 状态 ==") &&
                 terminalOutput.contains("== 安全建议 ==")
+            let sourceEvidenceOk = activeSourceTitles.contains("文件") &&
+                activeSourceTitles.contains("变更") &&
+                activeSourceTitles.contains("终端") &&
+                environmentSourceFacts.contains {
+                    $0.title == "文件" &&
+                        $0.source.contains("fs/readDirectory") &&
+                        !$0.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } &&
+                environmentSourceFacts.contains {
+                    $0.title == "变更" &&
+                        ($0.source.contains("gitDiffToRemote") ||
+                         $0.source.contains("command/exec") ||
+                         $0.source.contains("turn/diff/updated")) &&
+                        !$0.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } &&
+                environmentSourceFacts.contains {
+                    $0.title == "终端" &&
+                        $0.source == "command/exec" &&
+                        !$0.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
             let ok = store.runtimeSnapshot.executable != nil &&
                 !branchStatus.hasPrefix("分支读取失败") &&
                 !gitStatus.hasPrefix("Git 差异读取失败") &&
                 !worktreeStatus.hasPrefix("工作树读取失败") &&
                 gitDataAvailable &&
                 pullRequestStatusAvailable &&
-                terminalPreflightOk
+                terminalPreflightOk &&
+                sourceEvidenceOk
 
             emitJSON([
                 "ok": ok,
@@ -4460,7 +4493,9 @@ enum SmokeTestRunner {
                     "exitCode": Int(terminalRun?.exitCode ?? -999),
                     "command": terminalRun?.command ?? "",
                     "outputPreview": String(terminalOutput.prefix(1200))
-                ] as [String: Any]
+                ] as [String: Any],
+                "environmentSources": sourceFactsPayload,
+                "sourceEvidenceOk": sourceEvidenceOk
             ])
             exit(ok ? 0 : 1)
         }

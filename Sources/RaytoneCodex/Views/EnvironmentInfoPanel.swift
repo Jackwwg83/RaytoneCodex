@@ -167,11 +167,10 @@ struct EnvironmentInfoPanel: View {
     private var sourcesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "来源")
-            HStack(spacing: 8) {
-                ForEach(sourceChips) { chip in
-                    SourceChipView(chip: chip)
+            VStack(spacing: 8) {
+                ForEach(store.environmentSourceFacts) { fact in
+                    SourceFactRow(fact: fact)
                 }
-                Spacer(minLength: 0)
             }
         }
     }
@@ -244,16 +243,6 @@ struct EnvironmentInfoPanel: View {
             ProgressStep(title: "app-server 连接就绪", state: .done),
             ProgressStep(title: "Git 环境状态已同步到面板", state: store.workspaceGitDiff != nil || !store.workspaceGitStatusText.isEmpty ? .done : .pending),
             ProgressStep(title: "开始运行后显示 Codex 计划更新", state: .pending)
-        ]
-    }
-
-    private var sourceChips: [EnvironmentSourceChip] {
-        [
-            EnvironmentSourceChip(symbol: "command", title: "命令", active: !store.commandRuns.isEmpty),
-            EnvironmentSourceChip(symbol: "globe", title: "浏览器", active: store.browserURL != nil),
-            EnvironmentSourceChip(symbol: "folder", title: "文件", active: !store.fileEntries.isEmpty || !store.fileSearchResults.isEmpty),
-            EnvironmentSourceChip(symbol: "doc.text", title: "变更", active: !store.pendingChanges.isEmpty || store.workspaceGitDiff != nil || !store.workspaceGitStatusText.isEmpty),
-            EnvironmentSourceChip(symbol: "terminal", title: "终端", active: !store.terminalRuns.isEmpty)
         ]
     }
 
@@ -340,29 +329,43 @@ private struct EnvironmentInfoActionRow<Actions: View>: View {
     }
 }
 
-private struct EnvironmentSourceChip: Identifiable {
-    var id: String { title }
-    var symbol: String
-    var title: String
-    var active: Bool
-}
-
-private struct SourceChipView: View {
-    let chip: EnvironmentSourceChip
+private struct SourceFactRow: View {
+    let fact: EnvironmentSourceFact
 
     var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: chip.symbol)
-                .font(.system(size: 12, weight: .medium))
-            Text(chip.title)
-                .font(.system(size: 9.5, weight: .medium))
-                .lineLimit(1)
+        HStack(spacing: 9) {
+            Image(systemName: fact.symbol)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(fact.active ? Theme.info : Theme.textTertiary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(fact.title)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(fact.active ? Theme.textPrimary : Theme.textTertiary)
+                        .lineLimit(1)
+                    Text(fact.source)
+                        .font(Theme.mono(9.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(fact.detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 0)
         }
-        .foregroundStyle(chip.active ? Theme.textPrimary : Theme.textSecondary)
-        .frame(width: 46, height: 42)
-        .background(chip.active ? Theme.fillStrong : Theme.fill)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .help(chip.active ? "\(chip.title) 已连接真实数据" : "\(chip.title) 暂无当前数据")
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(fact.active ? Theme.fillStrong : Theme.fill)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        .help(fact.active ? "\(fact.title)：\(fact.detail)" : "\(fact.title) 暂无当前数据")
     }
 }
 

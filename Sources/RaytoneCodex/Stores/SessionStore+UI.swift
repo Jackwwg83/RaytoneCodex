@@ -204,6 +204,128 @@ extension SessionStore {
         }
     }
 
+    var environmentSourceFacts: [EnvironmentSourceFact] {
+        let commandFacts = commandRuns
+        let lastCommand = commandFacts.last
+        let commandDetail: String
+        if let lastCommand {
+            commandDetail = "\(commandFacts.count) 次 · \(Self.runStatusName(lastCommand.status))"
+        } else {
+            commandDetail = "当前 transcript 没有命令记录"
+        }
+
+        let browserDetail: String
+        if let browserURL {
+            browserDetail = browserTitle.isEmpty ? browserURL.absoluteString : browserTitle
+        } else {
+            browserDetail = "未打开网页"
+        }
+
+        let fileSource: String
+        let fileDetail: String
+        if let filePreview {
+            fileSource = "fs/readFile + fs/getMetadata"
+            fileDetail = "\(filePreview.fileName) · \(filePreview.byteCount.formatted()) 字节"
+        } else if !fileSearchResults.isEmpty {
+            fileSource = "fuzzyFileSearch"
+            fileDetail = "\(fileSearchResults.count) 个搜索结果"
+        } else if !fileEntries.isEmpty {
+            fileSource = filePanelStatusText.contains("已监听") ? "fs/readDirectory + fs/watch" : "fs/readDirectory"
+            fileDetail = "\(fileEntries.count) 项 · \(Project.abbreviate(currentEnvironmentFilePanelPath))"
+        } else {
+            fileSource = "fs/readDirectory"
+            fileDetail = "未读取文件面板"
+        }
+
+        let diffSummary = Self.diffSummary(workspaceGitDiff?.diff ?? "")
+        let statusChangeCount = workspaceGitStatusText
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .filter { !$0.hasPrefix("##") }
+            .count
+        let changeDetail: String
+        let changeSource: String
+        if diffSummary.files > 0 {
+            changeDetail = "\(diffSummary.files) 个文件 · +\(diffSummary.additions) −\(diffSummary.deletions)"
+            changeSource = "gitDiffToRemote"
+        } else if statusChangeCount > 0 {
+            changeDetail = "Git 状态 \(statusChangeCount) 项"
+            changeSource = "command/exec git status"
+        } else if !pendingChanges.isEmpty {
+            changeDetail = "\(pendingChanges.count) 个 transcript 文件变更"
+            changeSource = "turn/diff/updated"
+        } else {
+            changeDetail = "无变更"
+            changeSource = "gitDiffToRemote"
+        }
+
+        let lastTerminalRun = terminalRuns.last
+        let terminalDetail: String
+        if let lastTerminalRun {
+            let exitText = lastTerminalRun.exitCode.map { "退出 \($0)" } ?? Self.terminalStatusName(lastTerminalRun.status)
+            terminalDetail = "\(terminalRuns.count) 次 · \(exitText)"
+        } else {
+            terminalDetail = "未运行终端命令"
+        }
+
+        return [
+            EnvironmentSourceFact(
+                symbol: "command",
+                title: "命令",
+                detail: commandDetail,
+                source: "item/commandExecution",
+                active: !commandFacts.isEmpty
+            ),
+            EnvironmentSourceFact(
+                symbol: "globe",
+                title: "浏览器",
+                detail: browserDetail,
+                source: "WKWebView",
+                active: browserURL != nil
+            ),
+            EnvironmentSourceFact(
+                symbol: "folder",
+                title: "文件",
+                detail: fileDetail,
+                source: fileSource,
+                active: filePreview != nil || !fileSearchResults.isEmpty || !fileEntries.isEmpty
+            ),
+            EnvironmentSourceFact(
+                symbol: "doc.text",
+                title: "变更",
+                detail: changeDetail,
+                source: changeSource,
+                active: diffSummary.files > 0 || statusChangeCount > 0 || !pendingChanges.isEmpty || workspaceGitDiff != nil
+            ),
+            EnvironmentSourceFact(
+                symbol: "terminal",
+                title: "终端",
+                detail: terminalDetail,
+                source: "command/exec",
+                active: !terminalRuns.isEmpty
+            )
+        ]
+    }
+
+    private var currentEnvironmentFilePanelPath: String {
+        filePanelPath.isEmpty ? workspacePath : filePanelPath
+    }
+
+    private static func runStatusName(_ status: RunStatus) -> String {
+        switch status {
+        case .running: "运行中"
+        case .succeeded: "成功"
+        case .failed: "失败"
+        }
+    }
+
+    private static func terminalStatusName(_ status: TerminalCommandRecord.Status) -> String {
+        switch status {
+        case .running: "运行中"
+        case .succeeded: "成功"
+        case .failed: "失败"
+        }
+    }
+
     /// Files shown in the inspector launcher recommendation list. Prefer real
     /// runtime data from the current thread or workspace directory; fall back to
     /// common repo entrypoints only before the directory has loaded.
