@@ -361,6 +361,52 @@ struct PluginsPage: View {
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
             }
+
+            if let installResult = store.runtimePluginInstallResult {
+                Divider()
+                    .overlay(Theme.borderSoft)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: installResult.appsNeedingAuth.isEmpty ? "checkmark.shield" : "key")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(installResult.appsNeedingAuth.isEmpty ? Theme.success : Theme.warning)
+                        Text("plugin/install 返回")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                        Text(SessionStore.pluginAuthPolicyDisplayName(installResult.authPolicy))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                        Spacer(minLength: 0)
+                    }
+
+                    if installResult.appsNeedingAuth.isEmpty {
+                        Text("没有 app 需要额外授权。")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                    } else {
+                        ForEach(Array(installResult.appsNeedingAuth.prefix(4))) { app in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(app.name)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1)
+                                    Text(app.description ?? "需要在 Codex app-server 返回的 installUrl 中完成授权")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Theme.textTertiary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                Button("授权") {
+                                    store.openPluginInstallAuthURL(app)
+                                }
+                                .buttonStyle(ChipButtonStyle(prominent: app.installURL != nil))
+                                .disabled(app.installURL == nil)
+                            }
+                        }
+                    }
+                }
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

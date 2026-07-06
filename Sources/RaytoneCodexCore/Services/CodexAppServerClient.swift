@@ -581,6 +581,16 @@ public struct CodexRuntimePluginApp: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexRuntimePluginInstallResult: Equatable, Sendable {
+    public var authPolicy: String
+    public var appsNeedingAuth: [CodexRuntimePluginApp]
+
+    public init(authPolicy: String, appsNeedingAuth: [CodexRuntimePluginApp]) {
+        self.authPolicy = authPolicy
+        self.appsNeedingAuth = appsNeedingAuth
+    }
+}
+
 public struct CodexAppServerMention: Equatable, Sendable {
     public var name: String
     public var path: String
@@ -1984,7 +1994,7 @@ public actor CodexAppServerClient {
         return Self.pluginDetail(from: detail, fallback: plugin)
     }
 
-    public func installPlugin(_ plugin: CodexRuntimePlugin) async throws {
+    public func installPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginInstallResult {
         var params: [String: JSONValue] = [
             "pluginName": .string(plugin.name)
         ]
@@ -1993,7 +2003,8 @@ public actor CodexAppServerClient {
         } else {
             params["remoteMarketplaceName"] = .string(plugin.marketplaceName)
         }
-        _ = try await request(method: "plugin/install", params: .object(params))
+        let result = try await request(method: "plugin/install", params: .object(params))
+        return Self.pluginInstallResult(from: result)
     }
 
     public func uninstallPlugin(_ plugin: CodexRuntimePlugin) async throws {
@@ -3130,6 +3141,19 @@ public actor CodexAppServerClient {
             marketplaceName: marketplaceName,
             marketplacePath: marketplacePath,
             remoteVersion: result["remoteVersion"]?.stringValue
+        )
+    }
+
+    public static func pluginInstallResult(from result: JSONValue) -> CodexRuntimePluginInstallResult {
+        CodexRuntimePluginInstallResult(
+            authPolicy: result["authPolicy"]?.stringValue
+                ?? result["auth_policy"]?.stringValue
+                ?? "UNKNOWN",
+            appsNeedingAuth: (
+                result["appsNeedingAuth"]?.arrayValue
+                    ?? result["apps_needing_auth"]?.arrayValue
+                    ?? []
+            ).compactMap(pluginApp(from:))
         )
     }
 

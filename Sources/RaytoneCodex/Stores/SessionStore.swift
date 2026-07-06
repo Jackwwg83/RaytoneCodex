@@ -59,6 +59,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
     @Published var runtimePluginDetail: CodexRuntimePluginDetail?
     @Published var runtimePluginDetailStatusText = "未读取"
+    @Published var runtimePluginInstallResult: CodexRuntimePluginInstallResult?
     @Published var runtimeSharedPluginCount = 0
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
     @Published var runtimeExperimentalFeatures: [CodexExperimentalFeature] = []
@@ -3767,20 +3768,49 @@ final class SessionStore: ObservableObject {
         runtimeCatalogStatusText = plugin.installed ? "正在卸载 \(plugin.displayName)…" : "正在安装 \(plugin.displayName)…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let finalStatus: String
             if plugin.installed {
                 try await client.uninstallPlugin(plugin)
+                runtimePluginInstallResult = nil
+                finalStatus = "plugin/uninstall：已卸载 \(plugin.displayName)"
             } else {
-                try await client.installPlugin(plugin)
+                let result = try await client.installPlugin(plugin)
+                runtimePluginInstallResult = result
+                finalStatus = Self.pluginInstallSummary(pluginDisplayName: plugin.displayName, result: result)
             }
             await refreshRuntimeCatalog(forceReloadSkills: true)
             if runtimePluginDetail?.plugin.id == plugin.id,
                let refreshed = runtimePlugins.first(where: { $0.id == plugin.id }) {
                 await readRuntimePluginDetail(refreshed)
             }
+            runtimeCatalogStatusText = finalStatus
+            runtimePluginDetailStatusText = finalStatus
         } catch {
             runtimeCatalogStatusText = "插件操作失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    nonisolated static func pluginAuthPolicyDisplayName(_ policy: String) -> String {
+        switch policy.uppercased() {
+        case "ON_INSTALL":
+            "安装时授权"
+        case "ON_USE":
+            "使用时授权"
+        default:
+            policy.isEmpty ? "未知授权" : policy
+        }
+    }
+
+    nonisolated static func pluginInstallSummary(pluginDisplayName: String, result: CodexRuntimePluginInstallResult) -> String {
+        let auth = pluginAuthPolicyDisplayName(result.authPolicy)
+        guard !result.appsNeedingAuth.isEmpty else {
+            return "plugin/install：已安装 \(pluginDisplayName) · \(auth) · 没有需要额外授权的 app"
+        }
+        let appNames = result.appsNeedingAuth.map(\.name).prefix(3).joined(separator: "、")
+        let extra = result.appsNeedingAuth.count > 3 ? " 等" : ""
+        return "plugin/install：已安装 \(pluginDisplayName) · \(auth) · 需要授权 \(result.appsNeedingAuth.count) 个 app\(extra)：\(appNames)"
     }
 
     func checkoutSharedPlugin(_ plugin: CodexRuntimePlugin) async {
@@ -3853,6 +3883,25 @@ final class SessionStore: ObservableObject {
         NSWorkspace.shared.open(url)
         runtimePluginDetailStatusText = "已打开共享链接"
         runtimeCatalogStatusText = runtimePluginDetailStatusText
+    }
+
+    @discardableResult
+    func openPluginInstallAuthURL(_ app: CodexRuntimePluginApp, openExternal: Bool = true) -> Bool {
+        guard let installURL = app.installURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !installURL.isEmpty,
+              let url = URL(string: installURL) else {
+            runtimePluginDetailStatusText = "plugin/install：\(app.name) 没有返回授权链接"
+            runtimeCatalogStatusText = runtimePluginDetailStatusText
+            return false
+        }
+
+        lastOpenedRuntimeAppInstallURL = installURL
+        runtimePluginDetailStatusText = "plugin/install：打开 \(app.name) 授权链接"
+        runtimeCatalogStatusText = runtimePluginDetailStatusText
+        if openExternal {
+            NSWorkspace.shared.open(url)
+        }
+        return true
     }
 
     private func confirmDeleteSharedPlugin(_ plugin: CodexRuntimePlugin, remotePluginID: String) -> Bool {

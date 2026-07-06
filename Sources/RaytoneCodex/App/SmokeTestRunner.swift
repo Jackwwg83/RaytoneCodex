@@ -28,6 +28,8 @@ enum SmokeTestRunner {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--plugin-scaffold-smoke-test") {
             runPluginScaffoldSmoke()
+        } else if CommandLine.arguments.contains("--plugin-install-response-smoke-test") {
+            runPluginInstallResponseSmoke()
         } else if CommandLine.arguments.contains("--codex-home-directory-smoke-test") {
             runCodexHomeDirectorySmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
@@ -1489,6 +1491,150 @@ enum SmokeTestRunner {
                     "runtimeSource": "unknown",
                     "runtimePath": "",
                     "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runPluginInstallResponseSmoke() {
+        Task { @MainActor in
+            let payload = JSONValue.object([
+                "authPolicy": .string("ON_USE"),
+                "appsNeedingAuth": .array([
+                    .object([
+                        "id": .string("alpha"),
+                        "name": .string("alpha"),
+                        "description": .string("Alpha 连接器需要授权"),
+                        "installUrl": .string("https://chatgpt.com/apps/alpha/alpha"),
+                        "needsAuth": .bool(true)
+                    ])
+                ])
+            ])
+            let result = CodexAppServerClient.pluginInstallResult(from: payload)
+            let summary = SessionStore.pluginInstallSummary(
+                pluginDisplayName: "Raytone Demo Plugin",
+                result: result
+            )
+            let parseOK = result.authPolicy == "ON_USE" &&
+                result.appsNeedingAuth.count == 1 &&
+                result.appsNeedingAuth.first?.installURL == "https://chatgpt.com/apps/alpha/alpha" &&
+                summary.contains("使用时授权") &&
+                summary.contains("需要授权 1 个 app")
+
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexPluginInstallSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let pluginName = "install-demo-plugin"
+            let marketplaceName = "raytone-install"
+            let installedManifestURL = codexHomeURL
+                .appendingPathComponent("plugins/cache/\(marketplaceName)/\(pluginName)/local/.codex-plugin/plugin.json")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try writePluginInstallSmokeFixture(
+                    workspaceURL: workspaceURL,
+                    codexHomeURL: codexHomeURL,
+                    pluginName: pluginName,
+                    marketplaceName: marketplaceName
+                )
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("plugin-install-response-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("plugin-install-response-smoke: refreshRuntimeCatalog\n", stderr)
+                await store.refreshRuntimeCatalog(forceReloadSkills: true)
+
+                guard let plugin = store.runtimePlugins.first(where: { $0.name == pluginName && $0.marketplaceName == marketplaceName }) else {
+                    await store.stopAppServerForTesting()
+                    emitJSON([
+                        "ok": false,
+                        "schema": "PluginInstallResponse",
+                        "parseOK": parseOK,
+                        "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHome": codexHomeURL.path,
+                        "status": store.runtimeCatalogStatusText,
+                        "errors": store.runtimeCatalogErrors,
+                        "plugins": store.runtimePlugins.map { runtimePlugin in
+                            [
+                                "name": runtimePlugin.name,
+                                "marketplace": runtimePlugin.marketplaceName,
+                                "installed": runtimePlugin.installed
+                            ] as [String: Any]
+                        }
+                    ])
+                    exit(1)
+                }
+
+                fputs("plugin-install-response-smoke: togglePluginInstallation\n", stderr)
+                let installedBefore = plugin.installed
+                await store.togglePluginInstallation(plugin)
+                let refreshedPlugin = store.runtimePlugins.first {
+                    $0.name == pluginName && $0.marketplaceName == marketplaceName
+                }
+                let liveResult = store.runtimePluginInstallResult
+                let opened = result.appsNeedingAuth.first.map {
+                    store.openPluginInstallAuthURL($0, openExternal: false)
+                } ?? false
+                let integrationOK = store.runtimeSnapshot.executable != nil &&
+                    !installedBefore &&
+                    refreshedPlugin?.installed == true &&
+                    liveResult?.authPolicy == "ON_USE" &&
+                    liveResult?.appsNeedingAuth.isEmpty == true &&
+                    fileManager.fileExists(atPath: installedManifestURL.path) &&
+                    store.runtimeCatalogStatusText.contains("打开 alpha 授权链接")
+                let ok = parseOK &&
+                    integrationOK &&
+                    opened &&
+                    store.lastOpenedRuntimeAppInstallURL == "https://chatgpt.com/apps/alpha/alpha"
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "schema": "PluginInstallResponse",
+                    "parseOK": parseOK,
+                    "integrationOK": integrationOK,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "authPolicy": result.authPolicy,
+                    "authPolicyName": SessionStore.pluginAuthPolicyDisplayName(result.authPolicy),
+                    "summary": summary,
+                    "appsNeedingAuth": result.appsNeedingAuth.map(pluginAppPayload),
+                    "liveInstallResult": pluginInstallPayload(liveResult),
+                    "installedBefore": installedBefore,
+                    "installedAfter": refreshedPlugin?.installed ?? false,
+                    "installedManifest": installedManifestURL.path,
+                    "installedManifestExists": fileManager.fileExists(atPath: installedManifestURL.path),
+                    "openedAuthURL": opened,
+                    "lastOpenedRuntimeAppInstallURL": store.lastOpenedRuntimeAppInstallURL,
+                    "status": store.runtimeCatalogStatusText,
+                    "errors": store.runtimeCatalogErrors
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "schema": "PluginInstallResponse",
+                    "parseOK": parseOK,
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
                     "error": error.localizedDescription
@@ -6597,6 +6743,57 @@ enum SmokeTestRunner {
         )
     }
 
+    private static func writePluginInstallSmokeFixture(
+        workspaceURL: URL,
+        codexHomeURL: URL,
+        pluginName: String,
+        marketplaceName: String
+    ) throws {
+        let fileManager = FileManager.default
+        let pluginRoot = workspaceURL.appendingPathComponent("plugins/\(pluginName)", isDirectory: true)
+        try fileManager.createDirectory(at: workspaceURL.appendingPathComponent(".git", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: workspaceURL.appendingPathComponent(".agents/plugins", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: pluginRoot.appendingPathComponent(".codex-plugin", isDirectory: true), withIntermediateDirectories: true)
+
+        try """
+        {
+          "name": "\(marketplaceName)",
+          "plugins": [
+            {
+              "name": "\(pluginName)",
+              "source": {
+                "source": "local",
+                "path": "./plugins/\(pluginName)"
+              },
+              "policy": {
+                "installation": "AVAILABLE",
+                "authentication": "ON_USE"
+              },
+              "category": "Productivity"
+            }
+          ]
+        }
+        """.write(to: workspaceURL.appendingPathComponent(".agents/plugins/marketplace.json"), atomically: true, encoding: .utf8)
+
+        try """
+        {
+          "name": "\(pluginName)",
+          "description": "Raytone plugin/install smoke source",
+          "interface": {
+            "displayName": "Raytone Plugin Install Smoke",
+            "shortDescription": "plugin/install smoke subtitle",
+            "developerName": "Raytone",
+            "category": "Productivity"
+          }
+        }
+        """.write(to: pluginRoot.appendingPathComponent(".codex-plugin/plugin.json"), atomically: true, encoding: .utf8)
+
+        try """
+        [features]
+        plugins = true
+        """.write(to: codexHomeURL.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+    }
+
     private static func argument(after flag: String) -> String? {
         guard let index = CommandLine.arguments.firstIndex(of: flag) else {
             return nil
@@ -6854,6 +7051,24 @@ enum SmokeTestRunner {
             "shareUrl": context?.shareURL ?? "",
             "creatorName": context?.creatorName ?? "",
             "principalCount": context?.sharePrincipals.count ?? 0
+        ]
+    }
+
+    private static func pluginAppPayload(_ app: CodexRuntimePluginApp) -> [String: Any] {
+        [
+            "id": app.id,
+            "name": app.name,
+            "description": app.description ?? "",
+            "installUrl": app.installURL ?? "",
+            "needsAuth": app.needsAuth
+        ]
+    }
+
+    private static func pluginInstallPayload(_ result: CodexRuntimePluginInstallResult?) -> [String: Any] {
+        [
+            "authPolicy": result?.authPolicy ?? "",
+            "authPolicyName": result.map { SessionStore.pluginAuthPolicyDisplayName($0.authPolicy) } ?? "",
+            "appsNeedingAuth": result?.appsNeedingAuth.map(pluginAppPayload) ?? []
         ]
     }
 
