@@ -179,6 +179,7 @@ final class SessionStore: ObservableObject {
     @Published var isRunning = false {
         didSet { updatePreventSleepAssertion() }
     }
+    @Published var slashCommandStatusText = "未运行"
     @Published var lastCommandPreview = ""
     @Published var lastOutputPath = ""
     @Published var lastRawOutput = ""
@@ -198,6 +199,11 @@ final class SessionStore: ObservableObject {
         case appServerDecision
         case permissions(requested: JSONValue)
         case legacyReviewDecision
+    }
+
+    private struct SlashShellCommandSelection {
+        var command: String
+        var source: String
     }
 
     nonisolated static var sampleWorkspaceEnabled: Bool {
@@ -885,11 +891,15 @@ final class SessionStore: ObservableObject {
             return true
 
         case "/test":
+            let selection = arguments.isEmpty
+                ? await detectedTestCommand()
+                : SlashShellCommandSelection(command: arguments, source: "手动 /test + command/exec")
             await runSlashShellCommand(
                 displayedPrompt: trimmedPrompt,
-                command: arguments.isEmpty ? detectedTestCommand() : arguments,
+                command: selection.command,
                 sandbox: sandbox == .readOnly ? .workspaceWrite : sandbox,
-                appendDiffFileChanges: false
+                appendDiffFileChanges: false,
+                source: selection.source
             )
             return true
 
@@ -937,9 +947,11 @@ final class SessionStore: ObservableObject {
         displayedPrompt: String,
         command: String,
         sandbox commandSandbox: CodexSandboxMode,
-        appendDiffFileChanges: Bool
+        appendDiffFileChanges: Bool,
+        source: String = "command/exec"
     ) async {
         isRunning = true
+        slashCommandStatusText = "\(source)：\(command)"
         let transcriptID = UUID()
 
         updateSelectedThread { thread in
@@ -975,6 +987,7 @@ final class SessionStore: ObservableObject {
 
             lastCommandPreview = command
             lastRawOutput = renderedOutput
+            slashCommandStatusText = "\(source)：\(command) · exit \(result.exitCode)"
 
             updateSelectedThread { thread in
                 if let index = thread.items.firstIndex(where: { $0.id == transcriptID }) {
@@ -1008,6 +1021,7 @@ final class SessionStore: ObservableObject {
                 }
             }
         } catch {
+            slashCommandStatusText = "\(source) 失败：\(error.localizedDescription)"
             updateSelectedThread { thread in
                 if let index = thread.items.firstIndex(where: { $0.id == transcriptID }) {
                     thread.items[index].kind = .command(CommandRun(
@@ -1029,28 +1043,48 @@ final class SessionStore: ObservableObject {
         await refreshRuntime()
     }
 
-    private func detectedTestCommand() -> String {
+    private func detectedTestCommand() async -> SlashShellCommandSelection {
         let workspaceURL = URL(fileURLWithPath: workspacePath)
-        let fileManager = FileManager.default
-        let scriptURL = workspaceURL.appendingPathComponent("script/test.sh")
-        if fileManager.fileExists(atPath: scriptURL.path) {
-            return "bash script/test.sh"
-        }
+        let fallback = "test -x ./test.sh && ./test.sh || (echo '未找到可自动识别的测试命令；请用 /test <命令> 指定。' >&2; exit 2)"
+        let source = "fs/getMetadata + command/exec"
 
-        if fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("Package.swift").path) {
-            return "swift test"
-        }
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            if await appServerFileExists("script/test.sh", in: workspaceURL, using: client) {
+                return SlashShellCommandSelection(command: "bash script/test.sh", source: source)
+            }
 
-        if fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("package.json").path) {
-            return "npm test"
-        }
+            if await appServerFileExists("Package.swift", in: workspaceURL, using: client) {
+                return SlashShellCommandSelection(command: "swift test", source: source)
+            }
 
-        if fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("pyproject.toml").path) ||
-            fileManager.fileExists(atPath: workspaceURL.appendingPathComponent("pytest.ini").path) {
-            return "python -m pytest"
-        }
+            if await appServerFileExists("package.json", in: workspaceURL, using: client) {
+                return SlashShellCommandSelection(command: "npm test", source: source)
+            }
 
-        return "test -x ./test.sh && ./test.sh || (echo '未找到可自动识别的测试命令；请用 /test <命令> 指定。' >&2; exit 2)"
+            let hasPyproject = await appServerFileExists("pyproject.toml", in: workspaceURL, using: client)
+            let hasPytestIni = await appServerFileExists("pytest.ini", in: workspaceURL, using: client)
+            if hasPyproject || hasPytestIni {
+                return SlashShellCommandSelection(command: "python -m pytest", source: source)
+            }
+
+            return SlashShellCommandSelection(command: fallback, source: source)
+        } catch {
+            return SlashShellCommandSelection(command: fallback, source: "fs/getMetadata 失败 + command/exec")
+        }
+    }
+
+    private func appServerFileExists(
+        _ relativePath: String,
+        in workspaceURL: URL,
+        using client: CodexAppServerClient
+    ) async -> Bool {
+        let targetURL = workspaceURL.appendingPathComponent(relativePath)
+        do {
+            return try await client.getMetadata(path: targetURL.path).isFile
+        } catch {
+            return false
+        }
     }
 
     private static func reviewFallbackPrompt(instructions: String?) -> String {

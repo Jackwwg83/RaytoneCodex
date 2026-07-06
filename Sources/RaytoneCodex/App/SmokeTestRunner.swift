@@ -11252,11 +11252,16 @@ enum SmokeTestRunner {
     private static func runSlashSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
-            let workspaceURL = fileManager.temporaryDirectory
+            let rootURL = fileManager.temporaryDirectory
                 .appendingPathComponent("RaytoneCodexSlashSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
 
             do {
                 try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeDynamicToolAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
                 let readmeURL = workspaceURL.appendingPathComponent("README.md")
                 try "# Slash smoke\n\nold line\n".write(to: readmeURL, atomically: true, encoding: .utf8)
                 _ = try runProcess(["git", "init"], cwd: workspaceURL)
@@ -11277,11 +11282,19 @@ enum SmokeTestRunner {
                 try "#!/bin/sh\necho slash test OK\n".write(to: testScriptURL, atomically: true, encoding: .utf8)
                 try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: testScriptURL.path)
 
-                let store = SessionStore()
+                let resolver = CodexExecutableResolver(
+                    environment: ["RAYTONE_CODEX_CLI": scriptURL.path],
+                    pathString: "",
+                    bundleResourceURL: nil
+                )
+                let store = SessionStore(service: CodexCLIService(resolver: resolver))
                 store.workspacePath = workspaceURL.path
                 store.filePanelPath = workspaceURL.path
                 store.sandbox = .workspaceWrite
                 store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_DYNAMIC_TOOL_LOG": logURL.path
+                ]
                 if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
                     store.projects[index].path = workspaceURL.path
                 }
@@ -11302,6 +11315,13 @@ enum SmokeTestRunner {
 
                 let testCommands = commandRuns(in: store.selectedThread.items)
                 let testCommand = testCommands.last
+                let slashCommandStatus = store.slashCommandStatusText
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let getMetadataRequestObserved = logText.contains(#""method":"fs/getMetadata""#) ||
+                    logText.contains(#""method": "fs/getMetadata""#)
+                let testScriptMetadataObserved = logText.contains("script/test.sh")
+                let commandExecObserved = logText.contains(#""method":"command/exec""#) ||
+                    logText.contains(#""method": "command/exec""#)
 
                 store.prompt = "/clear"
                 await store.runPrompt()
@@ -11312,15 +11332,27 @@ enum SmokeTestRunner {
                     diffCommand?.output.contains("README.md") == true &&
                     fileChanges.contains(where: { $0.path == "README.md" && $0.additions > 0 }) &&
                     testCommand?.exitCode == 0 &&
+                    testCommand?.command == "bash script/test.sh" &&
                     testCommand?.output.contains("slash test OK") == true &&
+                    slashCommandStatus.contains("fs/getMetadata + command/exec") &&
+                    getMetadataRequestObserved &&
+                    testScriptMetadataObserved &&
+                    commandExecObserved &&
                     afterClearItemCount == 0
 
+                await store.stopAppServerForTesting()
                 emitJSON([
                     "ok": ok,
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "getMetadataRequestObserved": getMetadataRequestObserved,
+                    "testScriptMetadataObserved": testScriptMetadataObserved,
+                    "commandExecObserved": commandExecObserved,
+                    "slashCommandStatus": slashCommandStatus,
                     "diffCommandExitCode": Int(diffCommand?.exitCode ?? -999),
                     "diffCommandPreview": diffCommand?.command ?? "",
                     "diffOutputPreview": String((diffCommand?.output ?? "").prefix(1200)),
@@ -11335,6 +11367,7 @@ enum SmokeTestRunner {
                     "testCommandExitCode": Int(testCommand?.exitCode ?? -999),
                     "testCommandPreview": testCommand?.command ?? "",
                     "testOutput": testCommand?.output ?? "",
+                    "requestLogPreview": String(logText.prefix(1600)),
                     "afterClearItemCount": afterClearItemCount
                 ])
                 exit(ok ? 0 : 1)
