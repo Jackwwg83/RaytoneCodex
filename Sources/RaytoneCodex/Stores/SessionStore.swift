@@ -197,6 +197,7 @@ final class SessionStore: ObservableObject {
     private var appServerEventsTask: Task<Void, Never>?
     private var appServerItemIDs: [String: UUID] = [:]
     private var activeDiffTranscriptIDs: Set<UUID> = []
+    private var activeFileChangePatchTranscriptIDs: [String: Set<UUID>] = [:]
     private var pendingApprovalRequestIDs: [UUID: CodexAppServerRequestID] = [:]
     private var pendingApprovalResponseKinds: [UUID: PendingApprovalResponseKind] = [:]
     private var pendingMcpElicitationRequestIDs: [UUID: CodexAppServerRequestID] = [:]
@@ -601,6 +602,7 @@ final class SessionStore: ObservableObject {
         appServerEnvironmentKey = nil
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
+        activeFileChangePatchTranscriptIDs.removeAll()
         pendingApprovalRequestIDs.removeAll()
         pendingApprovalResponseKinds.removeAll()
         pendingMcpElicitationRequestIDs.removeAll()
@@ -6108,6 +6110,7 @@ final class SessionStore: ObservableObject {
             appServerEventsTask = nil
             appServerItemIDs.removeAll()
             activeDiffTranscriptIDs.removeAll()
+            activeFileChangePatchTranscriptIDs.removeAll()
             pendingApprovalRequestIDs.removeAll()
             pendingApprovalResponseKinds.removeAll()
             pendingMcpElicitationRequestIDs.removeAll()
@@ -6202,6 +6205,7 @@ final class SessionStore: ObservableObject {
         appServerEnvironmentKey = nil
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
+        activeFileChangePatchTranscriptIDs.removeAll()
         resetActiveTerminal()
         resetFilePanelWatch()
         await proxyService.stop()
@@ -6523,6 +6527,10 @@ final class SessionStore: ObservableObject {
             appendReasoningDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/commandExecution/outputDelta":
             appendCommandOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
+        case "item/fileChange/outputDelta":
+            appendFileChangeOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
+        case "item/fileChange/patchUpdated":
+            upsertFileChangePatch(itemID: params?["itemId"]?.stringValue, changes: params?["changes"]?.arrayValue ?? [])
         default:
             break
         }
@@ -7265,12 +7273,36 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func appendFileChangeOutputDelta(itemID: String?, delta: String?) {
+        guard let itemID, let delta, !delta.isEmpty else { return }
+        let transcriptID = transcriptUUID(for: "\(itemID):fileChangeOutput")
+        updateSelectedThread { thread in
+            if let index = thread.items.firstIndex(where: { $0.id == transcriptID }),
+               case var .reasoning(block) = thread.items[index].kind {
+                block.detail += delta
+                thread.items[index].kind = .reasoning(block)
+            } else {
+                thread.items.append(TranscriptItem(
+                    id: transcriptID,
+                    kind: .reasoning(ReasoningBlock(title: "文件变更输出", detail: delta))
+                ))
+            }
+        }
+    }
+
+    private func upsertFileChangePatch(itemID: String?, changes: [JSONValue]) {
+        guard let itemID else { return }
+        upsertFileChanges(serverItemID: itemID, changes: changes)
+    }
+
     private func upsertFileChanges(serverItemID: String, changes: [JSONValue]) {
+        var currentIDs = Set<UUID>()
+
         for changeValue in changes {
             guard let path = changeValue["path"]?.stringValue else { continue }
             let diff = changeValue["diff"]?.stringValue ?? ""
             let parsedDiff = Self.parseUnifiedDiff(diff)
-            upsertTranscriptItem(
+            let transcriptID = upsertTranscriptItem(
                 serverItemID: "\(serverItemID):\(path)",
                 kind: .fileChange(FileChange(
                     path: path,
@@ -7280,6 +7312,19 @@ final class SessionStore: ObservableObject {
                     hunks: parsedDiff.hunks
                 ))
             )
+            currentIDs.insert(transcriptID)
+        }
+
+        let staleIDs = activeFileChangePatchTranscriptIDs[serverItemID, default: []].subtracting(currentIDs)
+        if !staleIDs.isEmpty {
+            updateSelectedThread { thread in
+                thread.items.removeAll { staleIDs.contains($0.id) }
+            }
+        }
+        if currentIDs.isEmpty {
+            activeFileChangePatchTranscriptIDs.removeValue(forKey: serverItemID)
+        } else {
+            activeFileChangePatchTranscriptIDs[serverItemID] = currentIDs
         }
     }
 

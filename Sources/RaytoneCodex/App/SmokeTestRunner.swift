@@ -83,6 +83,8 @@ enum SmokeTestRunner {
             runAutomationHookSmoke()
         } else if CommandLine.arguments.contains("--hook-notification-smoke-test") {
             runHookNotificationSmoke()
+        } else if CommandLine.arguments.contains("--file-change-stream-smoke-test") {
+            runFileChangeStreamSmoke()
         } else if CommandLine.arguments.contains("--hook-controls-smoke-test") {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
@@ -7073,6 +7075,118 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runFileChangeStreamSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexFileChangeStreamSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# File change stream smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeFileChangeStreamAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-file-change-stream"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_FILE_CHANGE_STREAM_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "FileChangeStreamSmoke"
+                }
+
+                store.prompt = "触发文件变更流式通知"
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline,
+                      !fileChanges(in: store.selectedThread.items).contains(where: { $0.path == "README.md" }) {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let fileChanges = fileChanges(in: store.selectedThread.items)
+                let streamedFileChange = fileChanges.first { $0.path == "README.md" }
+                let streamedLineObserved = streamedFileChange?.hunks
+                    .flatMap(\.lines)
+                    .contains { $0.kind == .added && $0.text.contains("streamed patch marker") } ?? false
+                let outputBlocks = store.selectedThread.items.compactMap { item -> ReasoningBlock? in
+                    if case let .reasoning(block) = item.kind, block.title == "文件变更输出" {
+                        return block
+                    }
+                    return nil
+                }
+                let outputText = outputBlocks.map(\.detail).joined(separator: "\n")
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let ok = !store.isRunning &&
+                    store.selectedThread.appServerThreadID == "thread-file-change" &&
+                    streamedFileChange?.additions == 1 &&
+                    streamedFileChange?.deletions == 0 &&
+                    streamedLineObserved &&
+                    store.pendingChanges.contains(where: { $0.path == "README.md" }) &&
+                    store.pendingAdditions == 1 &&
+                    store.pendingDeletions == 0 &&
+                    outputText.contains("apply_patch legacy stream") &&
+                    logText.contains(#""method":"turn/start""#) &&
+                    logText.contains(#""method":"item/fileChange/outputDelta""#) &&
+                    logText.contains(#""method":"item/fileChange/patchUpdated""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
+                    "transcriptItemCount": store.selectedThread.items.count,
+                    "fileChanges": fileChanges.map { change in
+                        [
+                            "path": change.path,
+                            "type": change.type.rawValue,
+                            "additions": change.additions,
+                            "deletions": change.deletions,
+                            "hunkCount": change.hunks.count
+                        ] as [String: Any]
+                    },
+                    "pendingChangeCount": store.pendingChanges.count,
+                    "pendingAdditions": store.pendingAdditions,
+                    "pendingDeletions": store.pendingDeletions,
+                    "streamedLineObserved": streamedLineObserved,
+                    "outputText": outputText,
+                    "isRunning": store.isRunning,
+                    "requestLogPreview": String(logText.prefix(2200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAccountAuthSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
@@ -9144,6 +9258,131 @@ enum SmokeTestRunner {
                 send_notification("thread/unarchived", {"threadId": "thread-life"})
             elif method == "thread/list":
                 send_result(request_id, thread_list(params))
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeFileChangeStreamAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_FILE_CHANGE_STREAM_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        def file_change():
+            diff = "\n".join([
+                "diff --git a/README.md b/README.md",
+                "index 1111111..2222222 100644",
+                "--- a/README.md",
+                "+++ b/README.md",
+                "@@ -1 +1,2 @@",
+                " # File change stream smoke",
+                "+streamed patch marker",
+                "",
+            ])
+            return {
+                "path": "README.md",
+                "kind": {"type": "update"},
+                "diff": diff,
+            }
+
+        def thread_payload():
+            return {
+                "id": "thread-file-change",
+                "sessionId": "session-file-change",
+                "name": "文件变更流式线程",
+                "preview": "File change stream smoke",
+                "cwd": cwd,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000001,
+                "status": {"type": "active", "activeFlags": []},
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "workspace-write",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-file-change", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-file-change",
+                        "status": "inProgress",
+                        "startedAt": 1700000000,
+                    }
+                })
+                send_notification("item/fileChange/outputDelta", {
+                    "threadId": "thread-file-change",
+                    "turnId": "turn-file-change",
+                    "itemId": "file-change-item",
+                    "delta": "apply_patch legacy stream: README.md\n",
+                })
+                send_notification("item/fileChange/patchUpdated", {
+                    "threadId": "thread-file-change",
+                    "turnId": "turn-file-change",
+                    "itemId": "file-change-item",
+                    "changes": [file_change()],
+                })
+                send_notification("item/completed", {
+                    "threadId": "thread-file-change",
+                    "turnId": "turn-file-change",
+                    "item": {
+                        "id": "file-change-item",
+                        "type": "fileChange",
+                        "changes": [file_change()],
+                    },
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-file-change", "status": "completed"}
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
