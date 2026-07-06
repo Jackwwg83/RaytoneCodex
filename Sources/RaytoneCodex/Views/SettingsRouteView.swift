@@ -434,8 +434,8 @@ struct SettingsRouteView: View {
                         .clipShape(Capsule())
                     statusBadge(accountKindName(store.runtimeAccount?.kind), ok: store.runtimeAccount?.kind != nil && store.runtimeAccount?.kind != "notLoggedIn")
                 }
-                if let login = store.activeAccountLogin, let loginID = login.loginID {
-                    Text("正在等待登录完成 · \(loginID)")
+                if let login = store.activeAccountLogin {
+                    Text(activeAccountLoginDescription(login))
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textSecondary)
                         .lineLimit(1)
@@ -608,7 +608,19 @@ struct SettingsRouteView: View {
     @ViewBuilder
     private var accountAuthControlGroup: some View {
         HStack(spacing: 8) {
-            if store.activeAccountLogin != nil {
+            if let login = store.activeAccountLogin {
+                if login.verificationURL != nil {
+                    Button("打开验证页") {
+                        openActiveAccountVerificationURL()
+                    }
+                    .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                }
+                if login.userCode?.isEmpty == false {
+                    Button("复制代码") {
+                        copyActiveAccountUserCode()
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                }
                 Button("取消登录") {
                     Task { await store.cancelAccountLogin() }
                 }
@@ -618,6 +630,10 @@ struct SettingsRouteView: View {
                     Task { await store.startAccountChatGPTLogin() }
                 }
                 .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                Button("设备码") {
+                    Task { await store.startAccountChatGPTDeviceCodeLogin() }
+                }
+                .buttonStyle(ChipButtonStyle())
                 Button("API Key") {
                     showAccountAPIKeyLogin = true
                 }
@@ -2573,6 +2589,29 @@ struct SettingsRouteView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(summary, forType: .string)
         profileStatus = "已复制分享摘要"
+    }
+
+    private func activeAccountLoginDescription(_ login: CodexAccountLogin) -> String {
+        if login.kind == "chatgptDeviceCode" {
+            let code = login.userCode.map { " · 设备码 \($0)" } ?? ""
+            let url = login.verificationURL?.absoluteString ?? "未返回验证地址"
+            return "正在等待设备码登录 · \(url)\(code)"
+        }
+        if let loginID = login.loginID {
+            return "正在等待登录完成 · \(loginID)"
+        }
+        return "正在等待登录完成 · \(login.kind)"
+    }
+
+    private func openActiveAccountVerificationURL() {
+        guard let url = store.activeAccountLogin?.verificationURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func copyActiveAccountUserCode() {
+        guard let userCode = store.activeAccountLogin?.userCode, !userCode.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(userCode, forType: .string)
     }
 
     private func confirmResetMemory() {

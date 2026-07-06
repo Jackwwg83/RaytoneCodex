@@ -34,6 +34,8 @@ enum SmokeTestRunner {
             runCodexHomeDirectorySmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
             runAccountAuthSmoke()
+        } else if CommandLine.arguments.contains("--account-device-code-smoke-test") {
+            runAccountDeviceCodeSmoke()
         } else if CommandLine.arguments.contains("--connection-recovery-smoke-test") {
             runConnectionRecoverySmoke()
         } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
@@ -5144,6 +5146,62 @@ enum SmokeTestRunner {
                 "cancelStatus": cancelStatus,
                 "cancelErrors": cancelErrors,
                 "activeLoginAfterCancel": store.activeAccountLogin?.loginID ?? ""
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAccountDeviceCodeSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            fputs("account-device-code-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("account-device-code-smoke: startAccountChatGPTDeviceCodeLogin\n", stderr)
+            await store.startAccountChatGPTDeviceCodeLogin(openBrowser: false)
+            let login = store.activeAccountLogin
+            let startStatus = store.runtimeCatalogStatusText
+            let startErrors = store.runtimeCatalogErrors
+
+            fputs("account-device-code-smoke: cancelAccountLogin\n", stderr)
+            await store.cancelAccountLogin()
+            let cancelStatus = store.runtimeCatalogStatusText
+            let cancelErrors = store.runtimeCatalogErrors
+
+            let verificationURL = login?.verificationURL?.absoluteString ?? ""
+            let userCode = login?.userCode ?? ""
+            let ok = store.runtimeSnapshot.executable != nil &&
+                login?.kind == "chatgptDeviceCode" &&
+                login?.loginID?.isEmpty == false &&
+                !verificationURL.isEmpty &&
+                !userCode.isEmpty &&
+                startStatus.contains("account/login/start(chatgptDeviceCode)") &&
+                startErrors.isEmpty &&
+                !cancelStatus.hasPrefix("取消登录失败") &&
+                cancelErrors.isEmpty
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "loginKind": login?.kind ?? "",
+                "loginID": login?.loginID ?? "",
+                "verificationURLHost": login?.verificationURL?.host ?? "",
+                "userCodeLength": userCode.count,
+                "startStatus": startStatus,
+                "startErrors": startErrors,
+                "cancelStatus": cancelStatus,
+                "cancelErrors": cancelErrors,
+                "activeLoginAfterCancel": store.activeAccountLogin?.loginID ?? "",
+                "source": "account/login/start(chatgptDeviceCode)"
             ])
             exit(ok ? 0 : 1)
         }

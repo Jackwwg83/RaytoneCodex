@@ -2965,6 +2965,33 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func startAccountChatGPTDeviceCodeLogin(openBrowser: Bool = true) async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 account/login/start(chatgptDeviceCode)…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let login = try await client.startChatGPTDeviceCodeAccountLogin()
+            activeAccountLogin = login
+            let codeText = login.userCode.map { " · 设备码 \($0)" } ?? ""
+            if openBrowser, let verificationURL = login.verificationURL {
+                NSWorkspace.shared.open(verificationURL)
+                runtimeCatalogStatusText = "已打开设备码验证页，等待 account/login/completed\(codeText)"
+            } else if let verificationURL = login.verificationURL {
+                let host = verificationURL.host ?? "verification URL"
+                runtimeCatalogStatusText = "account/login/start(chatgptDeviceCode)：\(host)\(codeText)"
+            } else {
+                runtimeCatalogStatusText = "account/login/start(chatgptDeviceCode)：\(login.kind)\(codeText)"
+            }
+        } catch {
+            runtimeCatalogStatusText = "设备码登录启动失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
     @discardableResult
     func loginRuntimeAccountWithAPIKey(_ apiKey: String) async -> Bool {
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
