@@ -1502,6 +1502,14 @@ case "$MODE" in
       --side-chat-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --side-chat-injection-smoke|side-chat-injection-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --side-chat-injection-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --environment-smoke|environment-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -1540,6 +1548,38 @@ case "$MODE" in
       RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
       "$BUILD_BINARY" \
       --thread-lifecycle-smoke-test
+    ;;
+  --loaded-threads-smoke|loaded-threads-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --loaded-threads-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --thread-unsubscribe-smoke|thread-unsubscribe-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --thread-unsubscribe-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --thread-metadata-smoke|thread-metadata-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --thread-metadata-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --thread-shell-command-smoke|thread-shell-command-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --thread-shell-command-smoke-test \
+      --workspace "$ROOT_DIR"
     ;;
   --tools-smoke|tools-smoke)
     /usr/bin/env \
@@ -1607,6 +1647,14 @@ case "$MODE" in
       --account-auth-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --account-device-code-smoke|account-device-code-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --account-device-code-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --connection-recovery-smoke|connection-recovery-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -1623,12 +1671,44 @@ case "$MODE" in
       --account-api-key-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --profile-privacy-smoke|profile-privacy-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --profile-privacy-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --profile-share-smoke|profile-share-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --profile-share-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --add-credits-nudge-smoke|add-credits-nudge-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
       RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
       "$BUILD_BINARY" \
       --add-credits-nudge-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --feedback-upload-smoke|feedback-upload-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --feedback-upload-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --windows-sandbox-smoke|windows-sandbox-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --windows-sandbox-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
   --experimental-features-smoke|experimental-features-smoke)
@@ -1655,6 +1735,22 @@ case "$MODE" in
       --plugin-read-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --skill-read-smoke|skill-read-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --skill-read-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --skill-extra-roots-smoke|skill-extra-roots-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --skill-extra-roots-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --plugin-scaffold-smoke|plugin-scaffold-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -1669,6 +1765,22 @@ case "$MODE" in
       RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
       "$BUILD_BINARY" \
       --plugin-install-response-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --plugin-share-smoke|plugin-share-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --plugin-share-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --marketplace-upgrade-smoke|marketplace-upgrade-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --marketplace-upgrade-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
   --codex-home-directory-smoke|codex-home-directory-smoke)
@@ -1742,12 +1854,28 @@ case "$MODE" in
       --auth-attestation-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --guardian-denial-approve-smoke|guardian-denial-approve-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --guardian-denial-approve-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --runtime-pages-smoke|runtime-pages-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
       RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
       "$BUILD_BINARY" \
       --runtime-pages-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --settings-scene-smoke|settings-scene-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --settings-scene-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
   --sample-data-gate-smoke|sample-data-gate-smoke)
@@ -1842,6 +1970,22 @@ case "$MODE" in
       --integration-pages-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --home-connection-actions-smoke|home-connection-actions-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --home-connection-actions-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --app-mention-config-smoke|app-mention-config-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --app-mention-config-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --project-switch-smoke|project-switch-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -1855,6 +1999,14 @@ case "$MODE" in
       RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
       "$BUILD_BINARY" \
       --workspace-switch-smoke-test
+    ;;
+  --worktree-switch-smoke|worktree-switch-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --worktree-switch-smoke-test \
+      --workspace "$ROOT_DIR"
     ;;
   --remote-control-smoke|remote-control-smoke)
     /usr/bin/env \
@@ -1870,6 +2022,14 @@ case "$MODE" in
       RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
       "$BUILD_BINARY" \
       --remote-control-mode-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --remote-control-revoke-smoke|remote-control-revoke-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --remote-control-revoke-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
   --realtime-voices-smoke|realtime-voices-smoke)
@@ -1918,6 +2078,14 @@ case "$MODE" in
       RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
       "$BUILD_BINARY" \
       --external-agent-config-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
+  --external-agent-real-smoke|external-agent-real-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --external-agent-real-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
   --app-list-updated-smoke|app-list-updated-smoke)
@@ -2060,6 +2228,14 @@ case "$MODE" in
   --browser-snapshot-smoke|browser-snapshot-smoke)
     run_browser_snapshot_smoke
     ;;
+  --browser-snapshot-input-smoke|browser-snapshot-input-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --browser-snapshot-input-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --settings-browser-snapshot-smoke|settings-browser-snapshot-smoke)
     run_settings_browser_snapshot_smoke
     ;;
@@ -2087,7 +2263,7 @@ case "$MODE" in
     run_package_audit
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--thread-bootstrap-actions-smoke|--thread-lifecycle-smoke|--tools-smoke|--terminal-stream-smoke|--terminal-resize-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--connection-recovery-smoke|--account-api-key-smoke|--add-credits-nudge-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--mcp-elicitation-smoke|--tool-user-input-smoke|--approval-compat-smoke|--dynamic-tool-smoke|--interrupt-smoke|--auth-attestation-smoke|--runtime-pages-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-notification-smoke|--file-change-stream-smoke|--runtime-diagnostics-smoke|--process-stream-smoke|--app-server-notification-smoke|--hook-controls-smoke|--integration-pages-smoke|--project-switch-smoke|--workspace-switch-smoke|--remote-control-smoke|--remote-control-mode-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--provider-onboarding-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--thread-memory-mode-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--side-chat-injection-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--thread-bootstrap-actions-smoke|--thread-lifecycle-smoke|--loaded-threads-smoke|--thread-unsubscribe-smoke|--thread-metadata-smoke|--thread-shell-command-smoke|--tools-smoke|--terminal-stream-smoke|--terminal-resize-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--account-device-code-smoke|--connection-recovery-smoke|--account-api-key-smoke|--profile-privacy-smoke|--profile-share-smoke|--add-credits-nudge-smoke|--feedback-upload-smoke|--windows-sandbox-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--skill-read-smoke|--skill-extra-roots-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--plugin-share-smoke|--marketplace-upgrade-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--mcp-elicitation-smoke|--tool-user-input-smoke|--approval-compat-smoke|--dynamic-tool-smoke|--interrupt-smoke|--auth-attestation-smoke|--guardian-denial-approve-smoke|--runtime-pages-smoke|--settings-scene-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-notification-smoke|--file-change-stream-smoke|--runtime-diagnostics-smoke|--process-stream-smoke|--app-server-notification-smoke|--hook-controls-smoke|--integration-pages-smoke|--home-connection-actions-smoke|--app-mention-config-smoke|--project-switch-smoke|--workspace-switch-smoke|--worktree-switch-smoke|--remote-control-smoke|--remote-control-mode-smoke|--remote-control-revoke-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--external-agent-real-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--provider-onboarding-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--thread-memory-mode-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--browser-snapshot-input-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
     exit 2
     ;;
 esac
