@@ -76,6 +76,8 @@ enum SmokeTestRunner {
             runModelCatalogSmoke()
         } else if CommandLine.arguments.contains("--model-provider-capabilities-smoke-test") {
             runModelProviderCapabilitiesSmoke()
+        } else if CommandLine.arguments.contains("--external-agent-config-smoke-test") {
+            runExternalAgentConfigSmoke()
         } else if CommandLine.arguments.contains("--model-config-smoke-test") {
             runModelConfigSmoke()
         } else if CommandLine.arguments.contains("--provider-sidecar-smoke-test") {
@@ -1731,6 +1733,93 @@ enum SmokeTestRunner {
                     "status": status,
                     "runtimeCatalogErrors": store.runtimeCatalogErrors,
                     "requestLogPreview": String(logText.prefix(1200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runExternalAgentConfigSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexExternalAgentConfigSmoke-\(UUID().uuidString)", isDirectory: true)
+            let logURL = workspaceURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = workspaceURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeExternalAgentConfigAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-external-agent-config"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_EXTERNAL_AGENT_CONFIG_LOG": logURL.path
+                ]
+
+                await store.detectExternalAgentConfig()
+                let detectedItems = store.externalAgentMigrationItems
+                let detectStatus = store.externalAgentMigrationStatusText
+
+                await store.importExternalAgentConfig()
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline && store.externalAgentMigrationIsImporting {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let importStatus = store.externalAgentMigrationStatusText
+
+                await store.stopAppServerForTesting()
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let ok = detectedItems.count == 2 &&
+                    detectStatus.contains("externalAgentConfig/detect") &&
+                    importStatus.contains("externalAgentConfig/import/completed") &&
+                    !store.externalAgentMigrationIsImporting &&
+                    store.externalAgentImportedItemCount == 2 &&
+                    logText.contains(#""method":"externalAgentConfig/detect""#) &&
+                    logText.contains(#""includeHome":true"#) &&
+                    logText.contains(#""method":"externalAgentConfig/import""#) &&
+                    logText.contains(#""migrationItems""#) &&
+                    logText.contains(#""itemType":"PLUGINS""#) &&
+                    logText.contains(#""details":{"plugins":["#) &&
+                    logText.contains(#""marketplaceName":"team-marketplace""#) &&
+                    logText.contains(#""pluginNames":["asana","jira"]"#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "detectedCount": detectedItems.count,
+                    "detectStatus": detectStatus,
+                    "importStatus": importStatus,
+                    "importedItemCount": store.externalAgentImportedItemCount,
+                    "items": detectedItems.map { item in
+                        [
+                            "itemType": item.itemType,
+                            "description": item.description,
+                            "cwd": item.cwd ?? "",
+                            "details": item.details?.prettyJSONString ?? ""
+                        ] as [String: Any]
+                    },
+                    "runtimeCatalogErrors": store.runtimeCatalogErrors,
+                    "requestLogPreview": String(logText.prefix(1800))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -5958,6 +6047,111 @@ enum SmokeTestRunner {
                 })
             else:
                 send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeExternalAgentConfigAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_EXTERNAL_AGENT_CONFIG_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_notification(method, params=None):
+            sys.stdout.write(json.dumps({
+                "method": method,
+                "params": params or {},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def migration_items(params):
+            cwd = None
+            cwds = params.get("cwds") or []
+            if cwds:
+                cwd = cwds[0]
+            return [
+                {
+                    "itemType": "CONFIG",
+                    "description": "导入外部 Agent 的全局配置",
+                    "cwd": None,
+                    "details": None,
+                },
+                {
+                    "itemType": "PLUGINS",
+                    "description": "导入当前工作区支持的插件",
+                    "cwd": cwd,
+                    "details": {
+                        "plugins": [
+                            {
+                                "marketplaceName": "team-marketplace",
+                                "pluginNames": ["asana", "jira"],
+                            }
+                        ]
+                    },
+                },
+            ]
+
+        def empty_catalog(method):
+            if method in ("plugin/list", "plugin/installed"):
+                return {"marketplaces": [], "featuredPluginIds": [], "marketplaceLoadErrors": []}
+            if method == "plugin/share/list":
+                return {"data": [], "nextCursor": None}
+            if method == "skills/list":
+                return {"data": []}
+            if method == "config/read":
+                return {"config": {}, "layers": [], "origins": {}}
+            if method == "hooks/list":
+                return {"data": []}
+            if method == "mcpServerStatus/list":
+                return {"data": [], "nextCursor": None}
+            raise KeyError(method)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "externalAgentConfig/detect":
+                send_result(request_id, {"items": migration_items(params)})
+            elif method == "externalAgentConfig/import":
+                items = params.get("migrationItems") or []
+                if len(items) != 2:
+                    send_error(request_id, f"expected 2 migration items, got {len(items)}")
+                else:
+                    send_result(request_id, {})
+                    send_notification("externalAgentConfig/import/completed", {})
+            else:
+                try:
+                    send_result(request_id, empty_catalog(method))
+                except Exception:
+                    send_error(request_id, f"unsupported method {method}")
         """#
     }
 

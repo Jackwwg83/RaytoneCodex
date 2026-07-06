@@ -1476,6 +1476,50 @@ public struct CodexRuntimePermissionProfile: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexExternalAgentConfigDetectResult: Equatable, Sendable {
+    public var items: [CodexExternalAgentMigrationItem]
+
+    public init(items: [CodexExternalAgentMigrationItem]) {
+        self.items = items
+    }
+}
+
+public struct CodexExternalAgentConfigImportResult: Equatable, Sendable {
+    public init() {}
+}
+
+public struct CodexExternalAgentMigrationItem: Equatable, Sendable, Identifiable {
+    public var id: String {
+        [
+            itemType,
+            cwd ?? "home",
+            description,
+            details?.prettyJSONString ?? "none"
+        ].joined(separator: "|")
+    }
+
+    public var itemType: String
+    public var description: String
+    public var cwd: String?
+    public var details: JSONValue?
+
+    public init(itemType: String, description: String, cwd: String?, details: JSONValue?) {
+        self.itemType = itemType
+        self.description = description
+        self.cwd = cwd
+        self.details = details
+    }
+
+    public var jsonValue: JSONValue {
+        .object([
+            "itemType": .string(itemType),
+            "description": .string(description),
+            "cwd": cwd.map(JSONValue.string) ?? .null,
+            "details": details ?? .null
+        ])
+    }
+}
+
 public struct CodexAppServerOptions: Equatable, Sendable {
     public var workspaceURL: URL
     public var model: String?
@@ -1983,6 +2027,33 @@ public actor CodexAppServerClient {
         }
         let result = try await request(method: "config/read", params: .object(params))
         return Self.runtimeConfig(from: result)
+    }
+
+    public func detectExternalAgentConfig(
+        includeHome: Bool = true,
+        cwds: [String]? = nil
+    ) async throws -> CodexExternalAgentConfigDetectResult {
+        var params: [String: JSONValue] = [
+            "includeHome": .bool(includeHome)
+        ]
+        if let cwds {
+            params["cwds"] = .array(cwds.map(JSONValue.string))
+        }
+
+        let result = try await request(method: "externalAgentConfig/detect", params: .object(params))
+        return CodexExternalAgentConfigDetectResult(
+            items: result["items"]?.arrayValue?.compactMap(Self.externalAgentMigrationItem(from:)) ?? []
+        )
+    }
+
+    @discardableResult
+    public func importExternalAgentConfig(
+        items: [CodexExternalAgentMigrationItem]
+    ) async throws -> CodexExternalAgentConfigImportResult {
+        _ = try await request(method: "externalAgentConfig/import", params: .object([
+            "migrationItems": .array(items.map(\.jsonValue))
+        ]))
+        return CodexExternalAgentConfigImportResult()
     }
 
     public func writeConfigValue(keyPath: String, value: JSONValue, filePath: String? = nil) async throws {
@@ -3640,6 +3711,27 @@ public actor CodexAppServerClient {
         return CodexRuntimePermissionProfileCatalog(
             profiles: profiles.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending },
             nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    private static func externalAgentMigrationItem(from value: JSONValue) -> CodexExternalAgentMigrationItem? {
+        guard let itemType = value["itemType"]?.stringValue,
+              let description = value["description"]?.stringValue else {
+            return nil
+        }
+
+        let details: JSONValue?
+        if let rawDetails = value["details"], rawDetails != .null {
+            details = rawDetails
+        } else {
+            details = nil
+        }
+
+        return CodexExternalAgentMigrationItem(
+            itemType: itemType,
+            description: description,
+            cwd: value["cwd"]?.stringValue,
+            details: details
         )
     }
 

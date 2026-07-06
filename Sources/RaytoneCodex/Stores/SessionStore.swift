@@ -74,6 +74,10 @@ final class SessionStore: ObservableObject {
     @Published var mcpToolCallPreview: CodexMCPToolCallResult?
     @Published var mcpToolCallStatusText = "未调用"
     @Published var runtimeConfig: CodexRuntimeConfig?
+    @Published var externalAgentMigrationItems: [CodexExternalAgentMigrationItem] = []
+    @Published var externalAgentMigrationStatusText = "未检测"
+    @Published var externalAgentMigrationIsImporting = false
+    @Published var externalAgentImportedItemCount = 0
     @Published var desktopShowInMenuBar = true
     @Published var desktopShowBottomPanel = true
     @Published var desktopPreventSleepWhileRunning = true
@@ -2401,6 +2405,56 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "config/read：\(runtimeConfig?.layerCount ?? 0) 个配置层"
         } catch {
             runtimeCatalogStatusText = "config/read 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func detectExternalAgentConfig() async {
+        runtimeCatalogIsRefreshing = true
+        externalAgentMigrationStatusText = "正在调用 externalAgentConfig/detect…"
+        runtimeCatalogStatusText = externalAgentMigrationStatusText
+        runtimeCatalogErrors = []
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.detectExternalAgentConfig(includeHome: true, cwds: [workspacePath])
+            externalAgentMigrationItems = result.items
+            externalAgentMigrationStatusText = result.items.isEmpty
+                ? "externalAgentConfig/detect：未检测到可迁移项"
+                : "externalAgentConfig/detect：检测到 \(result.items.count) 项"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
+        } catch {
+            externalAgentMigrationItems = []
+            externalAgentMigrationStatusText = "externalAgentConfig/detect 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func importExternalAgentConfig(_ items: [CodexExternalAgentMigrationItem]? = nil) async {
+        let selectedItems = items ?? externalAgentMigrationItems
+        guard !selectedItems.isEmpty else {
+            externalAgentMigrationStatusText = "externalAgentConfig/import：没有可导入项"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        externalAgentMigrationIsImporting = true
+        externalAgentImportedItemCount = selectedItems.count
+        externalAgentMigrationStatusText = "正在调用 externalAgentConfig/import…"
+        runtimeCatalogStatusText = externalAgentMigrationStatusText
+        runtimeCatalogErrors = []
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.importExternalAgentConfig(items: selectedItems)
+            externalAgentMigrationStatusText = "externalAgentConfig/import：已提交 \(selectedItems.count) 项，等待完成通知"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
+        } catch {
+            externalAgentMigrationIsImporting = false
+            externalAgentMigrationStatusText = "externalAgentConfig/import 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
         runtimeCatalogIsRefreshing = false
@@ -5113,6 +5167,13 @@ final class SessionStore: ObservableObject {
             workspaceExecutionMode = status.status == "disabled" ? .local : .cloudPending
             runtimeCatalogStatusText = "remoteControl/status/changed：\(Self.remoteControlStatusDisplayName(status.status))"
             runtimeCatalogErrors = []
+        case "externalAgentConfig/import/completed":
+            externalAgentMigrationIsImporting = false
+            let countText = externalAgentImportedItemCount > 0 ? "\(externalAgentImportedItemCount) 项" : "所选项目"
+            externalAgentMigrationStatusText = "externalAgentConfig/import/completed：已完成 \(countText)"
+            runtimeCatalogStatusText = externalAgentMigrationStatusText
+            runtimeCatalogErrors = []
+            Task { await refreshRuntimeCatalog(forceReloadSkills: true) }
         case "fs/changed":
             handleFileSystemChanged(params)
         case "command/exec/outputDelta":

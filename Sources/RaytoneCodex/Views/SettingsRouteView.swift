@@ -1177,6 +1177,8 @@ struct SettingsRouteView: View {
                 }
             }
 
+            externalAgentMigrationSection
+
             SettingsSection(title: "app-server 读取结果") {
                 SettingsCard {
                     configMetric("模型", store.runtimeConfig?.model ?? "未设置")
@@ -1845,6 +1847,88 @@ struct SettingsRouteView: View {
                                 }
                                 metricRow("快照提示", "\(app.screenshotPrompts.count) 条")
                                 metricRow("插件", app.pluginDisplayNames.isEmpty ? "未关联" : app.pluginDisplayNames.joined(separator: "、"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var externalAgentMigrationSection: some View {
+        SettingsSection(title: "外部 Agent 配置迁移") {
+            VStack(spacing: 10) {
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 28, height: 28)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("从外部 Agent 导入 Codex 配置")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text("调用 Codex app-server 的 externalAgentConfig/detect 与 externalAgentConfig/import，迁移配置、技能、插件、MCP、钩子、命令和历史会话。")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            statusBadge(store.externalAgentMigrationItems.isEmpty ? "未检测" : "\(store.externalAgentMigrationItems.count) 项", ok: !store.externalAgentMigrationItems.isEmpty)
+                        }
+
+                        Text(store.externalAgentMigrationStatusText)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(2)
+
+                        HStack(spacing: 8) {
+                            Button("检测可迁移项") {
+                                Task { await store.detectExternalAgentConfig() }
+                            }
+                            .buttonStyle(ChipButtonStyle(prominent: true))
+                            .disabled(store.runtimeCatalogIsRefreshing || store.externalAgentMigrationIsImporting)
+
+                            Button("导入全部") {
+                                Task { await store.importExternalAgentConfig() }
+                            }
+                            .buttonStyle(ChipButtonStyle())
+                            .disabled(store.externalAgentMigrationItems.isEmpty || store.externalAgentMigrationIsImporting)
+                        }
+                    }
+                }
+
+                if store.externalAgentMigrationItems.isEmpty {
+                    emptySettingsState(symbol: "tray", title: "没有可迁移项", detail: "点击“检测可迁移项”后，Codex 会扫描用户目录和当前工作区。")
+                } else {
+                    ForEach(store.externalAgentMigrationItems) { item in
+                        SettingsCard {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: externalAgentItemSymbol(item))
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(externalAgentItemTitle(item))
+                                        .font(.system(size: 12.5, weight: .semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Text(item.description)
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(externalAgentItemDetail(item))
+                                        .font(Theme.mono(10.5))
+                                        .foregroundStyle(Theme.textTertiary)
+                                        .lineLimit(2)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer(minLength: 0)
+                                Button("导入") {
+                                    Task { await store.importExternalAgentConfig([item]) }
+                                }
+                                .buttonStyle(ChipButtonStyle())
+                                .disabled(store.externalAgentMigrationIsImporting)
                             }
                         }
                     }
@@ -2542,6 +2626,61 @@ struct SettingsRouteView: View {
     private func optionalBoolText(_ value: Bool?) -> String {
         guard let value else { return "未配置" }
         return value ? "允许" : "禁止"
+    }
+
+    private func externalAgentItemTitle(_ item: CodexExternalAgentMigrationItem) -> String {
+        switch item.itemType {
+        case "CONFIG": "配置文件"
+        case "SKILLS": "技能"
+        case "AGENTS_MD": "AGENTS.md 指令"
+        case "PLUGINS": "插件"
+        case "MCP_SERVER_CONFIG": "MCP 服务器配置"
+        case "SUBAGENTS": "子代理"
+        case "HOOKS": "钩子"
+        case "COMMANDS": "命令"
+        case "SESSIONS": "历史会话"
+        default: item.itemType
+        }
+    }
+
+    private func externalAgentItemSymbol(_ item: CodexExternalAgentMigrationItem) -> String {
+        switch item.itemType {
+        case "CONFIG": "doc.text"
+        case "SKILLS": "sparkles"
+        case "AGENTS_MD": "text.page"
+        case "PLUGINS": "puzzlepiece.extension"
+        case "MCP_SERVER_CONFIG": "point.3.connected.trianglepath.dotted"
+        case "SUBAGENTS": "person.2"
+        case "HOOKS": "link"
+        case "COMMANDS": "terminal"
+        case "SESSIONS": "clock.arrow.circlepath"
+        default: "shippingbox"
+        }
+    }
+
+    private func externalAgentItemDetail(_ item: CodexExternalAgentMigrationItem) -> String {
+        var parts = [
+            item.cwd?.isEmpty == false ? "工作区 \(Project.abbreviate(item.cwd ?? ""))" : "用户目录",
+            "类型 \(item.itemType)"
+        ]
+        if let details = item.details {
+            let detailParts = [
+                details["plugins"]?.arrayValue?.isEmpty == false ? "插件 \(externalAgentPluginCount(details)) 个" : nil,
+                details["sessions"]?.arrayValue?.isEmpty == false ? "会话 \(details["sessions"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["mcpServers"]?.arrayValue?.isEmpty == false ? "MCP \(details["mcpServers"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["hooks"]?.arrayValue?.isEmpty == false ? "钩子 \(details["hooks"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["subagents"]?.arrayValue?.isEmpty == false ? "子代理 \(details["subagents"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["commands"]?.arrayValue?.isEmpty == false ? "命令 \(details["commands"]?.arrayValue?.count ?? 0) 个" : nil
+            ].compactMap { $0 }
+            parts.append(contentsOf: detailParts)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func externalAgentPluginCount(_ details: JSONValue) -> Int {
+        details["plugins"]?.arrayValue?.reduce(0) { total, plugin in
+            total + (plugin["pluginNames"]?.arrayValue?.count ?? 1)
+        } ?? 0
     }
 
     private func remoteControlName(_ value: String?) -> String {
