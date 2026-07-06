@@ -837,6 +837,13 @@ private struct SideChatToolPanel: View {
                 HStack {
                     Spacer(minLength: 0)
                     Button {
+                        Task { await store.injectSideChatContext() }
+                    } label: {
+                        Label("注入上下文", systemImage: "text.badge.plus")
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.isRunning || store.sideChatDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button {
                         Task { await store.sendSideChatMessage() }
                     } label: {
                         Label(store.isRunning ? "继续发送" : "发送", systemImage: "arrow.up")

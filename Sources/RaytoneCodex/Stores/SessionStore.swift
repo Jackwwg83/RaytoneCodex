@@ -670,6 +670,57 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func injectSideChatContext(_ message: String? = nil) async {
+        let source = message ?? sideChatDraft
+        let trimmedMessage = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else { return }
+
+        if message == nil {
+            sideChatDraft = ""
+        }
+
+        sideChatStatusText = "正在通过 thread/inject_items 注入上下文…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
+            let injectedText = """
+            [侧边上下文]
+            \(trimmedMessage)
+            """
+            try await client.injectThreadItems(
+                threadID: threadID,
+                items: [
+                    .object([
+                        "type": .string("message"),
+                        "role": .string("user"),
+                        "content": .array([
+                            .object([
+                                "type": .string("input_text"),
+                                "text": .string(injectedText)
+                            ])
+                        ])
+                    ])
+                ]
+            )
+            sideChatStatusText = "thread/inject_items：已注入上下文"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .info,
+                    text: "已通过 thread/inject_items 注入侧边上下文，不会启动新回复。"
+                ))))
+                thread.updatedAt = Date()
+            }
+        } catch {
+            sideChatStatusText = "thread/inject_items 失败：\(error.localizedDescription)"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: sideChatStatusText
+                ))))
+            }
+        }
+    }
+
     private func runAgentPrompt(
         _ runtimePrompt: String,
         displayedPrompt: String? = nil,

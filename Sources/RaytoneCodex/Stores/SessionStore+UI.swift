@@ -275,6 +275,11 @@ extension SessionStore {
             : "\(loadedRuntimeThreadIDs.count) 个 · \(selectedThreadLoaded ? "当前线程已加载" : "当前线程未加载")"
         let threadMetadataActive = runtimeThreadMetadataStatusText.hasPrefix("thread/metadata/update")
         let threadShellActive = threadShellCommandStatusText.hasPrefix("thread/shellCommand")
+        let sideChatRuntimeActive = sideChatStatusText.hasPrefix("thread/inject_items") ||
+            sideChatStatusText.hasPrefix("正在通过 thread/inject_items") ||
+            sideChatStatusText.hasPrefix("正在通过 turn/") ||
+            sideChatStatusText.hasPrefix("已追加") ||
+            sideChatStatusText == "Codex 已回复"
 
         return [
             EnvironmentSourceFact(
@@ -297,6 +302,14 @@ extension SessionStore {
                 detail: threadShellCommandStatusText,
                 source: "thread/shellCommand",
                 active: threadShellActive
+            ),
+            EnvironmentSourceFact(
+                symbol: "plus.bubble",
+                title: "侧边聊天",
+                detail: sideChatStatusText,
+                source: sideChatStatusText.hasPrefix("thread/inject_items") ||
+                    sideChatStatusText.hasPrefix("正在通过 thread/inject_items") ? "thread/inject_items" : "turn/start|turn/steer",
+                active: sideChatRuntimeActive
             ),
             EnvironmentSourceFact(
                 symbol: "command",

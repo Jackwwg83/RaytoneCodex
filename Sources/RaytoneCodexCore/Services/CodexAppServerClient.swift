@@ -2345,6 +2345,13 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func injectThreadItems(threadID: String, items: [JSONValue]) async throws {
+        _ = try await request(method: "thread/inject_items", params: .object([
+            "threadId": .string(threadID),
+            "items": .array(items)
+        ]))
+    }
+
     public func updateThreadPersonality(threadID: String, personality: CodexPersonality) async throws {
         _ = try await request(method: "thread/settings/update", params: .object([
             "threadId": .string(threadID),

@@ -140,6 +140,8 @@ enum SmokeTestRunner {
             runThreadShellCommandSmoke()
         } else if CommandLine.arguments.contains("--side-chat-smoke-test") {
             runSideChatSmoke()
+        } else if CommandLine.arguments.contains("--side-chat-injection-smoke-test") {
+            runSideChatInjectionSmoke()
         } else if CommandLine.arguments.contains("--environment-smoke-test") {
             runEnvironmentSmoke()
         } else if CommandLine.arguments.contains("--slash-smoke-test") {
@@ -4931,6 +4933,141 @@ enum SmokeTestRunner {
                 "agentMessages": agentMessages
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSideChatInjectionSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexSideChatInjectionSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexSideChatInjectionCodexHome-\(UUID().uuidString)", isDirectory: true)
+            let injectedMarker = "Raytone injected side context \(UUID().uuidString.prefix(8))"
+            let turnMarker = "Raytone side injection reply \(UUID().uuidString.prefix(8))"
+            let injectedContext = "请在下一轮记住这个侧边上下文：\(injectedMarker)"
+            let turnPrompt = "Reply exactly: \(turnMarker)"
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "side chat injection smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+                mockServer = try startMockResponsesServer(message: turnMarker)
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "SideChatInjectionSmoke"
+                }
+
+                await store.refreshRuntime()
+                store.sideChatDraft = injectedContext
+                await store.injectSideChatContext()
+
+                let injectionStatus = store.sideChatStatusText
+                let itemsAfterInjection = store.selectedThread.items
+                let sourceFactsAfterInjection = store.environmentSourceFacts
+                let injectionSourceFactActive = sourceFactsAfterInjection.contains { fact in
+                    fact.source == "thread/inject_items" && fact.active
+                }
+
+                store.prompt = turnPrompt
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(30)
+                while store.isRunning && Date() < deadline {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let items = store.selectedThread.items
+                let userMessages = items.compactMap { item -> String? in
+                    if case let .userMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let agentMessages = items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let notices = items.compactMap { item -> String? in
+                    if case let .notice(notice) = item.kind { return notice.text }
+                    return nil
+                }
+                let commands = items.compactMap { item -> CommandRun? in
+                    if case let .command(run) = item.kind { return run }
+                    return nil
+                }
+                let usedExecFallback = commands.contains { run in
+                    run.command.contains(" codex exec ") || run.command.contains("/codex exec ")
+                }
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
+                let appServerThreadID = store.selectedThread.appServerThreadID ?? ""
+
+                await store.stopAppServerForTesting()
+                mockServer?.stop()
+
+                let ok = !appServerThreadID.isEmpty &&
+                    !store.isRunning &&
+                    !usedExecFallback &&
+                    injectionStatus.hasPrefix("thread/inject_items") &&
+                    itemsAfterInjection.count == 1 &&
+                    injectionSourceFactActive &&
+                    userMessages == [turnPrompt] &&
+                    agentMessages == [turnMarker] &&
+                    notices.contains { $0.contains("thread/inject_items") } &&
+                    requestLog.contains(injectedMarker) &&
+                    requestLog.contains(turnPrompt) &&
+                    requestLog.contains("/v1/responses")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "appServerThreadID": appServerThreadID,
+                    "injectedMarker": injectedMarker,
+                    "turnMarker": turnMarker,
+                    "injectionStatus": injectionStatus,
+                    "injectionSourceFactActive": injectionSourceFactActive,
+                    "itemsAfterInjection": itemsAfterInjection.count,
+                    "usedExecFallback": usedExecFallback,
+                    "userMessages": userMessages,
+                    "agentMessages": agentMessages,
+                    "notices": notices,
+                    "requestContainsInjectedContext": requestLog.contains(injectedMarker),
+                    "requestContainsTurnPrompt": requestLog.contains(turnPrompt),
+                    "mockRequestLogPreview": String(requestLog.prefix(1600)),
+                    "source": "thread/inject_items"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
