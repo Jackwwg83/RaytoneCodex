@@ -1833,6 +1833,15 @@ case "$MODE" in
       --provider-sidecar-smoke-test \
       --workspace "$ROOT_DIR"
     ;;
+  --provider-onboarding-smoke|provider-onboarding-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      RAYTONE_PROXY="$RAYTONE_PROXY_BINARY" \
+      "$BUILD_BINARY" \
+      --provider-onboarding-smoke-test \
+      --workspace "$ROOT_DIR"
+    ;;
   --reasoning-config-smoke|reasoning-config-smoke)
     /usr/bin/env \
       RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
@@ -1958,7 +1967,7 @@ case "$MODE" in
     run_package_audit
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--tools-smoke|--terminal-stream-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--connection-recovery-smoke|--account-api-key-smoke|--add-credits-nudge-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--runtime-pages-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-controls-smoke|--integration-pages-smoke|--project-switch-smoke|--workspace-switch-smoke|--remote-control-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--tools-smoke|--terminal-stream-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--connection-recovery-smoke|--account-api-key-smoke|--add-credits-nudge-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--runtime-pages-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-controls-smoke|--integration-pages-smoke|--project-switch-smoke|--workspace-switch-smoke|--remote-control-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--provider-onboarding-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
     exit 2
     ;;
 esac

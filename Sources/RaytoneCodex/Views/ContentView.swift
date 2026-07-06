@@ -19,6 +19,11 @@ struct ContentView: View {
             }
         }
         .background(Theme.window)
+        .sheet(isPresented: $store.providerOnboardingPresented) {
+            ProviderOnboardingView(store: store)
+                .frame(width: 760, height: 560)
+                .preferredColorScheme(store.preferredColorScheme)
+        }
         .onAppear {
             store.installSampleWorkspaceIfNeeded()
         }

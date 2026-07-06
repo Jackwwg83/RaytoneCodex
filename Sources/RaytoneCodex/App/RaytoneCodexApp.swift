@@ -21,6 +21,7 @@ struct RaytoneCodexApp: App {
                         await sessionStore.refreshNewThreadHeroRuntime()
                     }
                     await sessionStore.refreshRuntimeThreads()
+                    sessionStore.evaluateProviderOnboarding()
                 }
         }
         .windowStyle(.hiddenTitleBar)

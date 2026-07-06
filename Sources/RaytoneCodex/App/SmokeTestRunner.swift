@@ -86,6 +86,8 @@ enum SmokeTestRunner {
             runModelConfigSmoke()
         } else if CommandLine.arguments.contains("--provider-sidecar-smoke-test") {
             runProviderSidecarSmoke()
+        } else if CommandLine.arguments.contains("--provider-onboarding-smoke-test") {
+            runProviderOnboardingSmoke()
         } else if CommandLine.arguments.contains("--reasoning-config-smoke-test") {
             runReasoningConfigSmoke()
         } else if CommandLine.arguments.contains("--instructions-config-smoke-test") {
@@ -2231,6 +2233,149 @@ enum SmokeTestRunner {
                     "codexHome": codexHome.path,
                     "providerID": providerID,
                     "status": store.providerConnectionStatusText,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runProviderOnboardingSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+        let providerID = "onboarding-\(UUID().uuidString.prefix(8))"
+        let model = "onboarding-model"
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            let codexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexProviderOnboardingSmoke-\(UUID().uuidString)", isDirectory: true)
+            let server: MockResponsesServer
+
+            do {
+                try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                server = try startMockModelsServer(models: [model])
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "providerID": providerID,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+
+            let baseURL = "\(server.baseURL)/v1"
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+            store.providers.append(RaytoneProviderConfiguration(
+                id: providerID,
+                displayName: "Onboarding Provider",
+                baseURL: baseURL,
+                model: model,
+                models: [model],
+                kind: .chatCompletionsSidecar
+            ))
+
+            do {
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+                store.resetProviderOnboardingForTesting()
+                store.evaluateProviderOnboarding(force: true)
+                let initiallyPresented = store.providerOnboardingPresented
+
+                let completed = await store.completeProviderOnboarding(
+                    providerID: providerID,
+                    apiKey: "raytone-onboarding-key",
+                    baseURL: baseURL,
+                    model: model
+                )
+                let savedKey = try RaytoneKeychainService.readPassword(account: providerID)
+                store.evaluateProviderOnboarding()
+                let presentedAfterCompletion = store.providerOnboardingPresented
+                let codexConfigText = (try? String(
+                    contentsOfFile: store.providerConnectionCodexConfigPath,
+                    encoding: .utf8
+                )) ?? ""
+                let proxyConfigText = (try? String(
+                    contentsOfFile: store.providerConnectionProxyConfigPath,
+                    encoding: .utf8
+                )) ?? ""
+                let persistedConfigURL = codexHome.appendingPathComponent("config.toml")
+                let persistedConfigText = (try? String(contentsOf: persistedConfigURL, encoding: .utf8)) ?? ""
+                let requestLog = (try? String(contentsOf: server.requestLogURL, encoding: .utf8)) ?? ""
+                let upstreamVerified = requestLog.contains("\"path\":\"/v1/models\"") ||
+                    requestLog.contains("\"path\":\"\\/v1\\/models\"")
+                let ok = initiallyPresented &&
+                    completed &&
+                    !presentedAfterCompletion &&
+                    savedKey == "raytone-onboarding-key" &&
+                    store.selectedProviderID == providerID &&
+                    store.providerOnboardingStatusText.contains("已完成") &&
+                    store.providerConnectionStatusText.contains("上游已验证") &&
+                    store.providerConnectionBaseURL.contains("127.0.0.1") &&
+                    codexConfigText.contains("model_provider = \"raytone-\(providerID)\"") &&
+                    codexConfigText.contains("model = \"\(model)\"") &&
+                    proxyConfigText.contains("current_provider = \"\(providerID)\"") &&
+                    persistedConfigText.contains("selected_provider_id") &&
+                    persistedConfigText.contains(providerID) &&
+                    upstreamVerified
+
+                let onboardingStatus = store.providerOnboardingStatusText
+                let connectionStatus = store.providerConnectionStatusText
+                let sidecarStatus = store.sidecarStatusText
+                await store.stopAppServerForTesting()
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+                store.resetProviderOnboardingForTesting()
+                let cleanupStatus = store.providerOnboardingStatusText
+                server.stop()
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "providerID": providerID,
+                    "baseURL": baseURL,
+                    "model": model,
+                    "initiallyPresented": initiallyPresented,
+                    "completed": completed,
+                    "presentedAfterCompletion": presentedAfterCompletion,
+                    "savedKey": "present",
+                    "status": onboardingStatus,
+                    "cleanupStatus": cleanupStatus,
+                    "connectionStatus": connectionStatus,
+                    "sidecar": sidecarStatus,
+                    "codexConfigPath": store.providerConnectionCodexConfigPath,
+                    "proxyConfigPath": store.providerConnectionProxyConfigPath,
+                    "persistedConfigPath": persistedConfigURL.path,
+                    "upstreamVerified": upstreamVerified,
+                    "requestLog": requestLog,
+                    "codexConfigText": codexConfigText,
+                    "proxyConfigText": proxyConfigText,
+                    "persistedConfigText": persistedConfigText
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store.stopAppServerForTesting()
+                try? RaytoneKeychainService.deletePassword(account: providerID)
+                store.resetProviderOnboardingForTesting()
+                server.stop()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHome": codexHome.path,
+                    "providerID": providerID,
+                    "status": store.providerOnboardingStatusText,
+                    "connectionStatus": store.providerConnectionStatusText,
                     "error": error.localizedDescription
                 ])
                 exit(1)

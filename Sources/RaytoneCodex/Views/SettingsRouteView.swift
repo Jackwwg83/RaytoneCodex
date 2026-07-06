@@ -454,7 +454,14 @@ struct SettingsRouteView: View {
 
     private var modelsProvidersPane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            paneTitle("模型与提供方", subtitle: "选择 Codex 使用的模型提供方。Chat Completions 提供方会通过本地 raytone-proxy 转换为 Responses。")
+            HStack(alignment: .top) {
+                paneTitle("模型与提供方", subtitle: "选择 Codex 使用的模型提供方。Chat Completions 提供方会通过本地 raytone-proxy 转换为 Responses。")
+                Spacer(minLength: 0)
+                Button("打开向导") {
+                    store.evaluateProviderOnboarding(force: true)
+                }
+                .buttonStyle(ChipButtonStyle())
+            }
 
             HStack(alignment: .top, spacing: 16) {
                 SettingsCard {

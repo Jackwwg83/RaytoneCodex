@@ -135,6 +135,8 @@ final class SessionStore: ObservableObject {
     @Published var providerConnectionProxyConfigPath = ""
     @Published var providerUsage: RaytoneProxyUsage?
     @Published var providerUsageStatusText = "未读取"
+    @Published var providerOnboardingPresented = false
+    @Published var providerOnboardingStatusText = "未开始"
     @Published var addCreditsNudgeStatusText = "未发送"
     @Published var modelProviderCapabilities: CodexModelProviderCapabilities?
     @Published var modelProviderCapabilitiesStatusText = "未读取"
@@ -155,6 +157,7 @@ final class SessionStore: ObservableObject {
     private static let readOnlyPermissionsProfile = ":read-only"
     private static let workspacePermissionsProfile = ":workspace"
     private static let dangerFullAccessPermissionsProfile = ":danger-full-access"
+    private static let providerOnboardingCompletedKey = "RaytoneCodex.providerOnboardingCompleted.v1"
 
     nonisolated static var sampleWorkspaceEnabled: Bool {
         let environment = ProcessInfo.processInfo.environment
@@ -311,6 +314,10 @@ final class SessionStore: ObservableObject {
 
     var selectedProvider: RaytoneProviderConfiguration {
         providers.first { $0.id == selectedProviderID } ?? providers[0]
+    }
+
+    var sidecarProviders: [RaytoneProviderConfiguration] {
+        providers.filter(\.usesSidecar)
     }
 
     var modelDisplayName: String {
@@ -4652,6 +4659,84 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = providerConnectionStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    func evaluateProviderOnboarding(force: Bool = false) {
+        guard !Self.sampleWorkspaceEnabled || force else {
+            providerOnboardingPresented = false
+            return
+        }
+        guard !sidecarProviders.isEmpty else {
+            providerOnboardingPresented = false
+            return
+        }
+        if force {
+            providerOnboardingPresented = true
+            providerOnboardingStatusText = "请选择模型提供方"
+            return
+        }
+        guard !UserDefaults.standard.bool(forKey: Self.providerOnboardingCompletedKey) else {
+            providerOnboardingPresented = false
+            return
+        }
+        let hasThirdPartyKey = sidecarProviders.contains { hasProviderAPIKey($0) }
+        providerOnboardingPresented = !hasThirdPartyKey
+        providerOnboardingStatusText = providerOnboardingPresented ? "请选择模型提供方" : "已检测到模型提供方密钥"
+    }
+
+    func dismissProviderOnboarding() {
+        UserDefaults.standard.set(true, forKey: Self.providerOnboardingCompletedKey)
+        providerOnboardingPresented = false
+        providerOnboardingStatusText = "已跳过首启向导，可在设置中继续配置"
+    }
+
+    func resetProviderOnboardingForTesting() {
+        UserDefaults.standard.removeObject(forKey: Self.providerOnboardingCompletedKey)
+        providerOnboardingPresented = false
+        providerOnboardingStatusText = "未开始"
+    }
+
+    func completeProviderOnboarding(
+        providerID: String,
+        apiKey: String,
+        baseURL: String,
+        model selectedModel: String
+    ) async -> Bool {
+        guard let provider = providers.first(where: { $0.id == providerID }),
+              provider.usesSidecar else {
+            providerOnboardingStatusText = "请选择一个第三方 Provider"
+            return false
+        }
+
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedKey.isEmpty {
+            do {
+                try saveProviderAPIKey(trimmedKey, providerID: providerID)
+            } catch {
+                providerOnboardingStatusText = "密钥保存失败：\(error.localizedDescription)"
+                return false
+            }
+        } else if !hasProviderAPIKey(provider) {
+            providerOnboardingStatusText = "\(provider.displayName) 需要接口密钥"
+            return false
+        }
+
+        providerOnboardingStatusText = "正在保存端点并测试连接…"
+        await saveProviderEndpoint(providerID: providerID, baseURL: baseURL, model: selectedModel)
+        await testProviderConnection(providerID: providerID)
+
+        let connected = providerConnectionStatusText.contains("上游已验证") &&
+            !providerConnectionBaseURL.isEmpty &&
+            !providerConnectionProxyConfigPath.isEmpty
+        if connected {
+            UserDefaults.standard.set(true, forKey: Self.providerOnboardingCompletedKey)
+            providerOnboardingPresented = false
+            providerOnboardingStatusText = "已完成：\(selectedProvider.displayName)"
+            return true
+        }
+
+        providerOnboardingStatusText = providerConnectionStatusText
+        return false
     }
 
     private func persistRuntimeProviderSettings(statusName: String) async {
