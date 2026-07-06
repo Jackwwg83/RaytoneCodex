@@ -136,6 +136,8 @@ enum SmokeTestRunner {
             runLoadedThreadsSmoke()
         } else if CommandLine.arguments.contains("--thread-metadata-smoke-test") {
             runThreadMetadataSmoke()
+        } else if CommandLine.arguments.contains("--thread-shell-command-smoke-test") {
+            runThreadShellCommandSmoke()
         } else if CommandLine.arguments.contains("--side-chat-smoke-test") {
             runSideChatSmoke()
         } else if CommandLine.arguments.contains("--environment-smoke-test") {
@@ -4739,6 +4741,121 @@ enum SmokeTestRunner {
                     "agentMessages": agentMessages,
                     "mockRequestLogPreview": String(requestLog.prefix(1200)),
                     "source": "thread/metadata/update"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runThreadShellCommandSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadShellSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadShellCodexHome-\(UUID().uuidString)", isDirectory: true)
+            let marker = "Raytone thread shell smoke OK \(UUID().uuidString.prefix(8))"
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "thread shell smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+                mockServer = try startMockResponsesServer(message: "unused")
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "ThreadShellSmoke"
+                }
+
+                await store.refreshRuntime()
+                store.terminalCommand = "printf '\(marker)\\n'"
+                await store.runThreadShellCommandFromTerminal()
+
+                let deadline = Date().addingTimeInterval(15)
+                while Date() < deadline {
+                    let hasOutput = commandRuns(in: store.selectedThread.items).contains { run in
+                        run.command.contains(marker) || run.output.contains(marker)
+                    }
+                    if hasOutput && !store.isRunning {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let commandRuns = commandRuns(in: store.selectedThread.items)
+                let matchingRun = commandRuns.first { run in
+                    run.command.contains(marker) || run.output.contains(marker)
+                }
+                let sourceFacts = store.environmentSourceFacts.map { fact in
+                    [
+                        "title": fact.title,
+                        "source": fact.source,
+                        "detail": fact.detail,
+                        "active": fact.active
+                    ] as [String: Any]
+                }
+                let threadShellSourceFactActive = store.environmentSourceFacts.contains { fact in
+                    fact.source == "thread/shellCommand" && fact.active
+                }
+
+                await store.stopAppServerForTesting()
+                mockServer?.stop()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    store.selectedThread.appServerThreadID?.isEmpty == false &&
+                    matchingRun?.output.contains(marker) == true &&
+                    matchingRun?.exitCode == 0 &&
+                    store.threadShellCommandStatusText.hasPrefix("thread/shellCommand") &&
+                    threadShellSourceFactActive &&
+                    store.terminalRuns.isEmpty
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
+                    "threadShellStatus": store.threadShellCommandStatusText,
+                    "threadShellSourceFactActive": threadShellSourceFactActive,
+                    "terminalRunCount": store.terminalRuns.count,
+                    "commandRuns": commandRuns.map { run in
+                        [
+                            "command": run.command,
+                            "output": run.output,
+                            "exitCode": run.exitCode.map { Int($0) as Any } ?? NSNull()
+                        ] as [String: Any]
+                    },
+                    "environmentSourceFacts": sourceFacts,
+                    "source": "thread/shellCommand"
                 ])
                 exit(ok ? 0 : 1)
             } catch {

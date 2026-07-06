@@ -57,6 +57,7 @@ final class SessionStore: ObservableObject {
     @Published var terminalRuns: [TerminalCommandRecord] = []
     @Published var terminalIsRunning = false
     @Published var terminalResizeStatusText = "30×100"
+    @Published var threadShellCommandStatusText = "未发送"
     @Published var sideChatDraft = ""
     @Published var sideChatStatusText = "未发送"
     @Published var runtimePlugins: [CodexRuntimePlugin] = []
@@ -2253,6 +2254,35 @@ final class SessionStore: ObservableObject {
 
         if activeTerminalRunID == recordID {
             resetActiveTerminal()
+        }
+    }
+
+    func runThreadShellCommandFromTerminal() async {
+        let command = terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return }
+        guard !terminalIsRunning else {
+            threadShellCommandStatusText = "当前终端命令运行中，暂不能提交线程 Shell"
+            return
+        }
+
+        threadShellCommandStatusText = "正在调用 thread/shellCommand…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
+            try await client.runThreadShellCommand(threadID: threadID, command: command)
+            threadShellCommandStatusText = "thread/shellCommand：已提交"
+            updateSelectedThread { thread in
+                thread.activeGoal = ActiveGoal(title: "运行 shell：\(command)", startedAt: Date(), runtimeBacked: true)
+                thread.updatedAt = Date()
+            }
+        } catch {
+            threadShellCommandStatusText = "thread/shellCommand 失败：\(error.localizedDescription)"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: threadShellCommandStatusText
+                ))))
+            }
         }
     }
 
@@ -5531,6 +5561,10 @@ final class SessionStore: ObservableObject {
                 sideChatStatusText.hasPrefix("正在通过 turn/start") ||
                 sideChatStatusText.hasPrefix("正在通过 turn/steer") {
                 sideChatStatusText = "Codex 已回复"
+            }
+            if threadShellCommandStatusText.hasPrefix("thread/shellCommand：已提交") ||
+                threadShellCommandStatusText.hasPrefix("正在调用 thread/shellCommand") {
+                threadShellCommandStatusText = "thread/shellCommand：已完成"
             }
         case "turn/plan/updated":
             updateProgressSteps(params?["plan"]?.arrayValue ?? [])

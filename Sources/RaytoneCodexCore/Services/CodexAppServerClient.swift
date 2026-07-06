@@ -2338,6 +2338,13 @@ public actor CodexAppServerClient {
         return summary
     }
 
+    public func runThreadShellCommand(threadID: String, command: String) async throws {
+        _ = try await request(method: "thread/shellCommand", params: .object([
+            "threadId": .string(threadID),
+            "command": .string(command)
+        ]))
+    }
+
     public func updateThreadPersonality(threadID: String, personality: CodexPersonality) async throws {
         _ = try await request(method: "thread/settings/update", params: .object([
             "threadId": .string(threadID),

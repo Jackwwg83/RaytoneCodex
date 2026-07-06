@@ -460,9 +460,22 @@ private struct TerminalToolPanel: View {
                     }
                     .buttonStyle(GhostIconButtonStyle(size: 30))
                     .help(store.terminalIsRunning ? "停止" : "运行")
+                    Button {
+                        Task { await store.runThreadShellCommandFromTerminal() }
+                    } label: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 30))
+                    .disabled(store.terminalIsRunning || store.terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("作为当前 Codex 线程 Shell 运行")
                 }
 
                 TerminalSizeControls(store: store)
+                Text(store.threadShellCommandStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
             .padding(12)
             .overlay(alignment: .bottom) { Hairline() }
@@ -584,8 +597,21 @@ struct BottomTerminalToolPanel: View {
                     }
                     .buttonStyle(GhostIconButtonStyle(size: 30))
                     .help(store.terminalIsRunning ? "停止" : "运行")
+                    Button {
+                        Task { await store.runThreadShellCommandFromTerminal() }
+                    } label: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 30))
+                    .disabled(store.terminalIsRunning || store.terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("作为当前 Codex 线程 Shell 运行")
                 }
                 TerminalSizeControls(store: store)
+                Text(store.threadShellCommandStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
