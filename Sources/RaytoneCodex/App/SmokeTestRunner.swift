@@ -29,6 +29,8 @@ enum SmokeTestRunner {
             runMCPToolSmoke()
         } else if CommandLine.arguments.contains("--mcp-elicitation-smoke-test") {
             runMCPElicitationSmoke()
+        } else if CommandLine.arguments.contains("--tool-user-input-smoke-test") {
+            runToolUserInputSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--skill-read-smoke-test") {
@@ -1499,6 +1501,106 @@ enum SmokeTestRunner {
                     "elicitationCount": elicitationRequests.count,
                     "defaultDraft": defaultDraft,
                     "accepted": accepted,
+                    "isRunning": store.isRunning,
+                    "requestLogPreview": String(logText.prefix(2200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runToolUserInputSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexToolUserInputSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeToolUserInputAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-tool-user-input"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_TOOL_USER_INPUT_LOG": logURL.path
+                ]
+                store.prompt = "触发工具补充信息"
+
+                await store.runPrompt()
+                let requestItemID = await waitForToolUserInput(in: store)
+                if let requestItemID {
+                    store.selectToolUserInputOption(
+                        itemID: requestItemID,
+                        questionID: "q_mode",
+                        label: "继续"
+                    )
+                    store.updateToolUserInputDraft(
+                        itemID: requestItemID,
+                        questionID: "q_secret",
+                        draft: "smoke-secret"
+                    )
+                    store.submitToolUserInput(itemID: requestItemID)
+                }
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""toolUserInputResponse""#) &&
+                        logText.contains(#""smoke-secret""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let requests = store.selectedThread.items.compactMap { item -> ToolUserInputRequest? in
+                    if case let .toolUserInput(request) = item.kind {
+                        return request
+                    }
+                    return nil
+                }
+                let submitted = requests.contains { request in
+                    request.status == .submitted &&
+                        request.questions.count == 2 &&
+                        request.questions.contains { $0.id == "q_secret" && $0.isSecret }
+                }
+                let ok = requestItemID != nil &&
+                    submitted &&
+                    logText.contains(#""method":"turn/start""#) &&
+                    logText.contains(#""method":"item/tool/requestUserInput""#) &&
+                    logText.contains(#""toolUserInputResponse""#) &&
+                    logText.contains(#""q_mode":{"answers":["继续"]}"#) &&
+                    logText.contains(#""q_secret":{"answers":["smoke-secret"]}"#)
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "transcriptItemCount": store.selectedThread.items.count,
+                    "toolUserInputCount": requests.count,
+                    "submitted": submitted,
                     "isRunning": store.isRunning,
                     "requestLogPreview": String(logText.prefix(2200))
                 ])
@@ -5019,6 +5121,23 @@ enum SmokeTestRunner {
         while Date() < deadline {
             if let item = store.selectedThread.items.first(where: { item in
                 if case .mcpElicitation = item.kind {
+                    return true
+                }
+                return false
+            }) {
+                return item.id
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return nil
+    }
+
+    @MainActor
+    private static func waitForToolUserInput(in store: SessionStore, timeout: TimeInterval = 8) async -> UUID? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let item = store.selectedThread.items.first(where: { item in
+                if case .toolUserInput = item.kind {
                     return true
                 }
                 return false
@@ -8713,6 +8832,127 @@ enum SmokeTestRunner {
                     }
                 })
                 send_elicitation_request()
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeToolUserInputAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_TOOL_USER_INPUT_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        def send_tool_user_input_request():
+            message = {
+                "id": "tool-input-smoke",
+                "method": "item/tool/requestUserInput",
+                "params": {
+                    "threadId": "thread-smoke",
+                    "turnId": "turn-smoke",
+                    "itemId": "tool-call-smoke",
+                    "questions": [
+                        {
+                            "id": "q_mode",
+                            "header": "运行方式",
+                            "question": "工具应该如何继续？",
+                            "isOther": False,
+                            "isSecret": False,
+                            "options": [
+                                {
+                                    "label": "继续",
+                                    "description": "使用当前上下文继续运行工具。"
+                                },
+                                {
+                                    "label": "暂停",
+                                    "description": "暂不继续，等待更多信息。"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "q_secret",
+                            "header": "临时口令",
+                            "question": "请输入 smoke 用临时口令。",
+                            "isOther": False,
+                            "isSecret": True,
+                            "options": None
+                        }
+                    ]
+                }
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id == "tool-input-smoke" and "result" in request:
+                log({"toolUserInputResponse": request.get("result")})
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "tool-input-smoke"
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-smoke", "status": "completed"}
+                })
+                continue
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-smoke",
+                        "sessionId": "session-smoke",
+                        "preview": "Tool user input smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-smoke", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-smoke",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_tool_user_input_request()
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

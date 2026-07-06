@@ -24,6 +24,8 @@ struct TranscriptItemRow: View {
             ApprovalCard(store: store, itemID: item.id, request: request)
         case let .mcpElicitation(request):
             McpElicitationCard(store: store, itemID: item.id, request: request)
+        case let .toolUserInput(request):
+            ToolUserInputCard(store: store, itemID: item.id, request: request)
         case let .notice(notice):
             NoticeLine(notice: notice)
         }
@@ -680,6 +682,180 @@ private struct McpElicitationCard: View {
                 store.decideMcpElicitation(itemID: itemID, action: .cancel)
             } label: {
                 Label("取消", systemImage: "minus")
+            }
+            .buttonStyle(ChipButtonStyle())
+        }
+    }
+
+    private func resolved(_ symbol: String, _ text: String, _ tint: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+            Text(text)
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(tint)
+    }
+}
+
+// MARK: - Tool user input
+
+private struct ToolUserInputCard: View {
+    @ObservedObject var store: SessionStore
+    let itemID: UUID
+    let request: ToolUserInputRequest
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+
+            ForEach(request.questions) { question in
+                questionView(question)
+            }
+
+            switch request.status {
+            case .pending:
+                actionRow
+            case .submitted:
+                resolved("checkmark.circle.fill", "已提交给工具", Theme.success)
+            case .skipped:
+                resolved("minus.circle.fill", "已跳过", Theme.textTertiary)
+            case .cancelled:
+                resolved("minus.circle.fill", "已取消", Theme.textTertiary)
+            case let .failed(message):
+                resolved("exclamationmark.triangle.fill", "回传失败：\(message)", Theme.warning)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "questionmark.bubble")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.info)
+            Text("工具请求补充信息")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Spacer(minLength: 8)
+            Text("\(request.questions.count) 个问题")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+    }
+
+    private func questionView(_ question: ToolUserInputQuestion) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(question.header)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                Text(question.question)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+
+            if !question.options.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(question.options) { option in
+                        optionRow(question: question, option: option)
+                    }
+                }
+            }
+
+            if question.options.isEmpty || question.isOther {
+                answerField(question)
+            }
+        }
+        .padding(10)
+        .background(Theme.fill)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+    }
+
+    private func optionRow(question: ToolUserInputQuestion, option: ToolUserInputOption) -> some View {
+        let selected = store.toolUserInputSelections[itemID]?[question.id] == option.label
+        return Button {
+            store.selectToolUserInputOption(itemID: itemID, questionID: question.id, label: option.label)
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(selected ? Theme.success : Theme.textTertiary)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.label)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(option.description)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 8)
+            .background(selected ? Theme.fillSelected : Theme.fillSubtle)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(request.status != .pending)
+    }
+
+    @ViewBuilder
+    private func answerField(_ question: ToolUserInputQuestion) -> some View {
+        let binding = Binding(
+            get: { store.toolUserInputDrafts[itemID]?[question.id] ?? "" },
+            set: { store.updateToolUserInputDraft(itemID: itemID, questionID: question.id, draft: $0) }
+        )
+
+        if question.isSecret {
+            SecureField(question.isOther ? "其他答案" : "填写答案", text: binding)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 8)
+                .background(Theme.fillSubtle)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                .disabled(request.status != .pending)
+        } else {
+            TextField(question.isOther ? "其他答案" : "填写答案", text: binding, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .lineLimit(1...3)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 8)
+                .background(Theme.fillSubtle)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                .disabled(request.status != .pending)
+        }
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                store.submitToolUserInput(itemID: itemID)
+            } label: {
+                Label("提交", systemImage: "checkmark")
+            }
+            .buttonStyle(ChipButtonStyle(tint: Theme.success, prominent: true))
+
+            Button {
+                store.skipToolUserInput(itemID: itemID)
+            } label: {
+                Label("跳过", systemImage: "minus")
             }
             .buttonStyle(ChipButtonStyle())
         }

@@ -3050,6 +3050,20 @@ public actor CodexAppServerClient {
         try respond(requestID: requestID, result: .object(result))
     }
 
+    public func respondToolUserInput(
+        requestID: CodexAppServerRequestID,
+        answers: [String: [String]]
+    ) async throws {
+        let answerValues = answers.mapValues { values in
+            JSONValue.object([
+                "answers": .array(values.map(JSONValue.string))
+            ])
+        }
+        try respond(requestID: requestID, result: .object([
+            "answers": .object(answerValues)
+        ]))
+    }
+
     public func stop() {
         stdoutTask?.cancel()
         stderrTask?.cancel()

@@ -23,6 +23,7 @@ struct TranscriptItem: Identifiable, Equatable {
         case fileChange(FileChange)
         case approval(ApprovalRequest)
         case mcpElicitation(McpElicitationRequest)
+        case toolUserInput(ToolUserInputRequest)
         case notice(Notice)
     }
 }
@@ -263,6 +264,62 @@ struct McpElicitationRequest: Identifiable, Equatable {
     var url: URL? {
         guard let urlString else { return nil }
         return URL(string: urlString)
+    }
+}
+
+// MARK: - Tool user input
+
+struct ToolUserInputOption: Identifiable, Equatable {
+    let id: UUID
+    var label: String
+    var description: String
+
+    init(id: UUID = UUID(), label: String, description: String) {
+        self.id = id
+        self.label = label
+        self.description = description
+    }
+}
+
+struct ToolUserInputQuestion: Identifiable, Equatable {
+    var id: String
+    var header: String
+    var question: String
+    var isOther: Bool
+    var isSecret: Bool
+    var options: [ToolUserInputOption]
+}
+
+struct ToolUserInputRequest: Identifiable, Equatable {
+    enum Status: Equatable {
+        case pending
+        case submitted
+        case skipped
+        case cancelled
+        case failed(String)
+    }
+
+    let id: UUID
+    var threadID: String
+    var turnID: String
+    var itemID: String
+    var questions: [ToolUserInputQuestion]
+    var status: Status
+
+    init(
+        id: UUID = UUID(),
+        threadID: String,
+        turnID: String,
+        itemID: String,
+        questions: [ToolUserInputQuestion],
+        status: Status = .pending
+    ) {
+        self.id = id
+        self.threadID = threadID
+        self.turnID = turnID
+        self.itemID = itemID
+        self.questions = questions
+        self.status = status
     }
 }
 

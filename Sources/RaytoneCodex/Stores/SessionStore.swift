@@ -138,6 +138,8 @@ final class SessionStore: ObservableObject {
     @Published var pendingLocalImagePaths: [String] = []
     @Published var lastLocalImageInputPreview: [String] = []
     @Published var mcpElicitationDrafts: [UUID: String] = [:]
+    @Published var toolUserInputDrafts: [UUID: [String: String]] = [:]
+    @Published var toolUserInputSelections: [UUID: [String: String]] = [:]
     @Published var settingsPane: SettingsPane = .general
     @Published var providers: [RaytoneProviderConfiguration] = RaytoneProviderConfiguration.defaultProviders
     @Published var selectedProviderID = "openai"
@@ -191,6 +193,7 @@ final class SessionStore: ObservableObject {
     private var activeDiffTranscriptIDs: Set<UUID> = []
     private var pendingApprovalRequestIDs: [UUID: CodexAppServerRequestID] = [:]
     private var pendingMcpElicitationRequestIDs: [UUID: CodexAppServerRequestID] = [:]
+    private var pendingToolUserInputRequestIDs: [UUID: CodexAppServerRequestID] = [:]
     private var activeAppServerTurnID: String?
     private var appServerConnectionState: ConnectionState?
     private var appServerEnvironmentKey: String?
@@ -593,7 +596,10 @@ final class SessionStore: ObservableObject {
         activeDiffTranscriptIDs.removeAll()
         pendingApprovalRequestIDs.removeAll()
         pendingMcpElicitationRequestIDs.removeAll()
+        pendingToolUserInputRequestIDs.removeAll()
         mcpElicitationDrafts.removeAll()
+        toolUserInputDrafts.removeAll()
+        toolUserInputSelections.removeAll()
         appServerItemIDs.removeAll()
         resetActiveTerminal()
         resetFilePanelWatch()
@@ -1463,6 +1469,64 @@ final class SessionStore: ObservableObject {
                 action: action,
                 content: content
             )
+        }
+    }
+
+    func selectToolUserInputOption(itemID: UUID, questionID: String, label: String) {
+        var selections = toolUserInputSelections[itemID] ?? [:]
+        selections[questionID] = label
+        toolUserInputSelections[itemID] = selections
+    }
+
+    func updateToolUserInputDraft(itemID: UUID, questionID: String, draft: String) {
+        var drafts = toolUserInputDrafts[itemID] ?? [:]
+        drafts[questionID] = draft
+        toolUserInputDrafts[itemID] = drafts
+    }
+
+    func submitToolUserInput(itemID: UUID) {
+        guard let request = toolUserInputRequest(itemID: itemID) else {
+            return
+        }
+        let answers = toolUserInputAnswers(for: request)
+        setToolUserInputStatus(itemID: itemID, status: .submitted)
+        Task {
+            await respondToAppServerToolUserInput(itemID: itemID, answers: answers, statusOnSuccess: .submitted)
+        }
+    }
+
+    func skipToolUserInput(itemID: UUID) {
+        guard let request = toolUserInputRequest(itemID: itemID) else {
+            return
+        }
+        let answers = Dictionary(uniqueKeysWithValues: request.questions.map { ($0.id, [String]()) })
+        setToolUserInputStatus(itemID: itemID, status: .skipped)
+        Task {
+            await respondToAppServerToolUserInput(itemID: itemID, answers: answers, statusOnSuccess: .skipped)
+        }
+    }
+
+    func respondToAppServerToolUserInput(
+        itemID: UUID,
+        answers: [String: [String]],
+        statusOnSuccess: ToolUserInputRequest.Status
+    ) async {
+        guard let requestID = pendingToolUserInputRequestIDs.removeValue(forKey: itemID),
+              let client = appServerClient else {
+            return
+        }
+
+        do {
+            try await client.respondToolUserInput(requestID: requestID, answers: answers)
+            setToolUserInputStatus(itemID: itemID, status: statusOnSuccess)
+        } catch {
+            setToolUserInputStatus(itemID: itemID, status: .failed(error.localizedDescription))
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "工具输入结果未能回传给 app-server：\(error.localizedDescription)"
+                ))))
+            }
         }
     }
 
@@ -5963,7 +6027,10 @@ final class SessionStore: ObservableObject {
             activeDiffTranscriptIDs.removeAll()
             pendingApprovalRequestIDs.removeAll()
             pendingMcpElicitationRequestIDs.removeAll()
+            pendingToolUserInputRequestIDs.removeAll()
             mcpElicitationDrafts.removeAll()
+            toolUserInputDrafts.removeAll()
+            toolUserInputSelections.removeAll()
             resetActiveTerminal()
             resetFilePanelWatch()
         }
@@ -6497,6 +6564,24 @@ final class SessionStore: ObservableObject {
                 serverItemID: "mcp-elicitation:\(id.description)",
                 kind: .mcpElicitation(request)
             )
+        case "item/tool/requestUserInput":
+            let itemID = params?["itemId"]?.stringValue ?? id.description
+            let transcriptID = transcriptUUID(for: "tool-user-input:\(id.description):\(itemID)")
+            let questions = Self.toolUserInputQuestions(from: params?["questions"]?.arrayValue ?? [])
+            let request = ToolUserInputRequest(
+                id: transcriptID,
+                threadID: params?["threadId"]?.stringValue ?? selectedThread.appServerThreadID ?? "",
+                turnID: params?["turnId"]?.stringValue ?? activeAppServerTurnID ?? "",
+                itemID: itemID,
+                questions: questions,
+                status: .pending
+            )
+            initializeToolUserInputState(itemID: transcriptID, questions: questions)
+            pendingToolUserInputRequestIDs[transcriptID] = id
+            upsertTranscriptItem(
+                serverItemID: "tool-user-input:\(id.description):\(itemID)",
+                kind: .toolUserInput(request)
+            )
         default:
             break
         }
@@ -6714,6 +6799,15 @@ final class SessionStore: ObservableObject {
         for itemID in resolvedElicitationIDs {
             updateMcpElicitationStatusIfPending(itemID: itemID, status: .cancelled)
         }
+        let resolvedToolInputIDs = pendingToolUserInputRequestIDs.compactMap { itemID, value in
+            value.description == requestID ? itemID : nil
+        }
+        pendingToolUserInputRequestIDs = pendingToolUserInputRequestIDs.filter { _, value in
+            value.description != requestID
+        }
+        for itemID in resolvedToolInputIDs {
+            setToolUserInputStatusIfPending(itemID: itemID, status: .cancelled)
+        }
     }
 
     private func updateMcpElicitationStatus(itemID: UUID, status: McpElicitationRequest.Status) {
@@ -6764,6 +6858,89 @@ final class SessionStore: ObservableObject {
         }
 
         return JSONValue.object(content).prettyJSONString
+    }
+
+    private static func toolUserInputQuestions(from values: [JSONValue]) -> [ToolUserInputQuestion] {
+        values.compactMap { value in
+            guard let id = value["id"]?.stringValue,
+                  let header = value["header"]?.stringValue,
+                  let question = value["question"]?.stringValue else {
+                return nil
+            }
+            let options = (value["options"]?.arrayValue ?? []).compactMap { option -> ToolUserInputOption? in
+                guard let label = option["label"]?.stringValue,
+                      let description = option["description"]?.stringValue else {
+                    return nil
+                }
+                return ToolUserInputOption(label: label, description: description)
+            }
+            return ToolUserInputQuestion(
+                id: id,
+                header: header,
+                question: question,
+                isOther: value["isOther"]?.boolValue ?? false,
+                isSecret: value["isSecret"]?.boolValue ?? false,
+                options: options
+            )
+        }
+    }
+
+    private func initializeToolUserInputState(itemID: UUID, questions: [ToolUserInputQuestion]) {
+        if toolUserInputDrafts[itemID] == nil {
+            toolUserInputDrafts[itemID] = Dictionary(uniqueKeysWithValues: questions.map { ($0.id, "") })
+        }
+        if toolUserInputSelections[itemID] == nil {
+            toolUserInputSelections[itemID] = [:]
+        }
+    }
+
+    private func toolUserInputRequest(itemID: UUID) -> ToolUserInputRequest? {
+        guard let thread = threads.first(where: { $0.id == selectedThreadID }),
+              let item = thread.items.first(where: { $0.id == itemID }),
+              case let .toolUserInput(request) = item.kind else {
+            return nil
+        }
+        return request
+    }
+
+    private func toolUserInputAnswers(for request: ToolUserInputRequest) -> [String: [String]] {
+        let drafts = toolUserInputDrafts[request.id] ?? [:]
+        let selections = toolUserInputSelections[request.id] ?? [:]
+        return Dictionary(uniqueKeysWithValues: request.questions.map { question in
+            var values: [String] = []
+            if let selected = selections[question.id],
+               !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                values.append(selected)
+            }
+            let draft = drafts[question.id]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !draft.isEmpty {
+                values.append(draft)
+            }
+            return (question.id, values)
+        })
+    }
+
+    private func setToolUserInputStatus(itemID: UUID, status: ToolUserInputRequest.Status) {
+        guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }),
+              let itemIndex = threads[index].items.firstIndex(where: { $0.id == itemID }),
+              case var .toolUserInput(request) = threads[index].items[itemIndex].kind else {
+            return
+        }
+        request.status = status
+        threads[index].items[itemIndex].kind = .toolUserInput(request)
+        threads[index].updatedAt = Date()
+    }
+
+    private func setToolUserInputStatusIfPending(itemID: UUID, status: ToolUserInputRequest.Status) {
+        guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }),
+              let itemIndex = threads[index].items.firstIndex(where: { $0.id == itemID }),
+              case var .toolUserInput(request) = threads[index].items[itemIndex].kind,
+              request.status == .pending else {
+            return
+        }
+        request.status = status
+        threads[index].items[itemIndex].kind = .toolUserInput(request)
+        threads[index].updatedAt = Date()
     }
 
     @discardableResult
