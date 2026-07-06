@@ -115,6 +115,8 @@ enum SmokeTestRunner {
             runAppMentionConfigSmoke()
         } else if CommandLine.arguments.contains("--app-mention-turn-smoke-test") {
             runAppMentionTurnSmoke()
+        } else if CommandLine.arguments.contains("--file-mention-turn-smoke-test") {
+            runFileMentionTurnSmoke()
         } else if CommandLine.arguments.contains("--app-list-updated-smoke-test") {
             runAppListUpdatedSmoke()
         } else if CommandLine.arguments.contains("--project-switch-smoke-test") {
@@ -10162,6 +10164,124 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runFileMentionTurnSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexFileMentionTurnSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let packageURL = workspaceURL.appendingPathComponent("Package.swift")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try """
+                // swift-tools-version: 6.0
+                import PackageDescription
+                let package = Package(name: "FileMentionSmoke")
+                """.write(to: packageURL, atomically: true, encoding: .utf8)
+                try fakeFileMentionTurnAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let marker = "Raytone file mention turn smoke OK"
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-file-mention-turn"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_FILE_MENTION_TURN_LOG": logURL.path,
+                    "RAYTONE_FILE_MENTION_TURN_MARKER": marker
+                ]
+
+                fputs("file-mention-turn-smoke: addFileReferencesToPrompt\n", stderr)
+                await store.addFileReferencesToPrompt(paths: [packageURL.path])
+                let preparedPrompt = store.prompt
+                let previewMentions = await store.previewInputMentions(for: preparedPrompt)
+
+                fputs("file-mention-turn-smoke: runPrompt\n", stderr)
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""turnCompletedAfterMention":true"#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let userMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .userMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let metadataObserved = logText.contains(#""method":"fs/getMetadata""#) &&
+                    logText.contains(packageURL.path)
+                let previewMentionOK = previewMentions.count == 1 &&
+                    previewMentions.first?.name == "Package.swift" &&
+                    previewMentions.first?.path == packageURL.path
+                let mentionInTurnStart = logText.contains(#""method":"turn/start""#) &&
+                    logText.contains(#""type":"mention""#) &&
+                    logText.contains(#""name":"Package.swift""#) &&
+                    logText.contains(packageURL.path)
+                let textInTurnStart = logText.contains(#""type":"text""#) &&
+                    logText.contains("请参考以下文件")
+                let pendingCleared = store.pendingPromptFileReferencePaths.isEmpty
+                let ok = metadataObserved &&
+                    previewMentionOK &&
+                    mentionInTurnStart &&
+                    textInTurnStart &&
+                    pendingCleared &&
+                    userMessages.contains(preparedPrompt) &&
+                    agentMessages.contains(marker) &&
+                    !store.isRunning &&
+                    store.selectedThread.appServerThreadID == "thread-file-mention"
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "filePath": packageURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "metadataObserved": metadataObserved,
+                    "previewMentionOK": previewMentionOK,
+                    "mentionInTurnStart": mentionInTurnStart,
+                    "textInTurnStart": textInTurnStart,
+                    "pendingCleared": pendingCleared,
+                    "threadID": store.selectedThread.appServerThreadID ?? "",
+                    "preparedPrompt": preparedPrompt,
+                    "previewMentions": previewMentions.map { ["name": $0.name, "path": $0.path] },
+                    "agentMessages": agentMessages,
+                    "requestLogPreview": String(logText.prefix(2600)),
+                    "source": "addFileReferencesToPrompt + fs/getMetadata + turn/start mention input"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "filePath": packageURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAppListUpdatedSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -14919,6 +15039,104 @@ enum SmokeTestRunner {
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-app-mention", "status": "completed"}
+                })
+                log({"turnCompletedAfterMention": True})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeFileMentionTurnAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_FILE_MENTION_TURN_LOG")
+        marker = os.environ.get("RAYTONE_FILE_MENTION_TURN_MARKER", "Raytone file mention turn smoke OK")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({"id": request_id, "error": {"code": -32602, "message": message}})
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        def metadata_for(path):
+            stat = os.stat(path)
+            return {
+                "isDirectory": os.path.isdir(path),
+                "isFile": os.path.isfile(path),
+                "isSymlink": os.path.islink(path),
+                "createdAtMs": int(stat.st_ctime * 1000),
+                "modifiedAtMs": int(stat.st_mtime * 1000)
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "fs/getMetadata":
+                try:
+                    send_result(request_id, metadata_for(params.get("path", "")))
+                except Exception as error:
+                    send_error(request_id, f"metadata failed: {error}")
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-file-mention",
+                        "sessionId": "session-file-mention",
+                        "preview": "File mention smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                log({"turnStartInput": params.get("input")})
+                send_result(request_id, {
+                    "turn": {"id": "turn-file-mention", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-file-mention",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_notification("item/completed", {
+                    "threadId": "thread-file-mention",
+                    "turnId": "turn-file-mention",
+                    "item": {
+                        "id": "agent-file-mention",
+                        "type": "agentMessage",
+                        "text": marker
+                    }
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-file-mention", "status": "completed"}
                 })
                 log({"turnCompletedAfterMention": True})
             else:

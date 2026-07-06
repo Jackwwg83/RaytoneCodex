@@ -153,6 +153,7 @@ final class SessionStore: ObservableObject {
     @Published var homeConnectionStatusText = "未刷新"
     @Published var lastMentionInputPreview: [[String: String]] = []
     @Published var pendingLocalImagePaths: [String] = []
+    @Published var pendingPromptFileReferencePaths: [String] = []
     @Published var lastLocalImageInputPreview: [String] = []
     @Published var mcpElicitationDrafts: [UUID: String] = [:]
     @Published var toolUserInputDrafts: [UUID: [String: String]] = [:]
@@ -831,6 +832,7 @@ final class SessionStore: ObservableObject {
         localImagePaths: [String] = []
     ) async {
         isRunning = true
+        defer { clearPendingFileReferenceMentions(in: runtimePrompt) }
         let userMessage = displayedPrompt ?? runtimePrompt
 
         updateSelectedThread { thread in
@@ -1113,6 +1115,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     private func steerRunningTurn(_ trimmedPrompt: String, localImagePaths: [String] = []) async -> Bool {
         prompt = ""
+        defer { clearPendingFileReferenceMentions(in: trimmedPrompt) }
         updateSelectedThread { thread in
             thread.items.append(TranscriptItem(kind: .userMessage(trimmedPrompt)))
         }
@@ -2296,6 +2299,7 @@ final class SessionStore: ObservableObject {
                 .filter { !$0.isEmpty },
             label: label
         )
+        queuePendingFileReferenceMentions(paths: normalizedPaths)
         await appendVerifiedFileReferencesToPrompt(paths: normalizedPaths, label: label)
     }
 
@@ -2376,6 +2380,36 @@ final class SessionStore: ObservableObject {
         pendingLocalImagePaths = []
         lastLocalImageInputPreview = images
         return images
+    }
+
+    private func queuePendingFileReferenceMentions(paths: [String]) {
+        guard !paths.isEmpty else { return }
+
+        var seen = Set(pendingPromptFileReferencePaths)
+        for path in paths where !path.isEmpty && seen.insert(path).inserted {
+            pendingPromptFileReferencePaths.append(path)
+        }
+    }
+
+    private func pendingFileReferenceMentions(in prompt: String) -> [CodexAppServerMention] {
+        pendingPromptFileReferencePaths.compactMap { path in
+            guard promptContainsFileReference(path, in: prompt) else { return nil }
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            return CodexAppServerMention(name: name.isEmpty ? path : name, path: path)
+        }
+    }
+
+    private func clearPendingFileReferenceMentions(in prompt: String) {
+        pendingPromptFileReferencePaths.removeAll { promptContainsFileReference($0, in: prompt) }
+    }
+
+    private func promptContainsFileReference(_ path: String, in prompt: String) -> Bool {
+        guard !path.isEmpty else { return false }
+        let reference = Self.promptReferencePath(for: path, workspacePath: workspacePath)
+        let candidates = [path, reference].filter { !$0.isEmpty }
+        return candidates.contains { candidate in
+            prompt.contains("`\(candidate)`") || prompt.contains(candidate)
+        }
     }
 
     func openRecommendedFile(_ path: String) {
@@ -7494,7 +7528,8 @@ final class SessionStore: ObservableObject {
     private func inputMentions(in prompt: String) async -> [CodexAppServerMention] {
         let mentionTokens = Self.pluginMentionTokens(in: prompt)
         let appTokens = Self.appMentionTokens(in: prompt)
-        guard !mentionTokens.isEmpty || !appTokens.isEmpty else {
+        let fileMentions = pendingFileReferenceMentions(in: prompt)
+        guard !mentionTokens.isEmpty || !appTokens.isEmpty || !fileMentions.isEmpty else {
             lastMentionInputPreview = []
             return []
         }
@@ -7511,7 +7546,12 @@ final class SessionStore: ObservableObject {
             pluginsByName[plugin.name.lowercased()] = plugin
         }
         var seenPaths = Set<String>()
-        var mentions = mentionTokens.compactMap { token -> CodexAppServerMention? in
+        var mentions: [CodexAppServerMention] = []
+        for mention in fileMentions where seenPaths.insert(mention.path).inserted {
+            mentions.append(mention)
+        }
+
+        mentions.append(contentsOf: mentionTokens.compactMap { token -> CodexAppServerMention? in
             guard let plugin = pluginsByName[token.lowercased()],
                   plugin.installed,
                   plugin.enabled,
@@ -7520,7 +7560,7 @@ final class SessionStore: ObservableObject {
             }
             seenPaths.insert(plugin.mentionPath)
             return CodexAppServerMention(name: plugin.displayName, path: plugin.mentionPath)
-        }
+        })
 
         if !appTokens.isEmpty {
             var appsByToken: [String: CodexRuntimeAppInfo] = [:]
