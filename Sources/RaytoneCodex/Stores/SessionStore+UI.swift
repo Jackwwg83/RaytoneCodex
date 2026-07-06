@@ -250,7 +250,9 @@ extension SessionStore {
             fileSource = "fs/readFile + fs/getMetadata"
             fileDetail = "\(filePreview.fileName) · \(filePreview.byteCount.formatted()) 字节"
         } else if !fileSearchResults.isEmpty {
-            fileSource = "fuzzyFileSearch"
+            fileSource = fileSearchStatusText.contains("session")
+                ? "fuzzyFileSearch/session"
+                : "fuzzyFileSearch"
             fileDetail = "\(fileSearchResults.count) 个搜索结果"
         } else if !fileEntries.isEmpty {
             fileSource = filePanelStatusText.contains("已监听") ? "fs/readDirectory + fs/watch" : "fs/readDirectory"

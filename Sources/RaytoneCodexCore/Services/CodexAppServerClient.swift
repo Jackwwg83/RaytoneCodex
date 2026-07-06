@@ -3174,6 +3174,26 @@ public actor CodexAppServerClient {
         return files.compactMap(Self.fuzzyFileSearchResult(from:))
     }
 
+    public func startFuzzyFileSearchSession(sessionID: String, roots: [String]) async throws {
+        _ = try await request(method: "fuzzyFileSearch/sessionStart", params: .object([
+            "sessionId": .string(sessionID),
+            "roots": .array(roots.map(JSONValue.string))
+        ]))
+    }
+
+    public func updateFuzzyFileSearchSession(sessionID: String, query: String) async throws {
+        _ = try await request(method: "fuzzyFileSearch/sessionUpdate", params: .object([
+            "sessionId": .string(sessionID),
+            "query": .string(query)
+        ]))
+    }
+
+    public func stopFuzzyFileSearchSession(sessionID: String) async throws {
+        _ = try await request(method: "fuzzyFileSearch/sessionStop", params: .object([
+            "sessionId": .string(sessionID)
+        ]))
+    }
+
     public func readFile(path: String) async throws -> Data {
         let result = try await request(method: "fs/readFile", params: .object([
             "path": .string(path)

@@ -215,6 +215,9 @@ final class SessionStore: ObservableObject {
     private var appServerEnvironmentKey: String?
     private var filePanelWatchID: String?
     private var filePanelWatchedPath: String?
+    private var activeFileSearchSessionID: String?
+    private var completedFileSearchSessionIDs: Set<String> = []
+    private var ignoredFileSearchSessionIDs: Set<String> = []
     private var activeTerminalRunID: UUID?
     private var activeTerminalProcessID: String?
     private var activeProxySession: RaytoneProxySession?
@@ -2113,10 +2116,41 @@ final class SessionStore: ObservableObject {
         }
 
         fileSearchIsRunning = true
-        fileSearchStatusText = "正在搜索…"
+        fileSearchStatusText = "正在启动 fuzzyFileSearch/sessionStart…"
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let sessionID = "raytone-file-search-\(UUID().uuidString)"
+            activeFileSearchSessionID = sessionID
+            completedFileSearchSessionIDs.remove(sessionID)
+            ignoredFileSearchSessionIDs.remove(sessionID)
+            do {
+                try await client.startFuzzyFileSearchSession(sessionID: sessionID, roots: [workspacePath])
+                try await client.updateFuzzyFileSearchSession(sessionID: sessionID, query: query)
+                fileSearchStatusText = "fuzzyFileSearch/sessionUpdate：等待结果…"
+                let completed = await waitForFuzzyFileSearchSession(sessionID: sessionID, timeout: 8)
+                try? await client.stopFuzzyFileSearchSession(sessionID: sessionID)
+                ignoredFileSearchSessionIDs.insert(sessionID)
+                activeFileSearchSessionID = nil
+                if completed {
+                    fileSearchIsRunning = false
+                    fileSearchStatusText = fileSearchResults.isEmpty
+                        ? "fuzzyFileSearch/sessionCompleted：未找到匹配文件"
+                        : "fuzzyFileSearch/sessionCompleted：\(fileSearchResults.count) 个匹配"
+                    runtimeCatalogStatusText = "\(fileSearchStatusText) · \(sessionID)"
+                    return
+                }
+                fileSearchIsRunning = false
+                fileSearchStatusText = fileSearchResults.isEmpty
+                    ? "fuzzyFileSearch/sessionUpdate：等待超时，未收到匹配"
+                    : "fuzzyFileSearch/sessionUpdate：等待超时，保留 \(fileSearchResults.count) 个匹配"
+                return
+            } catch {
+                ignoredFileSearchSessionIDs.insert(sessionID)
+                activeFileSearchSessionID = nil
+                fileSearchStatusText = "fuzzyFileSearch/sessionStart 失败，降级 fuzzyFileSearch…"
+            }
+
             let results = try await client.fuzzyFileSearch(query: query, roots: [workspacePath])
             fileSearchResults = results.map {
                 WorkspaceFileEntry(
@@ -2141,10 +2175,34 @@ final class SessionStore: ObservableObject {
         fileSearchIsRunning = false
     }
 
+    private func waitForFuzzyFileSearchSession(sessionID: String, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if completedFileSearchSessionIDs.contains(sessionID) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return completedFileSearchSessionIDs.contains(sessionID)
+    }
+
     func clearFileSearch() {
+        if let sessionID = activeFileSearchSessionID {
+            ignoredFileSearchSessionIDs.insert(sessionID)
+            activeFileSearchSessionID = nil
+            Task { await stopFuzzyFileSearchSessionIfPossible(sessionID: sessionID) }
+        }
         fileSearchQuery = ""
         fileSearchResults = []
         fileSearchStatusText = ""
+        fileSearchIsRunning = false
+    }
+
+    private func stopFuzzyFileSearchSessionIfPossible(sessionID: String) async {
+        guard let client = appServerClient else {
+            return
+        }
+        try? await client.stopFuzzyFileSearchSession(sessionID: sessionID)
     }
 
     func openParentDirectoryInFilePanel() async {
@@ -8426,32 +8484,79 @@ final class SessionStore: ObservableObject {
 
     private func handleFuzzyFileSearchSessionUpdated(_ params: JSONValue?) {
         guard let sessionID = params?["sessionId"]?.stringValue else { return }
+        guard shouldAcceptFileSearchSession(sessionID) else { return }
         let query = params?["query"]?.stringValue ?? fileSearchQuery
         let files = params?["files"]?.arrayValue ?? []
         if !query.isEmpty {
             fileSearchQuery = query
         }
         fileSearchResults = files.map { file in
-            let path = file["path"]?.stringValue ?? file["file_name"]?.stringValue ?? ""
+            let path = Self.fuzzyFileSearchPath(from: file)
             return WorkspaceFileEntry(
-                name: file["file_name"]?.stringValue ?? (path as NSString).lastPathComponent,
+                name: Self.fuzzyFileSearchFileName(from: file, path: path),
                 path: path,
-                isDirectory: false,
-                isFile: true
+                isDirectory: Self.fuzzyFileSearchIsDirectory(file),
+                isFile: !Self.fuzzyFileSearchIsDirectory(file)
             )
         }
-        fileSearchIsRunning = true
-        fileSearchStatusText = "fuzzyFileSearch/sessionUpdated：\(fileSearchResults.count) 个匹配"
+        if completedFileSearchSessionIDs.contains(sessionID) {
+            fileSearchIsRunning = false
+            fileSearchStatusText = fileSearchResults.isEmpty
+                ? "fuzzyFileSearch/sessionCompleted：未找到匹配文件"
+                : "fuzzyFileSearch/sessionCompleted：\(fileSearchResults.count) 个匹配"
+        } else {
+            fileSearchIsRunning = true
+            fileSearchStatusText = "fuzzyFileSearch/sessionUpdated：\(fileSearchResults.count) 个匹配"
+        }
         runtimeCatalogStatusText = "\(fileSearchStatusText) · \(sessionID)"
     }
 
     private func handleFuzzyFileSearchSessionCompleted(_ params: JSONValue?) {
         let sessionID = params?["sessionId"]?.stringValue ?? "session"
+        guard shouldAcceptFileSearchSession(sessionID) else { return }
+        completedFileSearchSessionIDs.insert(sessionID)
         fileSearchIsRunning = false
         fileSearchStatusText = fileSearchResults.isEmpty
             ? "fuzzyFileSearch/sessionCompleted：未找到匹配文件"
             : "fuzzyFileSearch/sessionCompleted：\(fileSearchResults.count) 个匹配"
         runtimeCatalogStatusText = "\(fileSearchStatusText) · \(sessionID)"
+    }
+
+    private func shouldAcceptFileSearchSession(_ sessionID: String) -> Bool {
+        if ignoredFileSearchSessionIDs.contains(sessionID) {
+            return false
+        }
+        if let activeFileSearchSessionID {
+            return activeFileSearchSessionID == sessionID
+        }
+        return true
+    }
+
+    private static func fuzzyFileSearchPath(from file: JSONValue) -> String {
+        let rawPath = file["path"]?.stringValue ??
+            file["relativePath"]?.stringValue ??
+            file["file_name"]?.stringValue ??
+            ""
+        if rawPath.hasPrefix("/") {
+            return rawPath
+        }
+        guard let root = file["root"]?.stringValue, !root.isEmpty else {
+            return rawPath
+        }
+        return URL(fileURLWithPath: root).appendingPathComponent(rawPath).path
+    }
+
+    private static func fuzzyFileSearchFileName(from file: JSONValue, path: String) -> String {
+        file["file_name"]?.stringValue ??
+            file["fileName"]?.stringValue ??
+            URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    private static func fuzzyFileSearchIsDirectory(_ file: JSONValue) -> Bool {
+        let matchType = file["match_type"]?.stringValue ??
+            file["matchType"]?.stringValue ??
+            ""
+        return matchType.lowercased().contains("directory")
     }
 
     private func handleRealtimeNotification(method: String, params: JSONValue?) {

@@ -725,6 +725,7 @@ enum SmokeTestRunner {
 
         let ok = store.runtimeSnapshot.executable != nil &&
             targetResult != nil &&
+            store.fileSearchStatusText.contains("fuzzyFileSearch/sessionCompleted") &&
             originalPreview?.path == targetURL.path &&
             originalPreview?.text.contains("fuzzy-file-search-runtime-proof") == true &&
             originalPreview?.byteCount == targetText.utf8.count &&
