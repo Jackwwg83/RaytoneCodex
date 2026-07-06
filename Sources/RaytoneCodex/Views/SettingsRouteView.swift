@@ -15,6 +15,7 @@ struct SettingsRouteView: View {
     @State private var providerStatusMessage = "未测试"
     @State private var instructionsStatus = ""
     @State private var profileStatus = ""
+    @State private var didRequestSettingsBrowserSnapshotSmoke = false
     @State private var usageActivityScale = "每日"
     @State private var customInstructions = """
     Prefer concise, actionable engineering updates.
@@ -148,6 +149,7 @@ struct SettingsRouteView: View {
         .frame(minWidth: 760)
         .background(Theme.window)
         .task(id: store.settingsPane) {
+            requestSettingsBrowserSnapshotSmokeIfNeeded()
             switch store.settingsPane {
             case .profile, .usageBilling:
                 await store.refreshAccountUsageRuntime()
@@ -238,6 +240,19 @@ struct SettingsRouteView: View {
         .frame(width: 230)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.sidebar)
+    }
+
+    private func requestSettingsBrowserSnapshotSmokeIfNeeded() {
+        guard store.settingsPane == .browser,
+              ProcessInfo.processInfo.environment["RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE"] == "1",
+              !didRequestSettingsBrowserSnapshotSmoke else {
+            return
+        }
+
+        didRequestSettingsBrowserSnapshotSmoke = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            store.openBrowserSampleAndCapture()
+        }
     }
 
     private func filteredPanes(_ panes: [SettingsPane]) -> [SettingsPane] {
@@ -1645,6 +1660,10 @@ struct SettingsRouteView: View {
                     store.route = .thread
                 }
                 .buttonStyle(ChipButtonStyle())
+                Button("打开并截图") {
+                    store.openBrowserSampleAndCapture()
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
             }
 
             Text(store.runtimeCatalogStatusText)

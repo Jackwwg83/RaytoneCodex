@@ -547,6 +547,7 @@ run_ui_smoke() {
       /bin/launchctl unsetenv RAYTONE_CODEX_BROWSER_SNAPSHOT_SMOKE >/dev/null 2>&1 || true
       /bin/launchctl unsetenv RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH >/dev/null 2>&1 || true
       /bin/launchctl unsetenv RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE >/dev/null 2>&1 || true
+      /bin/launchctl unsetenv RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE >/dev/null 2>&1 || true
     fi
   }
   trap cleanup_ui_smoke RETURN
@@ -568,6 +569,9 @@ run_ui_smoke() {
       fi
       if [[ -n "${RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE:-}" ]]; then
         /bin/launchctl setenv RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE "$RAYTONE_CODEX_BROWSER_CLEAR_DATA_SMOKE"
+      fi
+      if [[ -n "${RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE:-}" ]]; then
+        /bin/launchctl setenv RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE "$RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE"
       fi
       open_app || true
       if ! wait_for_app; then
@@ -728,6 +732,65 @@ run_browser_snapshot_smoke() {
   printf '{\n'
   printf '  "ok": true,\n'
   printf '  "screen": "browser-snapshot",\n'
+  printf '  "windowScreenshot": "%s",\n' "$(json_escape "$window_screenshot")"
+  printf '  "windowScreenshotBytes": %s,\n' "$window_screenshot_size"
+  printf '  "webviewSnapshot": "%s",\n' "$(json_escape "$snapshot_path")"
+  printf '  "webviewSnapshotBytes": %s\n' "$snapshot_size"
+  printf '}\n'
+}
+
+run_settings_browser_snapshot_smoke() {
+  local snapshot_path="$SCREENSHOT_DIR/raytonecodex-settings-browser-webview-snapshot.png"
+  local snapshot_size window_screenshot window_screenshot_size old_ui_screen old_ui_smoke_screenshot
+
+  mkdir -p "$SCREENSHOT_DIR"
+  rm -f "$snapshot_path"
+  old_ui_screen="$UI_SCREEN"
+  old_ui_smoke_screenshot="$UI_SMOKE_SCREENSHOT"
+  UI_SCREEN="settings-browser"
+  UI_SMOKE_SCREENSHOT="$SCREENSHOT_DIR/raytonecodex-settings-browser-snapshot-window.png"
+  window_screenshot="$UI_SMOKE_SCREENSHOT"
+  rm -f "$window_screenshot"
+  export RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE=1
+  export RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH="$snapshot_path"
+  export RAYTONE_CODEX_UI_SETTLE_SECONDS="${RAYTONE_CODEX_UI_SETTLE_SECONDS:-12}"
+
+  if ! run_ui_smoke; then
+    UI_SCREEN="$old_ui_screen"
+    UI_SMOKE_SCREENSHOT="$old_ui_smoke_screenshot"
+    unset RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE
+    unset RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH
+    return 1
+  fi
+
+  UI_SCREEN="$old_ui_screen"
+  UI_SMOKE_SCREENSHOT="$old_ui_smoke_screenshot"
+  unset RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE
+  unset RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH
+
+  if [[ ! -f "$window_screenshot" ]]; then
+    echo "Settings browser window screenshot was not created: $window_screenshot" >&2
+    return 1
+  fi
+  window_screenshot_size="$(/usr/bin/stat -f '%z' "$window_screenshot")"
+  if [[ "$window_screenshot_size" -lt 20000 ]]; then
+    echo "Settings browser window screenshot is unexpectedly small: $window_screenshot_size bytes." >&2
+    return 1
+  fi
+
+  if [[ ! -f "$snapshot_path" ]]; then
+    echo "Settings browser WebView snapshot was not created: $snapshot_path" >&2
+    return 1
+  fi
+  snapshot_size="$(/usr/bin/stat -f '%z' "$snapshot_path")"
+  if [[ "$snapshot_size" -lt 20000 ]]; then
+    echo "Settings browser WebView snapshot is unexpectedly small: $snapshot_size bytes." >&2
+    return 1
+  fi
+
+  printf '{\n'
+  printf '  "ok": true,\n'
+  printf '  "screen": "settings-browser-snapshot",\n'
   printf '  "windowScreenshot": "%s",\n' "$(json_escape "$window_screenshot")"
   printf '  "windowScreenshotBytes": %s,\n' "$window_screenshot_size"
   printf '  "webviewSnapshot": "%s",\n' "$(json_escape "$snapshot_path")"
@@ -1812,6 +1875,9 @@ case "$MODE" in
   --browser-snapshot-smoke|browser-snapshot-smoke)
     run_browser_snapshot_smoke
     ;;
+  --settings-browser-snapshot-smoke|settings-browser-snapshot-smoke)
+    run_settings_browser_snapshot_smoke
+    ;;
   --ui-smoke|ui-smoke)
     run_ui_smoke
     ;;
@@ -1836,7 +1902,7 @@ case "$MODE" in
     run_package_audit
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--tools-smoke|--terminal-stream-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--connection-recovery-smoke|--account-api-key-smoke|--mention-smoke|--plugin-read-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--runtime-pages-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-controls-smoke|--integration-pages-smoke|--project-switch-smoke|--workspace-switch-smoke|--remote-control-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-config-smoke|--provider-sidecar-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--tools-smoke|--terminal-stream-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--connection-recovery-smoke|--account-api-key-smoke|--mention-smoke|--plugin-read-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--runtime-pages-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-controls-smoke|--integration-pages-smoke|--project-switch-smoke|--workspace-switch-smoke|--remote-control-smoke|--realtime-voices-smoke|--access-mode-smoke|--personality-smoke|--model-catalog-smoke|--model-config-smoke|--provider-sidecar-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-snapshot-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
     exit 2
     ;;
 esac

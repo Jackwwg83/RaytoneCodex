@@ -666,6 +666,17 @@ extension SessionStore {
         openToolPanel(.browser)
     }
 
+    func openBrowserSampleAndCapture() {
+        openBrowserSample()
+        route = .thread
+        browserScreenshotStatusText = "准备截取本地示例…"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.captureBrowserPanelScreenshot()
+            }
+        }
+    }
+
     private func selectActiveDemoThreadForSmoke() {
         if let activeThread = threads.first(where: { $0.activeGoal != nil }) {
             selectThread(activeThread)
