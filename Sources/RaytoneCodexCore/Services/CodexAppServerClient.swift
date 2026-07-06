@@ -1094,6 +1094,18 @@ public struct CodexRuntimeRateLimitWindow: Equatable, Sendable {
     }
 }
 
+public struct CodexModelProviderCapabilities: Equatable, Sendable {
+    public var namespaceTools: Bool
+    public var imageGeneration: Bool
+    public var webSearch: Bool
+
+    public init(namespaceTools: Bool, imageGeneration: Bool, webSearch: Bool) {
+        self.namespaceTools = namespaceTools
+        self.imageGeneration = imageGeneration
+        self.webSearch = webSearch
+    }
+}
+
 public enum CodexAddCreditsNudgeCreditType: String, Equatable, Sendable {
     case credits
     case usageLimit = "usage_limit"
@@ -1839,6 +1851,15 @@ public actor CodexAppServerClient {
                 isDefault: object["isDefault"]?.boolValue ?? false
             )
         } ?? []
+    }
+
+    public func readModelProviderCapabilities() async throws -> CodexModelProviderCapabilities {
+        let result = try await request(method: "modelProvider/capabilities/read", params: .object([:]))
+        return CodexModelProviderCapabilities(
+            namespaceTools: result["namespaceTools"]?.boolValue ?? false,
+            imageGeneration: result["imageGeneration"]?.boolValue ?? false,
+            webSearch: result["webSearch"]?.boolValue ?? false
+        )
     }
 
     public func listExperimentalFeatures(

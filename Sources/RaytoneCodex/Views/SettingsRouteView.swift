@@ -165,6 +165,9 @@ struct SettingsRouteView: View {
                 await store.refreshIntegrationRuntime()
             case .worktrees:
                 await store.refreshWorkspaceWorktrees()
+            case .modelsProviders:
+                await store.refreshModelCatalog()
+                await store.refreshModelProviderCapabilities()
             case .configuration:
                 await store.refreshRuntimeConfiguration()
             case .experimentalFeatures:
@@ -478,6 +481,24 @@ struct SettingsRouteView: View {
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
+                    }
+                    SettingsValueRow(title: "Provider 能力", description: "来自 app-server modelProvider/capabilities/read") {
+                        HStack(spacing: 6) {
+                            if let capabilities = store.modelProviderCapabilities {
+                                capabilityBadge("命名空间工具", enabled: capabilities.namespaceTools)
+                                capabilityBadge("图像生成", enabled: capabilities.imageGeneration)
+                                capabilityBadge("网页搜索", enabled: capabilities.webSearch)
+                            } else {
+                                Text(store.modelProviderCapabilitiesStatusText)
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(1)
+                            }
+                            Button("刷新") {
+                                Task { await store.refreshModelProviderCapabilities() }
+                            }
+                            .buttonStyle(ChipButtonStyle())
+                        }
                     }
                     SettingsValueRow(title: "Sidecar", description: "仅第三方 Chat Completions 提供方需要") {
                         let sidecarText = store.selectedProvider.usesSidecar ? store.sidecarStatusText : "不需要"
@@ -990,6 +1011,20 @@ struct SettingsRouteView: View {
             .frame(height: 22)
             .background((ok ? Theme.success : Theme.warning).opacity(0.10))
             .clipShape(Capsule())
+    }
+
+    private func capabilityBadge(_ text: String, enabled: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: enabled ? "checkmark.circle.fill" : "minus.circle")
+                .font(.system(size: 10.5, weight: .semibold))
+            Text(text)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundStyle(enabled ? Theme.success : Theme.textTertiary)
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background((enabled ? Theme.success : Theme.textTertiary).opacity(0.10))
+        .clipShape(Capsule())
     }
 
     private var statsCard: some View {

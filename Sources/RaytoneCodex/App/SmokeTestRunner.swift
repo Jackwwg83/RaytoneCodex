@@ -74,6 +74,8 @@ enum SmokeTestRunner {
             runPersonalitySmoke()
         } else if CommandLine.arguments.contains("--model-catalog-smoke-test") {
             runModelCatalogSmoke()
+        } else if CommandLine.arguments.contains("--model-provider-capabilities-smoke-test") {
+            runModelProviderCapabilitiesSmoke()
         } else if CommandLine.arguments.contains("--model-config-smoke-test") {
             runModelConfigSmoke()
         } else if CommandLine.arguments.contains("--provider-sidecar-smoke-test") {
@@ -1678,6 +1680,69 @@ enum SmokeTestRunner {
                 })
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runModelProviderCapabilitiesSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexModelProviderCapabilitiesSmoke-\(UUID().uuidString)", isDirectory: true)
+            let logURL = workspaceURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = workspaceURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeModelProviderCapabilitiesAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-model-provider-capabilities"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_MODEL_PROVIDER_CAPABILITIES_LOG": logURL.path
+                ]
+
+                await store.refreshModelProviderCapabilities()
+                let capabilities = store.modelProviderCapabilities
+                let status = store.modelProviderCapabilitiesStatusText
+                await store.stopAppServerForTesting()
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let ok = capabilities?.namespaceTools == true &&
+                    capabilities?.imageGeneration == true &&
+                    capabilities?.webSearch == false &&
+                    status.contains("modelProvider/capabilities/read") &&
+                    logText.contains(#""method":"modelProvider/capabilities/read""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "namespaceTools": capabilities?.namespaceTools ?? false,
+                    "imageGeneration": capabilities?.imageGeneration ?? false,
+                    "webSearch": capabilities?.webSearch ?? false,
+                    "status": status,
+                    "runtimeCatalogErrors": store.runtimeCatalogErrors,
+                    "requestLogPreview": String(logText.prefix(1200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
@@ -5842,6 +5907,55 @@ enum SmokeTestRunner {
                         enablement[key] = bool(value)
                         accepted[key] = bool(value)
                 send_result(request_id, {"enablement": accepted})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeModelProviderCapabilitiesAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_MODEL_PROVIDER_CAPABILITIES_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "modelProvider/capabilities/read":
+                send_result(request_id, {
+                    "namespaceTools": True,
+                    "imageGeneration": True,
+                    "webSearch": False,
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

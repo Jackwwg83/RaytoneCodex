@@ -130,6 +130,8 @@ final class SessionStore: ObservableObject {
     @Published var providerUsage: RaytoneProxyUsage?
     @Published var providerUsageStatusText = "未读取"
     @Published var addCreditsNudgeStatusText = "未发送"
+    @Published var modelProviderCapabilities: CodexModelProviderCapabilities?
+    @Published var modelProviderCapabilitiesStatusText = "未读取"
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
     @Published var isRunning = false {
         didSet { updatePreventSleepAssertion() }
@@ -2271,6 +2273,23 @@ final class SessionStore: ObservableObject {
             modelCatalogStatusText = modelIDs.isEmpty ? "app-server 未返回模型" : "已读取 \(modelIDs.count) 个模型"
         } catch {
             modelCatalogStatusText = "读取失败：\(error.localizedDescription)"
+        }
+    }
+
+    func refreshModelProviderCapabilities() async {
+        modelProviderCapabilitiesStatusText = "正在读取 modelProvider/capabilities/read…"
+        runtimeCatalogStatusText = modelProviderCapabilitiesStatusText
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let capabilities = try await client.readModelProviderCapabilities()
+            modelProviderCapabilities = capabilities
+            modelProviderCapabilitiesStatusText = "modelProvider/capabilities/read：\(Self.modelProviderCapabilitiesSummary(capabilities))"
+            runtimeCatalogStatusText = modelProviderCapabilitiesStatusText
+        } catch {
+            modelProviderCapabilities = nil
+            modelProviderCapabilitiesStatusText = "Provider 能力读取失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = modelProviderCapabilitiesStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
         }
     }
 
@@ -4497,6 +4516,7 @@ final class SessionStore: ObservableObject {
 
         guard provider.usesSidecar else {
             await refreshModelCatalog()
+            await refreshModelProviderCapabilities()
             let count = codexModelCatalog.count
             providerConnectionStatusText = count > 0 ? "model/list：\(count) 个模型" : modelCatalogStatusText
             providerConnectionDetailText = "Codex 原生 app-server model/list"
@@ -5722,6 +5742,14 @@ final class SessionStore: ObservableObject {
         case nil: "未返回"
         default: value ?? "未返回"
         }
+    }
+
+    static func modelProviderCapabilitiesSummary(_ capabilities: CodexModelProviderCapabilities) -> String {
+        [
+            "命名空间工具 \(capabilities.namespaceTools ? "开" : "关")",
+            "图像生成 \(capabilities.imageGeneration ? "开" : "关")",
+            "网页搜索 \(capabilities.webSearch ? "开" : "关")"
+        ].joined(separator: " · ")
     }
 
     static func initials(from value: String) -> String {
