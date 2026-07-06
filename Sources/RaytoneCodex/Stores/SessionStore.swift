@@ -126,6 +126,7 @@ final class SessionStore: ObservableObject {
     @Published var providerConnectionProxyConfigPath = ""
     @Published var providerUsage: RaytoneProxyUsage?
     @Published var providerUsageStatusText = "未读取"
+    @Published var addCreditsNudgeStatusText = "未发送"
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
     @Published var isRunning = false {
         didSet { updatePreventSleepAssertion() }
@@ -2617,6 +2618,27 @@ final class SessionStore: ObservableObject {
             providerUsage = nil
             providerUsageStatusText = "sidecar 用量读取失败：\(error.localizedDescription)"
         }
+    }
+
+    func sendAddCreditsNudgeEmail(creditType: CodexAddCreditsNudgeCreditType) async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 account/sendAddCreditsNudgeEmail…"
+        addCreditsNudgeStatusText = "正在发送…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let status = try await client.sendAddCreditsNudgeEmail(creditType: creditType)
+            let statusText = Self.addCreditsNudgeStatusName(status)
+            addCreditsNudgeStatusText = statusText
+            runtimeCatalogStatusText = "account/sendAddCreditsNudgeEmail：\(statusText)"
+        } catch {
+            addCreditsNudgeStatusText = "发送失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = "额度提醒邮件失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
     }
 
     func startAccountChatGPTLogin(openBrowser: Bool = true) async {
@@ -5628,6 +5650,14 @@ final class SessionStore: ObservableObject {
             return "Amazon Bedrock"
         default:
             return account.requiresOpenAIAuth ? "需要登录 OpenAI" : "未登录"
+        }
+    }
+
+    static func addCreditsNudgeStatusName(_ status: CodexAddCreditsNudgeEmailStatus) -> String {
+        switch status {
+        case .sent: "已发送提醒邮件"
+        case .cooldownActive: "冷却中，稍后再试"
+        case .unknown: "未知状态"
         }
     }
 

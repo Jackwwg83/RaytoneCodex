@@ -564,6 +564,9 @@ struct SettingsRouteView: View {
                 Divider()
                     .overlay(Theme.borderSoft)
                 accountAuthControlGroup
+                Divider()
+                    .overlay(Theme.borderSoft)
+                addCreditsNudgeControlGroup
             }
         }
     }
@@ -633,6 +636,58 @@ struct SettingsRouteView: View {
             }
             .buttonStyle(ChipButtonStyle())
         }
+    }
+
+    private var addCreditsNudgeControlGroup: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "envelope.badge")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("额度提醒")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(addCreditsNudgeDetailText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Menu {
+                    Button("使用限制") {
+                        Task { await store.sendAddCreditsNudgeEmail(creditType: .usageLimit) }
+                    }
+                    Button("余额") {
+                        Task { await store.sendAddCreditsNudgeEmail(creditType: .credits) }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text("发送")
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .disabled(!canSendAddCreditsNudge || store.runtimeCatalogIsRefreshing)
+            }
+            Text(store.addCreditsNudgeStatusText)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(2)
+        }
+    }
+
+    private var canSendAddCreditsNudge: Bool {
+        store.runtimeAccount?.kind == "chatgpt"
+    }
+
+    private var addCreditsNudgeDetailText: String {
+        canSendAddCreditsNudge
+            ? "调用 account/sendAddCreditsNudgeEmail 通知工作区所有者"
+            : "需要 ChatGPT 登录态"
     }
 
     private var tokenUsageSummaryCard: some View {

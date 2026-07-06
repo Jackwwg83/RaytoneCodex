@@ -36,6 +36,8 @@ enum SmokeTestRunner {
             runConnectionRecoverySmoke()
         } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
             runAccountAPIKeySmoke()
+        } else if CommandLine.arguments.contains("--add-credits-nudge-smoke-test") {
+            runAddCreditsNudgeSmoke()
         } else if CommandLine.arguments.contains("--mention-smoke-test") {
             runMentionSmoke()
         } else if CommandLine.arguments.contains("--runtime-pages-smoke-test") {
@@ -5021,6 +5023,69 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runAddCreditsNudgeSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAddCreditsNudgeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let logURL = workspaceURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = workspaceURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeAddCreditsNudgeAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-add-credits"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_ADD_CREDITS_NUDGE_LOG": logURL.path
+                ]
+
+                await store.sendAddCreditsNudgeEmail(creditType: .usageLimit)
+                let usageLimitStatus = store.addCreditsNudgeStatusText
+                await store.sendAddCreditsNudgeEmail(creditType: .credits)
+                let creditsStatus = store.addCreditsNudgeStatusText
+                await store.stopAppServerForTesting()
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let ok = usageLimitStatus == "已发送提醒邮件" &&
+                    creditsStatus == "冷却中，稍后再试" &&
+                    logText.contains(#""method":"account/sendAddCreditsNudgeEmail""#) &&
+                    logText.contains(#""creditType":"usage_limit""#) &&
+                    logText.contains(#""creditType":"credits""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "usageLimitStatus": usageLimitStatus,
+                    "creditsStatus": creditsStatus,
+                    "runtimeCatalogStatus": store.runtimeCatalogStatusText,
+                    "runtimeCatalogErrors": store.runtimeCatalogErrors,
+                    "requestLogPreview": String(logText.prefix(1400))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runProjectSwitchSmoke() {
         Task { @MainActor in
             let temporaryRoot = FileManager.default.temporaryDirectory
@@ -5565,6 +5630,58 @@ enum SmokeTestRunner {
                     continue
                 clients = [client for client in clients if client.get("clientId") != client_id]
                 send_result(request_id, {})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeAddCreditsNudgeAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_ADD_CREDITS_NUDGE_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "account/sendAddCreditsNudgeEmail":
+                credit_type = params.get("creditType")
+                if credit_type == "usage_limit":
+                    send_result(request_id, {"status": "sent"})
+                elif credit_type == "credits":
+                    send_result(request_id, {"status": "cooldown_active"})
+                else:
+                    send_error(request_id, f"unexpected creditType {credit_type}")
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

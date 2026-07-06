@@ -1094,6 +1094,17 @@ public struct CodexRuntimeRateLimitWindow: Equatable, Sendable {
     }
 }
 
+public enum CodexAddCreditsNudgeCreditType: String, Equatable, Sendable {
+    case credits
+    case usageLimit = "usage_limit"
+}
+
+public enum CodexAddCreditsNudgeEmailStatus: String, Equatable, Sendable {
+    case sent
+    case cooldownActive = "cooldown_active"
+    case unknown
+}
+
 public struct CodexRuntimeThreadCatalog: Equatable, Sendable {
     public var threads: [CodexRuntimeThreadSummary]
     public var nextCursor: String?
@@ -2012,6 +2023,16 @@ public actor CodexAppServerClient {
     public func readAccountRateLimits() async throws -> CodexRuntimeRateLimits {
         let result = try await request(method: "account/rateLimits/read", params: .object([:]))
         return Self.runtimeRateLimits(from: result)
+    }
+
+    public func sendAddCreditsNudgeEmail(
+        creditType: CodexAddCreditsNudgeCreditType
+    ) async throws -> CodexAddCreditsNudgeEmailStatus {
+        let result = try await request(method: "account/sendAddCreditsNudgeEmail", params: .object([
+            "creditType": .string(creditType.rawValue)
+        ]))
+        let rawStatus = result["status"]?.stringValue ?? ""
+        return CodexAddCreditsNudgeEmailStatus(rawValue: rawStatus) ?? .unknown
     }
 
     public func startChatGPTAccountLogin(codexStreamlinedLogin: Bool = false) async throws -> CodexAccountLogin {
