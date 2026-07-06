@@ -26,6 +26,14 @@ struct Project: Identifiable, Equatable {
     }
 }
 
+struct RuntimeEnvironmentRegistration: Identifiable, Equatable {
+    var id: String { environmentID }
+    var environmentID: String
+    var execServerURL: String
+    var cwd: String
+    var registeredAt: Date
+}
+
 /// A single conversation thread. Each thread carries its own transcript and a
 /// per-thread runtime configuration (model / sandbox / approval), just like a
 /// Codex conversation.
@@ -109,11 +117,27 @@ struct ChatThread: Identifiable, Equatable {
 struct ActiveGoal: Equatable {
     var title: String
     var startedAt: Date
+    var status: CodexRuntimeGoalStatus
+    var tokenBudget: Int?
+    var tokensUsed: Int
+    var timeUsedSeconds: Int
     var runtimeBacked: Bool
 
-    init(title: String, startedAt: Date, runtimeBacked: Bool = false) {
+    init(
+        title: String,
+        startedAt: Date,
+        status: CodexRuntimeGoalStatus = .active,
+        tokenBudget: Int? = nil,
+        tokensUsed: Int = 0,
+        timeUsedSeconds: Int = 0,
+        runtimeBacked: Bool = false
+    ) {
         self.title = title
         self.startedAt = startedAt
+        self.status = status
+        self.tokenBudget = tokenBudget
+        self.tokensUsed = tokensUsed
+        self.timeUsedSeconds = timeUsedSeconds
         self.runtimeBacked = runtimeBacked
     }
 }

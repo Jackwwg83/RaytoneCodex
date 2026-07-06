@@ -104,6 +104,8 @@ final class SessionStore: ObservableObject {
     @Published var desktopAppearance = "跟随系统"
     @Published var desktopOpenTarget = "iTerm2"
     @Published var desktopLanguage = "自动检测"
+    @Published var desktopCommitInstructions = ""
+    @Published var desktopPullRequestInstructions = ""
     @Published var defaultPermissionsEnabled = true
     @Published var defaultFullAccessPermissionsEnabled = false
     @Published var runtimeAccount: CodexRuntimeAccount?
@@ -113,6 +115,12 @@ final class SessionStore: ObservableObject {
     @Published var selectedThreadTokenUsage: CodexRuntimeThreadTokenUsage?
     @Published var runtimeRateLimits: CodexRuntimeRateLimits?
     @Published var runtimeRequirements: CodexRuntimeConfigRequirements?
+    @Published var runtimeRegisteredEnvironments: [RuntimeEnvironmentRegistration] = []
+    @Published var selectedRuntimeEnvironmentID: String?
+    @Published var runtimeEnvironmentIDDraft = "remote-a"
+    @Published var runtimeEnvironmentURLDraft = "http://127.0.0.1:8080"
+    @Published var runtimeEnvironmentCwdDraft = ""
+    @Published var runtimeEnvironmentStatusText = "未注册"
     @Published var runtimeRemoteControlStatus: CodexRuntimeRemoteControlStatus?
     @Published var runtimeRemoteControlPairing: CodexRemoteControlPairing?
     @Published var runtimeRemoteControlPairingClaimed: Bool?
@@ -136,6 +144,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeLoadedThreadsStatusText = "未读取"
     @Published var runtimeThreadMetadataStatusText = "未同步"
     @Published var runtimeThreadSyncStatusText = "未同步"
+    @Published var runtimeElicitationStatusText = "未挂起"
     @Published var runtimeThreadSearchSnippets: [String: String] = [:]
     @Published var workspaceGitDiff: CodexRuntimeGitDiff?
     @Published var workspaceGitStatusText = ""
@@ -234,6 +243,7 @@ final class SessionStore: ObservableObject {
     private var pendingApprovalResponseKinds: [UUID: PendingApprovalResponseKind] = [:]
     private var pendingMcpElicitationRequestIDs: [UUID: CodexAppServerRequestID] = [:]
     private var pendingToolUserInputRequestIDs: [UUID: CodexAppServerRequestID] = [:]
+    private var outOfBandElicitationThreadIDsByItemID: [UUID: String] = [:]
     private var activeAppServerTurnID: String?
     private var appServerConnectionState: ConnectionState?
     private var appServerEnvironmentKey: String?
@@ -245,6 +255,8 @@ final class SessionStore: ObservableObject {
     private var activeTerminalRunID: UUID?
     private var activeTerminalProcessID: String?
     private var activeProxySession: RaytoneProxySession?
+    private var providerSelectionTask: Task<Void, Never>?
+    private var providerModelSelectionTask: Task<Void, Never>?
     private var preventSleepAssertionID: IOPMAssertionID?
     var appServerEnvironmentOverridesForTesting: [String: String] = [:]
 
@@ -536,6 +548,8 @@ final class SessionStore: ObservableObject {
         if let config {
             applyRuntimeDesktopSettings(config.desktopSettings)
             applyRuntimeProviderSettings(config)
+            desktopCommitInstructions = config.raytoneCommitInstructions ?? ""
+            desktopPullRequestInstructions = config.raytonePullRequestInstructions ?? ""
         }
         applyRuntimeDefaultPermissionsProfile(
             config?.defaultPermissions ?? fallbackDefaultPermissions ?? runtimeRequirements?.defaultPermissions
@@ -674,6 +688,8 @@ final class SessionStore: ObservableObject {
         pendingApprovalResponseKinds.removeAll()
         pendingMcpElicitationRequestIDs.removeAll()
         pendingToolUserInputRequestIDs.removeAll()
+        outOfBandElicitationThreadIDsByItemID.removeAll()
+        runtimeElicitationStatusText = "未挂起"
         mcpElicitationDrafts.removeAll()
         toolUserInputDrafts.removeAll()
         toolUserInputSelections.removeAll()
@@ -683,6 +699,8 @@ final class SessionStore: ObservableObject {
         resetFilePanelWatch()
         await proxyService.stop()
         activeProxySession = nil
+        providerSelectionTask?.cancel()
+        providerSelectionTask = nil
     }
 
     func selectThread(_ thread: ChatThread) {
@@ -917,6 +935,14 @@ final class SessionStore: ObservableObject {
             await runReviewOfCurrentChanges(displayedPrompt: trimmedPrompt, instructions: arguments.isEmpty ? nil : arguments)
             return true
 
+        case "/commit", "/commit-message":
+            await runCommitMessageGeneration(displayedPrompt: trimmedPrompt, instructions: arguments.isEmpty ? nil : arguments)
+            return true
+
+        case "/pr", "/pull-request":
+            await runPullRequestSummaryGeneration(displayedPrompt: trimmedPrompt, instructions: arguments.isEmpty ? nil : arguments)
+            return true
+
         case "/init":
             let suffix = arguments.isEmpty ? "" : "\n\n补充要求：\(arguments)"
             await runAgentPrompt(
@@ -1101,6 +1127,128 @@ final class SessionStore: ObservableObject {
         let trimmedInstructions = instructions?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let suffix = trimmedInstructions.isEmpty ? "" : "\n\n补充要求：\(trimmedInstructions)"
         return "请审查当前工作区变更，重点找 bug、行为回归、风险和缺失测试。先读取 git status 和 git diff，再按严重程度给出结论。\(suffix)"
+    }
+
+    private func runCommitMessageGeneration(displayedPrompt: String, instructions: String?) async {
+        guard !isRunning else { return }
+        await refreshWorkspaceGitDiff()
+        let runtimePrompt = Self.commitMessagePrompt(
+            gitStatus: workspaceGitStatusText,
+            diff: workspaceGitDiff?.diff ?? "",
+            savedInstructions: desktopCommitInstructions,
+            oneOffInstructions: instructions
+        )
+        slashCommandStatusText = "command/exec git + turn/start：生成提交信息"
+        await runAgentPrompt(runtimePrompt, displayedPrompt: displayedPrompt)
+    }
+
+    private func runPullRequestSummaryGeneration(displayedPrompt: String, instructions: String?) async {
+        guard !isRunning else { return }
+        await refreshWorkspaceGitDiff()
+        await refreshWorkspacePullRequestStatus()
+        let runtimePrompt = Self.pullRequestPrompt(
+            gitStatus: workspaceGitStatusText,
+            diff: workspaceGitDiff?.diff ?? "",
+            pullRequestStatus: workspacePullRequestStatusText,
+            savedInstructions: desktopPullRequestInstructions,
+            oneOffInstructions: instructions
+        )
+        slashCommandStatusText = "command/exec git + turn/start：生成 PR 标题和描述"
+        await runAgentPrompt(runtimePrompt, displayedPrompt: displayedPrompt)
+    }
+
+    private static func commitMessagePrompt(
+        gitStatus: String,
+        diff: String,
+        savedInstructions: String,
+        oneOffInstructions: String?
+    ) -> String {
+        let instructionBlock = combinedInstructionBlock(
+            title: "提交指令",
+            savedInstructions: savedInstructions,
+            oneOffInstructions: oneOffInstructions
+        )
+        return """
+        请基于当前工作区未提交变更生成一条高质量 git commit message。
+
+        输出要求：
+        - 第一行是简洁英文 commit subject，不超过 72 个字符。
+        - 如有必要，空一行后用 2-5 条中文要点解释主要改动和验证。
+        - 不要执行 git commit，不要修改文件。
+        \(instructionBlock)
+
+        以下 Git 状态和 diff 已由 RaytoneCodex 通过 Codex app-server 的 command/exec 读取：
+
+        ```text
+        \(boundedGitText(gitStatus, fallback: "未返回 git status。"))
+        ```
+
+        ```diff
+        \(boundedGitText(diff, fallback: "当前没有未提交 diff。"))
+        ```
+        """
+    }
+
+    private static func pullRequestPrompt(
+        gitStatus: String,
+        diff: String,
+        pullRequestStatus: String,
+        savedInstructions: String,
+        oneOffInstructions: String?
+    ) -> String {
+        let instructionBlock = combinedInstructionBlock(
+            title: "拉取请求指令",
+            savedInstructions: savedInstructions,
+            oneOffInstructions: oneOffInstructions
+        )
+        return """
+        请基于当前工作区变更生成拉取请求标题和描述草稿。
+
+        输出要求：
+        - 先给一行 PR 标题。
+        - 然后给“摘要”“验证”“风险”三段。
+        - 不要创建 PR，不要推送分支，不要修改文件。
+        \(instructionBlock)
+
+        当前 PR 状态：\(pullRequestStatus)
+
+        以下 Git 状态和 diff 已由 RaytoneCodex 通过 Codex app-server 的 command/exec 读取：
+
+        ```text
+        \(boundedGitText(gitStatus, fallback: "未返回 git status。"))
+        ```
+
+        ```diff
+        \(boundedGitText(diff, fallback: "当前没有未提交 diff。"))
+        ```
+        """
+    }
+
+    private static func combinedInstructionBlock(
+        title: String,
+        savedInstructions: String,
+        oneOffInstructions: String?
+    ) -> String {
+        let saved = savedInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        let oneOff = oneOffInstructions?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var lines: [String] = []
+        if !saved.isEmpty {
+            lines.append("\(title)：\(saved)")
+        }
+        if !oneOff.isEmpty {
+            lines.append("本次补充要求：\(oneOff)")
+        }
+        guard !lines.isEmpty else { return "" }
+        return "\n" + lines.joined(separator: "\n")
+    }
+
+    private static func boundedGitText(_ text: String, fallback: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fallback }
+        let maxCount = 20_000
+        guard trimmed.count > maxCount else { return trimmed }
+        let prefix = String(trimmed.prefix(maxCount))
+        return "\(prefix)\n\n[已截断：仅保留前 \(maxCount) 字符]"
     }
 
     private static func isStructuredReviewPayload(_ text: String) -> Bool {
@@ -1307,8 +1455,46 @@ final class SessionStore: ObservableObject {
         if isRunning {
             await interruptRunningTurn()
         } else if !shouldUpdateRuntimeGoal {
-            clearSelectedThreadActiveGoal()
+            updateSelectedThread { thread in
+                guard var goal = thread.activeGoal else { return }
+                goal.status = .paused
+                goal.timeUsedSeconds = max(goal.timeUsedSeconds, Int(Date().timeIntervalSince(goal.startedAt)))
+                thread.activeGoal = goal
+                thread.updatedAt = Date()
+            }
+            runtimeCatalogStatusText = "本地目标已暂停"
         }
+    }
+
+    func resumeActiveGoal() async {
+        guard selectedThread.activeGoal != nil else { return }
+
+        if selectedThread.activeGoal?.runtimeBacked == true,
+           let client = appServerClient,
+           let threadID = selectedThread.appServerThreadID {
+            do {
+                let goal = try await client.setThreadGoal(threadID: threadID, status: .active)
+                applyRuntimeGoal(goal)
+                runtimeCatalogStatusText = "thread/goal/set：active"
+            } catch {
+                updateSelectedThread { thread in
+                    thread.items.append(TranscriptItem(kind: .notice(Notice(
+                        level: .warning,
+                        text: "无法继续目标：\(error.localizedDescription)"
+                    ))))
+                }
+            }
+            return
+        }
+
+        updateSelectedThread { thread in
+            guard var goal = thread.activeGoal else { return }
+            goal.status = .active
+            goal.startedAt = Date().addingTimeInterval(TimeInterval(-goal.timeUsedSeconds))
+            thread.activeGoal = goal
+            thread.updatedAt = Date()
+        }
+        runtimeCatalogStatusText = "本地目标已继续"
     }
 
     func setActiveGoal(objective: String, tokenBudget: Int? = nil) async {
@@ -1386,6 +1572,10 @@ final class SessionStore: ObservableObject {
                 thread.activeGoal = ActiveGoal(
                     title: trimmedObjective,
                     startedAt: current.startedAt,
+                    status: current.status,
+                    tokenBudget: current.tokenBudget,
+                    tokensUsed: current.tokensUsed,
+                    timeUsedSeconds: current.timeUsedSeconds,
                     runtimeBacked: current.runtimeBacked
                 )
                 thread.updatedAt = Date()
@@ -1397,7 +1587,15 @@ final class SessionStore: ObservableObject {
         guard let threadID = selectedThread.appServerThreadID else {
             updateSelectedThread { thread in
                 guard let current = thread.activeGoal else { return }
-                thread.activeGoal = ActiveGoal(title: trimmedObjective, startedAt: current.startedAt, runtimeBacked: false)
+                thread.activeGoal = ActiveGoal(
+                    title: trimmedObjective,
+                    startedAt: current.startedAt,
+                    status: current.status,
+                    tokenBudget: current.tokenBudget,
+                    tokensUsed: current.tokensUsed,
+                    timeUsedSeconds: current.timeUsedSeconds,
+                    runtimeBacked: false
+                )
                 thread.updatedAt = Date()
             }
             runtimeCatalogStatusText = "目标已本地更新；当前线程没有 app-server threadId"
@@ -1463,6 +1661,7 @@ final class SessionStore: ObservableObject {
               let client = appServerClient else {
             return
         }
+        defer { endOutOfBandElicitation(itemID: itemID) }
         let responseKind = pendingApprovalResponseKinds.removeValue(forKey: itemID) ?? .appServerDecision
 
         do {
@@ -1515,6 +1714,7 @@ final class SessionStore: ObservableObject {
               let client = appServerClient else {
             return
         }
+        defer { endOutOfBandElicitation(itemID: itemID) }
 
         let appServerAction: CodexAppServerElicitationAction
         switch action {
@@ -1633,6 +1833,7 @@ final class SessionStore: ObservableObject {
               let client = appServerClient else {
             return
         }
+        defer { endOutOfBandElicitation(itemID: itemID) }
 
         do {
             try await client.respondToolUserInput(requestID: requestID, answers: answers)
@@ -3190,21 +3391,7 @@ final class SessionStore: ObservableObject {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        let url: URL?
-        if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
-            let expanded = (trimmed as NSString).expandingTildeInPath
-            url = URL(fileURLWithPath: expanded)
-        } else if trimmed.hasPrefix("./") || trimmed.hasPrefix("../") {
-            url = URL(fileURLWithPath: workspacePath)
-                .appendingPathComponent(trimmed)
-                .standardizedFileURL
-        } else if let parsed = URL(string: trimmed), parsed.scheme != nil {
-            url = parsed
-        } else {
-            url = URL(string: "https://\(trimmed)")
-        }
-
-        guard let url else { return }
+        guard let url = Self.browserURLCandidate(from: trimmed, workspacePath: workspacePath) else { return }
         if url.isFileURL {
             guard await verifyBrowserAddressFileURL(url) else {
                 return
@@ -3216,7 +3403,29 @@ final class SessionStore: ObservableObject {
         browserTitle = url.isFileURL ? url.lastPathComponent : (url.host ?? url.absoluteString)
         browserCanGoBack = false
         browserCanGoForward = false
+        browserSnapshotRequest = nil
+        browserScreenshotStatusText = ""
+        browserAttachedSnapshotPath = ""
         openToolPanel(.browser)
+    }
+
+    private static func browserURLCandidate(from address: String, workspacePath: String) -> URL? {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
+            let expanded = (trimmed as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded)
+        }
+        if trimmed.hasPrefix("./") || trimmed.hasPrefix("../") {
+            return URL(fileURLWithPath: workspacePath)
+                .appendingPathComponent(trimmed)
+                .standardizedFileURL
+        }
+        if let parsed = URL(string: trimmed), parsed.scheme != nil {
+            return parsed
+        }
+        return URL(string: "https://\(trimmed)")
     }
 
     private func verifyBrowserAddressFileURL(_ url: URL) async -> Bool {
@@ -4372,7 +4581,78 @@ final class SessionStore: ObservableObject {
             }
             cursor = nextCursor
         }
+        turns = try await turnsWithFullRuntimeItems(
+            turns,
+            threadID: threadID,
+            client: client,
+            pageLimit: pageLimit,
+            maxPages: maxPages
+        )
         return turns
+    }
+
+    private func turnsWithFullRuntimeItems(
+        _ turns: [JSONValue],
+        threadID: String,
+        client: CodexAppServerClient,
+        pageLimit: Int,
+        maxPages: Int
+    ) async throws -> [JSONValue] {
+        var enrichedTurns: [JSONValue] = []
+        enrichedTurns.reserveCapacity(turns.count)
+
+        for turn in turns {
+            guard let turnID = turn["id"]?.stringValue else {
+                enrichedTurns.append(turn)
+                continue
+            }
+
+            do {
+                let items = try await loadRuntimeThreadTurnItems(
+                    client: client,
+                    threadID: threadID,
+                    turnID: turnID,
+                    pageLimit: pageLimit,
+                    maxPages: maxPages
+                )
+                guard !items.isEmpty, var object = turn.objectValue else {
+                    enrichedTurns.append(turn)
+                    continue
+                }
+                object["items"] = .array(items)
+                enrichedTurns.append(.object(object))
+            } catch {
+                enrichedTurns.append(turn)
+            }
+        }
+
+        return enrichedTurns
+    }
+
+    private func loadRuntimeThreadTurnItems(
+        client: CodexAppServerClient,
+        threadID: String,
+        turnID: String,
+        pageLimit: Int = 100,
+        maxPages: Int = 20
+    ) async throws -> [JSONValue] {
+        var cursor: String?
+        var items: [JSONValue] = []
+        for _ in 0..<maxPages {
+            let page = try await client.listThreadTurnItems(
+                id: threadID,
+                turnID: turnID,
+                limit: pageLimit,
+                cursor: cursor,
+                sortDirection: "asc"
+            )
+            items.append(contentsOf: page.items)
+            guard let nextCursor = page.nextCursor, !nextCursor.isEmpty else {
+                break
+            }
+            cursor = nextCursor
+        }
+        return items
     }
 
     func unarchiveRuntimeThread(_ thread: CodexRuntimeThreadSummary) async {
@@ -4898,6 +5178,23 @@ final class SessionStore: ObservableObject {
         await runTerminalCommand()
     }
 
+    func runGitCreateRepositoryInTerminal() async {
+        showInspector = true
+        openToolPanel(.terminal)
+        terminalCommand = Self.gitCreateRepositoryCommand
+        await runTerminalCommand()
+        await syncSelectedThreadGitMetadata()
+        await refreshWorkspacePullRequestStatus()
+    }
+
+    func runGitPushCurrentBranchInTerminal() async {
+        showInspector = true
+        openToolPanel(.terminal)
+        terminalCommand = Self.gitPushCurrentBranchCommand
+        await runTerminalCommand()
+        await refreshWorkspacePullRequestStatus()
+    }
+
     func runGitDiffInTerminal() async {
         showInspector = true
         openToolPanel(.terminal)
@@ -4991,6 +5288,59 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    @discardableResult
+    func registerRuntimeEnvironment() async -> Bool {
+        let environmentID = runtimeEnvironmentIDDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let execServerURL = runtimeEnvironmentURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let environmentCwd = runtimeEnvironmentCwdDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !environmentID.isEmpty else {
+            runtimeEnvironmentStatusText = "请输入环境 ID"
+            return false
+        }
+        guard URL(string: execServerURL) != nil else {
+            runtimeEnvironmentStatusText = "请输入有效的执行服务器 URL"
+            return false
+        }
+
+        runtimeEnvironmentStatusText = "正在调用 environment/add…"
+        runtimeCatalogStatusText = "正在注册远程环境 \(environmentID)…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.addEnvironment(environmentID: environmentID, execServerURL: execServerURL)
+            let registration = RuntimeEnvironmentRegistration(
+                environmentID: environmentID,
+                execServerURL: execServerURL,
+                cwd: environmentCwd.isEmpty ? workspacePath : environmentCwd,
+                registeredAt: Date()
+            )
+            if let index = runtimeRegisteredEnvironments.firstIndex(where: { $0.environmentID == environmentID }) {
+                runtimeRegisteredEnvironments[index] = registration
+            } else {
+                runtimeRegisteredEnvironments.append(registration)
+            }
+            selectedRuntimeEnvironmentID = environmentID
+            runtimeEnvironmentStatusText = "environment/add：已注册 \(environmentID)"
+            runtimeCatalogStatusText = "environment/add：已注册 \(environmentID)"
+            return true
+        } catch {
+            runtimeEnvironmentStatusText = "environment/add 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimeEnvironmentStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            return false
+        }
+    }
+
+    func selectRuntimeEnvironment(_ environmentID: String?) {
+        selectedRuntimeEnvironmentID = environmentID
+        if let environmentID, !environmentID.isEmpty {
+            runtimeEnvironmentStatusText = "已选择环境：\(environmentID)"
+        } else {
+            runtimeEnvironmentStatusText = "使用默认本地环境"
+        }
     }
 
     func refreshWindowsSandboxReadiness() async {
@@ -6538,6 +6888,36 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func saveGitWritingInstructions(commit: String, pullRequest: String) async {
+        let trimmedCommit = commit.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPullRequest = pullRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+        desktopCommitInstructions = trimmedCommit
+        desktopPullRequestInstructions = trimmedPullRequest
+        runtimeCatalogStatusText = "正在写入提交/PR 指令…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.batchWriteConfig(edits: [
+                CodexConfigWriteEdit(
+                    keyPath: "desktop.raytone.commit_instructions",
+                    value: .string(trimmedCommit)
+                ),
+                CodexConfigWriteEdit(
+                    keyPath: "desktop.raytone.pull_request_instructions",
+                    value: .string(trimmedPullRequest)
+                )
+            ])
+            if let config = try? await client.readConfig(cwd: workspacePath, includeLayers: true) {
+                applyRuntimeConfig(config)
+            }
+            runtimeCatalogStatusText = "config/batchWrite：提交/PR 指令已保存"
+        } catch {
+            runtimeCatalogStatusText = "提交/PR 指令保存失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     private func ensureCodexConfigFile(using client: CodexAppServerClient) async throws -> URL {
         let configURL = Self.defaultCodexConfigURL(
             overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
@@ -6745,8 +7125,9 @@ final class SessionStore: ObservableObject {
 
     func selectProvider(_ providerID: String) {
         guard providers.contains(where: { $0.id == providerID }) else { return }
+        providerModelSelectionTask?.cancel()
         selectedProviderID = providerID
-        model = selectedProvider.usesSidecar ? selectedProvider.model : model
+        model = selectedProvider.model
         providerUsage = selectedProvider.usesSidecar ? providerUsageByProviderID[providerID] : nil
         providerUsageStatusText = selectedProvider.usesSidecar
             ? (providerUsage == nil ? "\(selectedProvider.displayName) 尚未读取 /usage" : "sidecar /usage：\(providerUsage?.successfulResponses ?? 0) 次响应")
@@ -6754,18 +7135,40 @@ final class SessionStore: ObservableObject {
         updateSelectedThread { thread in
             thread.model = model
         }
-        Task {
-            await persistRuntimeProviderSettings(statusName: "Provider 选择")
-            await resetAppServerForProviderChange()
+        providerSelectionTask?.cancel()
+        let providerID = selectedProviderID
+        providerSelectionTask = Task { [weak self] in
+            await self?.finishProviderSelection(providerID: providerID)
         }
+    }
+
+    private func finishProviderSelection(providerID: String) async {
+        guard selectedProviderID == providerID, !Task.isCancelled else { return }
+        await persistRuntimeProviderSettings(statusName: "Provider 选择")
+        guard selectedProviderID == providerID, !Task.isCancelled else { return }
+        await resetAppServerForProviderChange()
+    }
+
+    func waitForProviderSelectionToSettleForTesting() async {
+        await providerSelectionTask?.value
+        await providerModelSelectionTask?.value
     }
 
     func chooseProviderModel(providerID: String, model: String) {
         guard applyProviderModelSelection(providerID: providerID, model: model) != nil else { return }
-        Task {
-            await persistRuntimeProviderSettings(statusName: "Provider 模型")
-            await resetAppServerForProviderChange()
+        providerSelectionTask?.cancel()
+        providerModelSelectionTask?.cancel()
+        let providerID = selectedProviderID
+        let model = self.model
+        providerModelSelectionTask = Task { [weak self] in
+            await self?.finishProviderModelSelection(providerID: providerID, model: model)
         }
+    }
+
+    private func finishProviderModelSelection(providerID: String, model: String) async {
+        guard selectedProviderID == providerID, self.model == model, !Task.isCancelled else { return }
+        guard let provider = providers.first(where: { $0.id == providerID }) else { return }
+        await commitRuntimeModelSelection(provider: provider, model: model)
     }
 
     func saveProviderEndpoint(providerID: String, baseURL: String, model selectedModel: String) async {
@@ -6794,6 +7197,8 @@ final class SessionStore: ObservableObject {
             return
         }
 
+        providerSelectionTask?.cancel()
+        providerModelSelectionTask?.cancel()
         providers[index].baseURL = trimmedBaseURL
         providers[index].model = trimmedModel
         if !providers[index].models.contains(trimmedModel) {
@@ -6847,20 +7252,29 @@ final class SessionStore: ObservableObject {
     }
 
     func saveRuntimeModelSelection(providerID: String, model selectedModel: String) async {
+        providerSelectionTask?.cancel()
+        providerModelSelectionTask?.cancel()
         guard let provider = applyProviderModelSelection(providerID: providerID, model: selectedModel) else {
             modelCatalogStatusText = "未找到 provider：\(providerID)"
             return
         }
 
+        await commitRuntimeModelSelection(provider: provider, model: selectedModel)
+    }
+
+    private func commitRuntimeModelSelection(provider: RaytoneProviderConfiguration, model selectedModel: String) async {
         await syncSelectedThreadExecutionSettings(
             model: selectedModel,
             statusName: "模型 \(selectedModel)"
         )
 
+        guard isCurrentRuntimeModelSelection(providerID: provider.id, model: selectedModel) else { return }
         await resetAppServerForProviderChange()
+        guard isCurrentRuntimeModelSelection(providerID: provider.id, model: selectedModel) else { return }
 
         guard provider.usesSidecar == false else {
             await persistRuntimeProviderSettings(statusName: "\(provider.displayName) 模型")
+            guard isCurrentRuntimeModelSelection(providerID: provider.id, model: selectedModel) else { return }
             await resetAppServerForProviderChange()
             modelCatalogStatusText = "\(provider.displayName) 将通过 sidecar 会话使用 \(selectedModel)"
             return
@@ -6870,12 +7284,22 @@ final class SessionStore: ObservableObject {
         runtimeCatalogStatusText = "正在写入 model/model_provider…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            guard isCurrentRuntimeModelSelection(providerID: provider.id, model: selectedModel) else { return }
             try await client.batchWriteConfig(edits: [
                 CodexConfigWriteEdit(keyPath: "model", value: .string(selectedModel)),
-                CodexConfigWriteEdit(keyPath: "model_provider", value: .string(provider.id))
+                CodexConfigWriteEdit(keyPath: "model_provider", value: .string(provider.id)),
+                CodexConfigWriteEdit(
+                    keyPath: "desktop.raytone.selected_provider_id",
+                    value: .string(provider.id)
+                ),
+                CodexConfigWriteEdit(
+                    keyPath: "desktop.raytone.providers_json",
+                    value: .string(Self.providersConfigJSONString(providers.filter(\.usesSidecar)))
+                )
             ])
             let config = try await client.readConfig(cwd: workspacePath, includeLayers: true)
             applyRuntimeConfig(config)
+            guard isCurrentRuntimeModelSelection(providerID: provider.id, model: selectedModel) else { return }
             modelCatalogStatusText = "model/model_provider 已写入 config.toml"
             runtimeCatalogStatusText = "Codex 默认模型已更新为 \(selectedModel)"
         } catch {
@@ -6883,6 +7307,10 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "模型写入失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    private func isCurrentRuntimeModelSelection(providerID: String, model selectedModel: String) -> Bool {
+        selectedProviderID == providerID && model == selectedModel && !Task.isCancelled
     }
 
     func providerThinkingEnabled(_ provider: RaytoneProviderConfiguration) -> Bool {
@@ -7414,6 +7842,8 @@ final class SessionStore: ObservableObject {
             pendingApprovalResponseKinds.removeAll()
             pendingMcpElicitationRequestIDs.removeAll()
             pendingToolUserInputRequestIDs.removeAll()
+            outOfBandElicitationThreadIDsByItemID.removeAll()
+            runtimeElicitationStatusText = "未挂起"
             mcpElicitationDrafts.removeAll()
             toolUserInputDrafts.removeAll()
             toolUserInputSelections.removeAll()
@@ -7577,8 +8007,22 @@ final class SessionStore: ObservableObject {
             approvalPolicy: approval,
             approvalsReviewer: approvalsReviewer,
             personality: personality,
-            collaborationMode: collaborationModePreset(forWorkModeID: runtimeWorkModeID)
+            collaborationMode: collaborationModePreset(forWorkModeID: runtimeWorkModeID),
+            environments: selectedRuntimeEnvironmentsForAppServer()
         )
+    }
+
+    private func selectedRuntimeEnvironmentsForAppServer() -> [CodexTurnEnvironment]? {
+        guard let selectedRuntimeEnvironmentID,
+              let environment = runtimeRegisteredEnvironments.first(where: { $0.environmentID == selectedRuntimeEnvironmentID }) else {
+            return nil
+        }
+        return [
+            CodexTurnEnvironment(
+                environmentID: environment.environmentID,
+                cwd: environment.cwd.isEmpty ? workspacePath : environment.cwd
+            )
+        ]
     }
 
     func previewPluginMentions(for prompt: String) async -> [CodexAppServerMention] {
@@ -7707,6 +8151,7 @@ final class SessionStore: ObservableObject {
                             return nil
                         }.last ?? "运行 Codex",
                         startedAt: Date(timeIntervalSince1970: TimeInterval(startedAt)),
+                        status: .active,
                         runtimeBacked: runtimeBacked
                     )
                 }
@@ -8656,7 +9101,15 @@ final class SessionStore: ObservableObject {
             ? Date(timeIntervalSince1970: TimeInterval(startedAtSeconds))
             : Date()
         updateThread(appServerThreadID: goal.threadID) { thread in
-            thread.activeGoal = ActiveGoal(title: goal.objective, startedAt: startedAt, runtimeBacked: true)
+            thread.activeGoal = ActiveGoal(
+                title: goal.objective,
+                startedAt: startedAt,
+                status: goal.status,
+                tokenBudget: goal.tokenBudget,
+                tokensUsed: goal.tokensUsed,
+                timeUsedSeconds: goal.timeUsedSeconds,
+                runtimeBacked: true
+            )
             thread.updatedAt = Date()
         }
     }
@@ -8682,6 +9135,50 @@ final class SessionStore: ObservableObject {
         clearSelectedThreadActiveGoal()
     }
 
+    private func threadIDForElicitationCounter(params: JSONValue?) -> String? {
+        params?["threadId"]?.stringValue ?? selectedThread.appServerThreadID
+    }
+
+    private func beginOutOfBandElicitation(itemID: UUID, threadID: String?) {
+        guard let threadID, !threadID.isEmpty, outOfBandElicitationThreadIDsByItemID[itemID] == nil else {
+            return
+        }
+        outOfBandElicitationThreadIDsByItemID[itemID] = threadID
+        runtimeElicitationStatusText = "thread/increment_elicitation：正在同步"
+
+        Task { @MainActor in
+            do {
+                guard let client = appServerClient else {
+                    throw CodexAppServerError.notRunning
+                }
+                let counter = try await client.incrementThreadElicitation(threadID: threadID)
+                runtimeElicitationStatusText = "thread/increment_elicitation：count \(counter.count) · \(counter.paused ? "已暂停超时" : "未暂停")"
+            } catch {
+                runtimeElicitationStatusText = "thread/increment_elicitation 失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func endOutOfBandElicitation(itemID: UUID) {
+        guard let threadID = outOfBandElicitationThreadIDsByItemID.removeValue(forKey: itemID),
+              !threadID.isEmpty else {
+            return
+        }
+        runtimeElicitationStatusText = "thread/decrement_elicitation：正在同步"
+
+        Task { @MainActor in
+            do {
+                guard let client = appServerClient else {
+                    throw CodexAppServerError.notRunning
+                }
+                let counter = try await client.decrementThreadElicitation(threadID: threadID)
+                runtimeElicitationStatusText = "thread/decrement_elicitation：count \(counter.count) · \(counter.paused ? "仍暂停" : "已恢复超时")"
+            } catch {
+                runtimeElicitationStatusText = "thread/decrement_elicitation 失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
     private func handleAppServerRequest(id: CodexAppServerRequestID, method: String, params: JSONValue?) {
         switch method {
         case "item/commandExecution/requestApproval":
@@ -8702,6 +9199,7 @@ final class SessionStore: ObservableObject {
             )
             pendingApprovalRequestIDs[transcriptID] = id
             pendingApprovalResponseKinds[transcriptID] = .appServerDecision
+            beginOutOfBandElicitation(itemID: transcriptID, threadID: threadIDForElicitationCounter(params: params))
             upsertTranscriptItem(serverItemID: serverItemID, kind: .approval(request))
         case "item/fileChange/requestApproval":
             let reason = params?["reason"]?.stringValue
@@ -8717,6 +9215,7 @@ final class SessionStore: ObservableObject {
             )
             pendingApprovalRequestIDs[transcriptID] = id
             pendingApprovalResponseKinds[transcriptID] = .appServerDecision
+            beginOutOfBandElicitation(itemID: transcriptID, threadID: threadIDForElicitationCounter(params: params))
             upsertTranscriptItem(serverItemID: "approval:\(id.description)", kind: .approval(request))
         case "item/permissions/requestApproval":
             let requestedPermissions = params?["permissions"] ?? .object([:])
@@ -8732,6 +9231,7 @@ final class SessionStore: ObservableObject {
             )
             pendingApprovalRequestIDs[transcriptID] = id
             pendingApprovalResponseKinds[transcriptID] = .permissions(requested: requestedPermissions)
+            beginOutOfBandElicitation(itemID: transcriptID, threadID: threadIDForElicitationCounter(params: params))
             upsertTranscriptItem(
                 serverItemID: serverItemID,
                 kind: .approval(request)
@@ -8755,6 +9255,7 @@ final class SessionStore: ObservableObject {
             )
             pendingApprovalRequestIDs[transcriptID] = id
             pendingApprovalResponseKinds[transcriptID] = .legacyReviewDecision
+            beginOutOfBandElicitation(itemID: transcriptID, threadID: threadIDForElicitationCounter(params: params))
             upsertTranscriptItem(
                 serverItemID: "approval:\(id.description):legacy-exec:\(callID)",
                 kind: .approval(request)
@@ -8777,6 +9278,7 @@ final class SessionStore: ObservableObject {
             )
             pendingApprovalRequestIDs[transcriptID] = id
             pendingApprovalResponseKinds[transcriptID] = .legacyReviewDecision
+            beginOutOfBandElicitation(itemID: transcriptID, threadID: threadIDForElicitationCounter(params: params))
             upsertTranscriptItem(
                 serverItemID: "approval:\(id.description):legacy-patch:\(callID)",
                 kind: .approval(request)
@@ -8800,6 +9302,7 @@ final class SessionStore: ObservableObject {
                 mcpElicitationDrafts[transcriptID] = Self.defaultMcpElicitationDraft(from: requestedSchema)
             }
             pendingMcpElicitationRequestIDs[transcriptID] = id
+            beginOutOfBandElicitation(itemID: transcriptID, threadID: threadIDForElicitationCounter(params: params))
             upsertTranscriptItem(
                 serverItemID: "mcp-elicitation:\(id.description)",
                 kind: .mcpElicitation(request)
@@ -8818,6 +9321,7 @@ final class SessionStore: ObservableObject {
             )
             initializeToolUserInputState(itemID: transcriptID, questions: questions)
             pendingToolUserInputRequestIDs[transcriptID] = id
+            beginOutOfBandElicitation(itemID: transcriptID, threadID: threadIDForElicitationCounter(params: params))
             upsertTranscriptItem(
                 serverItemID: "tool-user-input:\(id.description):\(itemID)",
                 kind: .toolUserInput(request)
@@ -9644,6 +10148,7 @@ final class SessionStore: ObservableObject {
         }
         for itemID in resolvedApprovalIDs {
             pendingApprovalResponseKinds.removeValue(forKey: itemID)
+            endOutOfBandElicitation(itemID: itemID)
         }
         let resolvedElicitationIDs = pendingMcpElicitationRequestIDs.compactMap { itemID, value in
             value.description == requestID ? itemID : nil
@@ -9653,6 +10158,7 @@ final class SessionStore: ObservableObject {
         }
         for itemID in resolvedElicitationIDs {
             updateMcpElicitationStatusIfPending(itemID: itemID, status: .cancelled)
+            endOutOfBandElicitation(itemID: itemID)
         }
         let resolvedToolInputIDs = pendingToolUserInputRequestIDs.compactMap { itemID, value in
             value.description == requestID ? itemID : nil
@@ -9662,6 +10168,7 @@ final class SessionStore: ObservableObject {
         }
         for itemID in resolvedToolInputIDs {
             setToolUserInputStatusIfPending(itemID: itemID, status: .cancelled)
+            endOutOfBandElicitation(itemID: itemID)
         }
     }
 
@@ -10078,6 +10585,15 @@ final class SessionStore: ObservableObject {
         if namespace == "raytone_browser", tool == "current_page" {
             return browserCurrentPageDynamicToolText(arguments: arguments)
         }
+        if namespace == "raytone_browser", tool == "open_url" {
+            return await browserOpenURLDynamicToolText(arguments: arguments)
+        }
+        if namespace == "raytone_browser", tool == "capture_snapshot" {
+            return browserCaptureSnapshotDynamicToolText(arguments: arguments)
+        }
+        if namespace == "raytone_terminal", tool == "run_command" {
+            return await runTerminalCommandDynamicToolText(arguments: arguments)
+        }
         if namespace == "raytone_mcp", tool == "read_resource" {
             return await readMCPResourceDynamicToolText(threadID: threadID, arguments: arguments)
         }
@@ -10184,6 +10700,105 @@ final class SessionStore: ObservableObject {
     private func browserCurrentPageDynamicToolText(arguments: JSONValue) -> (success: Bool, text: String) {
         let includeSnapshotPath = arguments["includeSnapshotPath"]?.boolValue ?? true
         return (true, browserStateJSON(includeSnapshotPath: includeSnapshotPath).prettyJSONString)
+    }
+
+    private func browserOpenURLDynamicToolText(arguments: JSONValue) async -> (success: Bool, text: String) {
+        guard let address = Self.trimmedDynamicToolString(arguments["url"]) ??
+            Self.trimmedDynamicToolString(arguments["address"]) else {
+            return (false, "必须提供要打开的 url。")
+        }
+        guard let requestedURL = Self.browserURLCandidate(from: address, workspacePath: workspacePath) else {
+            return (false, "无法解析浏览器地址：\(address)")
+        }
+
+        await openBrowserAddress(address)
+        if arguments["captureSnapshot"]?.boolValue ?? false {
+            captureBrowserPanelScreenshot()
+        }
+
+        let opened = Self.browserURLsMatch(browserURL, requestedURL)
+        var payloadObject = browserStateJSON(
+            includeSnapshotPath: arguments["includeSnapshotPath"]?.boolValue ?? true
+        ).objectValue ?? [:]
+        payloadObject["requestedURL"] = .string(requestedURL.absoluteString)
+        payloadObject["opened"] = .bool(opened)
+        payloadObject["source"] = .string("RaytoneCodex BrowserPanel + Codex app-server fs/getMetadata")
+        let payload = JSONValue.object(payloadObject)
+        return (
+            opened,
+            opened
+                ? payload.prettyJSONString
+                : "浏览器未能打开目标地址：\(address)\n\(payload.prettyJSONString)"
+        )
+    }
+
+    private func browserCaptureSnapshotDynamicToolText(arguments: JSONValue) -> (success: Bool, text: String) {
+        guard browserURL != nil else {
+            return (false, "没有可截图的网页。请先调用 raytone_browser.open_url。")
+        }
+
+        captureBrowserPanelScreenshot()
+        var payloadObject = browserStateJSON(
+            includeSnapshotPath: arguments["includeSnapshotPath"]?.boolValue ?? true
+        ).objectValue ?? [:]
+        payloadObject["source"] = .string("RaytoneCodex BrowserPanel WKWebView snapshot request")
+        payloadObject["snapshotRequested"] = .bool(browserSnapshotRequest != nil)
+        let payload = JSONValue.object(payloadObject)
+        return (true, payload.prettyJSONString)
+    }
+
+    private func runTerminalCommandDynamicToolText(arguments: JSONValue) async -> (success: Bool, text: String) {
+        guard let client = appServerClient else {
+            return (false, "Codex app-server 尚未连接，无法运行终端命令。")
+        }
+        guard let command = Self.trimmedDynamicToolString(arguments["command"]) else {
+            return (false, "必须提供 command。")
+        }
+
+        let rawCWD = arguments["cwd"]?.stringValue ?? "."
+        guard let cwdPath = Self.dynamicToolWorkspacePath(rawCWD, workspacePath: workspacePath) else {
+            return (false, "cwd 必须位于当前工作区内：\(rawCWD)")
+        }
+
+        let timeoutSeconds = min(max(arguments["timeoutSeconds"]?.intValue ?? 30, 1), 120)
+        let timeoutMs = timeoutSeconds * 1000
+        let recordID = UUID()
+        terminalRuns.append(TerminalCommandRecord(
+            id: recordID,
+            command: command,
+            output: "正在通过 app-server command/exec 运行…"
+        ))
+        openToolPanel(.terminal)
+
+        do {
+            let result = try await client.execCommand(
+                ["/bin/zsh", "-lc", command],
+                cwd: URL(fileURLWithPath: cwdPath),
+                sandbox: sandbox,
+                timeoutMs: timeoutMs
+            )
+            let output = [result.stdout, result.stderr]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+            completeTerminalRun(id: recordID, finalOutput: output, exitCode: result.exitCode)
+            runtimeCatalogStatusText = "command/exec：动态终端 · exit \(result.exitCode)"
+
+            let payload: JSONValue = .object([
+                "source": .string("Codex app-server command/exec"),
+                "command": .string(command),
+                "cwd": .string(cwdPath),
+                "relativeCWD": .string(Self.dynamicToolRelativeWorkspacePath(cwdPath, workspacePath: workspacePath)),
+                "sandbox": .string(sandbox.rawValue),
+                "timeoutMs": .number(Double(timeoutMs)),
+                "exitCode": .number(Double(result.exitCode)),
+                "stdout": .string(result.stdout),
+                "stderr": .string(result.stderr)
+            ])
+            return (result.exitCode == 0, payload.prettyJSONString)
+        } catch {
+            failTerminalRun(id: recordID, errorText: error.localizedDescription)
+            return (false, "command/exec 失败：\(error.localizedDescription)")
+        }
     }
 
     private func readMCPResourceDynamicToolText(
@@ -10307,6 +10922,14 @@ final class SessionStore: ObservableObject {
         return promptReferencePath(for: normalized, workspacePath: workspacePath)
     }
 
+    private static func browserURLsMatch(_ lhs: URL?, _ rhs: URL) -> Bool {
+        guard let lhs else { return false }
+        if lhs.isFileURL || rhs.isFileURL {
+            return lhs.standardizedFileURL.path == rhs.standardizedFileURL.path
+        }
+        return lhs.absoluteString == rhs.absoluteString
+    }
+
     private func workspaceSnapshotText(arguments: JSONValue) -> String {
         let includeDiffStats = arguments["includeDiffStats"]?.boolValue ?? true
         let currentGoal = selectedThread.activeGoal
@@ -10329,8 +10952,12 @@ final class SessionStore: ObservableObject {
         snapshot["activeGoal"] = currentGoal.map { goal in
             .object([
                 "title": .string(goal.title),
+                "status": .string(goal.status.rawValue),
                 "startedAt": .number(goal.startedAt.timeIntervalSince1970),
                 "elapsedSeconds": .number(Date().timeIntervalSince(goal.startedAt)),
+                "timeUsedSeconds": .number(Double(goal.timeUsedSeconds)),
+                "tokensUsed": .number(Double(goal.tokensUsed)),
+                "tokenBudget": goal.tokenBudget.map { .number(Double($0)) } ?? .null,
                 "runtimeBacked": .bool(goal.runtimeBacked)
             ])
         } ?? .null
@@ -10624,17 +11251,18 @@ final class SessionStore: ObservableObject {
       echo "detached HEAD，无法关联 PR"
       exit 0
     fi
-    if ! command -v gh >/dev/null 2>&1; then
+    gh_bin="${RAYTONE_GH_PATH:-gh}"
+    if ! command -v "$gh_bin" >/dev/null 2>&1; then
       echo "未安装 GitHub CLI，无法查询 PR"
       exit 0
     fi
-    if ! gh auth status -h github.com >/dev/null 2>&1; then
+    if ! "$gh_bin" auth status -h github.com >/dev/null 2>&1; then
       echo "GitHub CLI 未登录，无法查询 PR"
       exit 0
     fi
-    out=$(gh pr view "$branch" --json number,state,title,isDraft,reviewDecision,headRefName,baseRefName,url --jq 'def state_name: if .state == "OPEN" then "打开" elif .state == "MERGED" then "已合并" elif .state == "CLOSED" then "已关闭" else .state end; def review_name: if .reviewDecision == "APPROVED" then "已批准" elif .reviewDecision == "CHANGES_REQUESTED" then "需修改" elif .reviewDecision == "REVIEW_REQUIRED" then "待审查" else "未审查" end; "PR #\\(.number) \\(state_name)\\(if .isDraft then " · 草稿" else "" end) · \\(review_name) · \\(.headRefName)→\\(.baseRefName) · \\(.title)"' 2>&1)
-    status=$?
-    if [ $status -eq 0 ]; then
+    out=$("$gh_bin" pr view "$branch" --json number,state,title,isDraft,reviewDecision,headRefName,baseRefName,url --jq 'def state_name: if .state == "OPEN" then "打开" elif .state == "MERGED" then "已合并" elif .state == "CLOSED" then "已关闭" else .state end; def review_name: if .reviewDecision == "APPROVED" then "已批准" elif .reviewDecision == "CHANGES_REQUESTED" then "需修改" elif .reviewDecision == "REVIEW_REQUIRED" then "待审查" else "未审查" end; "PR #\\(.number) \\(state_name)\\(if .isDraft then " · 草稿" else "" end) · \\(review_name) · \\(.headRefName)→\\(.baseRefName) · \\(.title)"' 2>&1)
+    pr_rc=$?
+    if [ $pr_rc -eq 0 ]; then
       echo "$out"
       exit 0
     fi
@@ -10669,6 +11297,133 @@ final class SessionStore: ObservableObject {
     else
       echo "确认变更后可手动执行：git add -A && git commit -m '<message>' && git push"
     fi
+    """
+
+    private static let gitCreateRepositoryCommand = """
+    set +e
+    echo "== GitHub 建库预检 =="
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "不是 Git 工作区；请先运行 git init 并提交一次，再创建 GitHub 仓库。"
+      exit 2
+    fi
+
+    branch=$(git branch --show-current 2>/dev/null)
+    if [ -z "$branch" ]; then
+      echo "当前是 detached HEAD；请先切到一个分支，再创建 GitHub 仓库。"
+      exit 2
+    fi
+
+    existing_origin=$(git remote get-url origin 2>/dev/null)
+    if [ -n "$existing_origin" ]; then
+      echo "已配置 origin：$existing_origin"
+      echo "无需重复创建 GitHub 仓库；如需发布当前分支，请点“推送”。"
+      exit 0
+    fi
+
+    gh_bin="${RAYTONE_GH_PATH:-gh}"
+    if ! command -v "$gh_bin" >/dev/null 2>&1; then
+      echo "未安装 GitHub CLI，无法创建 GitHub 仓库。"
+      echo "安装后请运行：gh auth login"
+      exit 5
+    fi
+
+    if ! "$gh_bin" auth status -h github.com >/dev/null 2>&1; then
+      echo "GitHub CLI 未登录，无法创建 GitHub 仓库。请先运行：gh auth login"
+      exit 6
+    fi
+
+    top_level=$(git rev-parse --show-toplevel 2>/dev/null)
+    repo_name="${RAYTONE_GITHUB_REPO_NAME:-$(basename "$top_level")}"
+    repo_name=$(printf '%s' "$repo_name" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-//;s/-$//')
+    if [ -z "$repo_name" ]; then
+      echo "无法推断仓库名；请设置 RAYTONE_GITHUB_REPO_NAME 后重试。"
+      exit 7
+    fi
+
+    echo "仓库：$repo_name"
+    echo "可见性：private"
+    echo "执行：$gh_bin repo create $repo_name --private --source=. --remote=origin"
+    "$gh_bin" repo create "$repo_name" --private --source=. --remote=origin
+    create_rc=$?
+    if [ $create_rc -ne 0 ]; then
+      echo "gh repo create 失败：$create_rc"
+      exit $create_rc
+    fi
+
+    origin_after=$(git remote get-url origin 2>/dev/null)
+    if [ -z "$origin_after" ]; then
+      echo "仓库创建命令完成，但 origin 未写入；请检查 gh 输出。"
+      exit 8
+    fi
+
+    echo
+    echo "== 仓库已创建 =="
+    echo "origin：$origin_after"
+    echo "下一步：点击“推送”发布当前分支 $branch。"
+    """
+
+    private static let gitPushCurrentBranchCommand = """
+    set +e
+    echo "== GitHub 推送预检 =="
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      echo "不是 Git 工作区"
+      exit 2
+    fi
+
+    branch=$(git branch --show-current 2>/dev/null)
+    if [ -z "$branch" ]; then
+      echo "当前是 detached HEAD；请先切到一个分支，再推送。"
+      exit 2
+    fi
+    gh_bin="${RAYTONE_GH_PATH:-gh}"
+
+    git_status_porcelain=$(git status --porcelain=v1 2>/dev/null)
+    if [ -n "$git_status_porcelain" ]; then
+      echo "当前还有未提交变更；请先提交或清理后再推送。"
+      echo
+      git status --short --branch
+      exit 3
+    fi
+
+    origin=$(git remote get-url origin 2>/dev/null)
+    if [ -z "$origin" ]; then
+      echo "未配置 origin；请先创建 GitHub 仓库或添加远端。"
+      echo "示例：gh repo create --private --source=. --remote=origin"
+      exit 4
+    fi
+
+    if ! command -v "$gh_bin" >/dev/null 2>&1; then
+      echo "未安装 GitHub CLI，无法确认 GitHub 登录态。"
+      echo "安装后请运行：gh auth login"
+      exit 5
+    fi
+
+    if ! "$gh_bin" auth status -h github.com >/dev/null 2>&1; then
+      echo "GitHub CLI 未登录，无法安全推送。请先运行：gh auth login"
+      exit 6
+    fi
+
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)
+    echo "分支：$branch"
+    echo "origin：$origin"
+    if [ -z "$upstream" ]; then
+      echo "执行：git push -u origin $branch"
+      git push -u origin "$branch"
+    else
+      echo "upstream：$upstream"
+      echo "执行：git push"
+      git push
+    fi
+    push_rc=$?
+    if [ $push_rc -ne 0 ]; then
+      echo "git push 失败：$push_rc"
+      exit $push_rc
+    fi
+
+    echo
+    echo "== 推送完成 =="
+    "$gh_bin" pr view "$branch" --json number,state,title,url --jq '"PR #\\(.number) \\(.state) · \\(.title) · \\(.url)"' 2>/dev/null || \
+      echo "当前分支没有 PR；需要时可执行：gh pr create --draft --fill"
     """
 
     private static let gitMetadataCommand = """

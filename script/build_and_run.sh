@@ -1370,6 +1370,403 @@ run_package_audit() {
   trap - RETURN
 }
 
+run_functional_smoke() {
+  local artifact_dir report runtime_path runtime_version started_at overall_ok case_count
+  artifact_dir="${RAYTONE_CODEX_FUNCTIONAL_SMOKE_DIR:-$DIST_DIR/functional-smoke-$(date -u +%Y%m%dT%H%M%SZ)}"
+  report="$artifact_dir/raytonecodex-functional-smoke.json"
+  runtime_path="$(local_cli_for_verification)"
+  runtime_version="$(run_cli_version "$runtime_path" | tr -d '\r')"
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  overall_ok=true
+  case_count=0
+
+  mkdir -p "$artifact_dir"
+  printf '{\n' >"$report"
+  printf '  "ok": true,\n' >>"$report"
+  printf '  "startedAt": "%s",\n' "$(json_escape "$started_at")" >>"$report"
+  printf '  "artifactDir": "%s",\n' "$(json_escape "$artifact_dir")" >>"$report"
+  printf '  "runtimePath": "%s",\n' "$(json_escape "$runtime_path")" >>"$report"
+  printf '  "runtimeVersion": "%s",\n' "$(json_escape "$runtime_version")" >>"$report"
+  printf '  "sidecarPath": "%s",\n' "$(json_escape "$RAYTONE_PROXY_BINARY")" >>"$report"
+  printf '  "cases": [\n' >>"$report"
+
+  run_functional_smoke_case() {
+    local name stdout_file stderr_file started_seconds ended_seconds duration_seconds status reported_ok case_ok
+    name="$1"
+    shift
+    stdout_file="$artifact_dir/$name.stdout.json"
+    stderr_file="$artifact_dir/$name.stderr.log"
+    started_seconds="$(date +%s)"
+
+    echo "functional-smoke: $name" >&2
+    if /usr/bin/env \
+      RAYTONE_CODEX_CLI="$runtime_path" \
+      RAYTONE_PROXY="$RAYTONE_PROXY_BINARY" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" "$@" >"$stdout_file" 2>"$stderr_file"; then
+      status=0
+    else
+      status="$?"
+      overall_ok=false
+    fi
+
+    ended_seconds="$(date +%s)"
+    duration_seconds="$((ended_seconds - started_seconds))"
+    if /usr/bin/grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' "$stdout_file"; then
+      reported_ok=true
+    else
+      reported_ok=false
+      overall_ok=false
+    fi
+    if [[ "$status" == "0" && "$reported_ok" == "true" ]]; then
+      case_ok=true
+    else
+      case_ok=false
+    fi
+
+    if [[ "$case_count" -gt 0 ]]; then
+      printf ',\n' >>"$report"
+    fi
+    printf '    {\n' >>"$report"
+    printf '      "name": "%s",\n' "$(json_escape "$name")" >>"$report"
+    printf '      "ok": %s,\n' "$case_ok" >>"$report"
+    printf '      "exitCode": %s,\n' "$status" >>"$report"
+    printf '      "reportedOk": %s,\n' "$reported_ok" >>"$report"
+    printf '      "durationSeconds": %s,\n' "$duration_seconds" >>"$report"
+    printf '      "stdout": "%s",\n' "$(json_escape "$stdout_file")" >>"$report"
+    printf '      "stderr": "%s"\n' "$(json_escape "$stderr_file")" >>"$report"
+    printf '    }' >>"$report"
+    case_count="$((case_count + 1))"
+  }
+
+  run_functional_smoke_case home-connection-app-mention \
+    --home-connection-app-mention-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case file-search \
+    --file-search-smoke-test
+  run_functional_smoke_case plugin-read \
+    --plugin-read-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case catalog \
+    --catalog-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case skill-read \
+    --skill-read-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case skill-extra-roots \
+    --skill-extra-roots-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case skill-toggle \
+    --skill-toggle-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case plugin-scaffold \
+    --plugin-scaffold-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case plugin-install-response \
+    --plugin-install-response-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case plugin-share \
+    --plugin-share-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case marketplace-upgrade \
+    --marketplace-upgrade-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case codex-home-directory \
+    --codex-home-directory-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case automation-hook \
+    --automation-hook-smoke-test
+  run_functional_smoke_case cli \
+    --cli-smoke-test \
+    --workspace "$ROOT_DIR" \
+    --prompt "Reply exactly: RaytoneCodex bundled CLI smoke OK"
+  run_functional_smoke_case session \
+    --session-smoke-test \
+    --workspace "$ROOT_DIR" \
+    --prompt "Reply exactly: RaytoneCodex session smoke OK"
+  run_functional_smoke_case config-write \
+    --config-write-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case environment \
+    --environment-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case runtime-environment \
+    --runtime-environment-smoke-test
+  run_functional_smoke_case git-repo-create \
+    --git-repo-create-smoke-test
+  run_functional_smoke_case git-push \
+    --git-push-smoke-test
+  run_functional_smoke_case thread-shell-command \
+    --thread-shell-command-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case thread-management \
+    --thread-management-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case thread-bootstrap-actions \
+    --thread-bootstrap-actions-smoke-test
+  run_functional_smoke_case thread-lifecycle \
+    --thread-lifecycle-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case thread-resume \
+    --thread-resume-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case history \
+    --history-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case loaded-threads \
+    --loaded-threads-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case thread-unsubscribe \
+    --thread-unsubscribe-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case thread-metadata \
+    --thread-metadata-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case interrupt \
+    --interrupt-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case approval-compat \
+    --approval-compat-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case goal \
+    --goal-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case side-chat \
+    --side-chat-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case side-chat-injection \
+    --side-chat-injection-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case integration-pages \
+    --integration-pages-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case home-connection-actions \
+    --home-connection-actions-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case app-mention-config \
+    --app-mention-config-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case app-mention-turn \
+    --app-mention-turn-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case file-mention-turn \
+    --file-mention-turn-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case local-image-input \
+    --local-image-input-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case mention \
+    --mention-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case browser-navigation \
+    --browser-navigation-smoke-test
+  run_functional_smoke_case browser-clear-data \
+    --browser-clear-data-smoke-test
+  run_functional_smoke_case browser-snapshot-input \
+    --browser-snapshot-input-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case mcp-resource \
+    --mcp-resource-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case mcp-tool \
+    --mcp-tool-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case mcp-elicitation \
+    --mcp-elicitation-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case tool-user-input \
+    --tool-user-input-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case dynamic-tool \
+    --dynamic-tool-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case tools \
+    --tools-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case terminal-stream \
+    --terminal-stream-smoke-test
+  run_functional_smoke_case terminal-resize \
+    --terminal-resize-smoke-test
+  run_functional_smoke_case review \
+    --review-smoke-test
+  run_functional_smoke_case slash \
+    --slash-smoke-test
+  run_functional_smoke_case hook-controls \
+    --hook-controls-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case project-switch \
+    --project-switch-smoke-test
+  run_functional_smoke_case workspace-switch \
+    --workspace-switch-smoke-test
+  run_functional_smoke_case branch-switch \
+    --branch-switch-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case worktree-switch \
+    --worktree-switch-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case settings-scene \
+    --settings-scene-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case account-auth \
+    --account-auth-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case account-device-code \
+    --account-device-code-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case connection-recovery \
+    --connection-recovery-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case account-api-key \
+    --account-api-key-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case auth-attestation \
+    --auth-attestation-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case profile-privacy \
+    --profile-privacy-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case profile-share \
+    --profile-share-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case add-credits-nudge \
+    --add-credits-nudge-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case feedback-upload \
+    --feedback-upload-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case windows-sandbox \
+    --windows-sandbox-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case experimental-features \
+    --experimental-features-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case guardian-denial-approve \
+    --guardian-denial-approve-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case runtime-pages \
+    --runtime-pages-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case settings-project \
+    --settings-project-smoke-test
+  RAYTONE_CODEX_ENABLE_SAMPLE_DATA="" RAYTONE_CODEX_UI_SCREEN="" run_functional_smoke_case sample-data-gate-empty \
+    --sample-data-gate-smoke-test
+  RAYTONE_CODEX_ENABLE_SAMPLE_DATA="1" RAYTONE_CODEX_UI_SCREEN="" run_functional_smoke_case sample-data-gate-enabled \
+    --sample-data-gate-smoke-test \
+    --expect-samples
+  run_functional_smoke_case usage-activity \
+    --usage-activity-smoke-test
+  run_functional_smoke_case automation \
+    --automation-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case hook-notification \
+    --hook-notification-smoke-test
+  run_functional_smoke_case file-change-stream \
+    --file-change-stream-smoke-test
+  run_functional_smoke_case runtime-diagnostics \
+    --runtime-diagnostics-smoke-test
+  run_functional_smoke_case process-stream \
+    --process-stream-smoke-test
+  run_functional_smoke_case app-server-notification \
+    --app-server-notification-smoke-test
+  run_functional_smoke_case external-agent-config \
+    --external-agent-config-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case external-agent-real \
+    --external-agent-real-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case app-list-updated \
+    --app-list-updated-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case model-catalog \
+    --model-catalog-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case model-provider-capabilities \
+    --model-provider-capabilities-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case model-config \
+    --model-config-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case reasoning-config \
+    --reasoning-config-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case instructions-config \
+    --instructions-config-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case default-permissions \
+    --default-permissions-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case service-tier \
+    --service-tier-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case memory-settings \
+    --memory-settings-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case thread-memory-mode \
+    --thread-memory-mode-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case work-mode \
+    --work-mode-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case desktop-settings \
+    --desktop-settings-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case open-target \
+    --open-target-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case prevent-sleep \
+    --prevent-sleep-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case realtime-voices \
+    --realtime-voices-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case realtime-session \
+    --realtime-session-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case access-mode \
+    --access-mode-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case new-thread-permissions \
+    --new-thread-permissions-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case personality \
+    --personality-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case provider-onboarding \
+    --provider-onboarding-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case provider-unauthorized \
+    --provider-unauthorized-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case remote-control \
+    --remote-control-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case remote-control-mode \
+    --remote-control-mode-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case remote-control-revoke \
+    --remote-control-revoke-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case provider-sidecar \
+    --provider-sidecar-smoke-test \
+    --workspace "$ROOT_DIR"
+  run_functional_smoke_case auto-review \
+    --auto-review-smoke-test \
+    --workspace "$ROOT_DIR"
+
+  printf '\n  ],\n' >>"$report"
+  printf '  "caseCount": %s,\n' "$case_count" >>"$report"
+  printf '  "finishedAt": "%s"\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$report"
+  printf '}\n' >>"$report"
+
+  if [[ "$overall_ok" != "true" ]]; then
+    /usr/bin/perl -0pi -e 's/"ok": true/"ok": false/' "$report"
+    cat "$report"
+    return 1
+  fi
+
+  cat "$report"
+}
+
 acquire_stage_lock
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 for _ in {1..40}; do
@@ -1518,6 +1915,25 @@ case "$MODE" in
       "$BUILD_BINARY" \
       --environment-smoke-test \
       --workspace "$ROOT_DIR"
+    ;;
+  --runtime-environment-smoke|runtime-environment-smoke)
+    /usr/bin/env \
+      "$BUILD_BINARY" \
+      --runtime-environment-smoke-test
+    ;;
+  --git-repo-create-smoke|git-repo-create-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --git-repo-create-smoke-test
+    ;;
+  --git-push-smoke|git-push-smoke)
+    /usr/bin/env \
+      RAYTONE_CODEX_CLI="$(local_cli_for_verification)" \
+      RAYTONE_CODEX_WORKSPACE="$ROOT_DIR" \
+      "$BUILD_BINARY" \
+      --git-push-smoke-test
     ;;
   --config-write-smoke|config-write-smoke)
     /usr/bin/env \
@@ -2321,6 +2737,9 @@ case "$MODE" in
   --ui-smoke|ui-smoke)
     run_ui_smoke
     ;;
+  --functional-smoke|functional-smoke)
+    run_functional_smoke
+    ;;
   --bundle-audit|bundle-audit)
     run_bundle_audit
     ;;
@@ -2342,7 +2761,7 @@ case "$MODE" in
     run_package_audit
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--side-chat-injection-smoke|--environment-smoke|--config-write-smoke|--thread-management-smoke|--thread-bootstrap-actions-smoke|--thread-lifecycle-smoke|--thread-resume-smoke|--loaded-threads-smoke|--thread-unsubscribe-smoke|--thread-metadata-smoke|--thread-shell-command-smoke|--tools-smoke|--terminal-stream-smoke|--terminal-resize-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--account-device-code-smoke|--connection-recovery-smoke|--account-api-key-smoke|--profile-privacy-smoke|--profile-share-smoke|--add-credits-nudge-smoke|--feedback-upload-smoke|--windows-sandbox-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--skill-read-smoke|--skill-extra-roots-smoke|--skill-toggle-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--plugin-share-smoke|--marketplace-upgrade-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--mcp-elicitation-smoke|--tool-user-input-smoke|--approval-compat-smoke|--dynamic-tool-smoke|--interrupt-smoke|--auth-attestation-smoke|--guardian-denial-approve-smoke|--runtime-pages-smoke|--settings-scene-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-notification-smoke|--file-change-stream-smoke|--runtime-diagnostics-smoke|--process-stream-smoke|--app-server-notification-smoke|--hook-controls-smoke|--integration-pages-smoke|--home-connection-actions-smoke|--home-connection-app-mention-smoke|--app-mention-config-smoke|--app-mention-turn-smoke|--file-mention-turn-smoke|--project-switch-smoke|--workspace-switch-smoke|--branch-switch-smoke|--worktree-switch-smoke|--remote-control-smoke|--remote-control-mode-smoke|--remote-control-revoke-smoke|--realtime-voices-smoke|--realtime-session-smoke|--access-mode-smoke|--new-thread-permissions-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--external-agent-real-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--provider-onboarding-smoke|--provider-unauthorized-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--thread-memory-mode-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-clear-data-smoke|--browser-snapshot-smoke|--browser-snapshot-input-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--cli-smoke|--session-smoke|--history-smoke|--side-chat-smoke|--side-chat-injection-smoke|--environment-smoke|--runtime-environment-smoke|--git-repo-create-smoke|--git-push-smoke|--config-write-smoke|--thread-management-smoke|--thread-bootstrap-actions-smoke|--thread-lifecycle-smoke|--thread-resume-smoke|--loaded-threads-smoke|--thread-unsubscribe-smoke|--thread-metadata-smoke|--thread-shell-command-smoke|--tools-smoke|--terminal-stream-smoke|--terminal-resize-smoke|--file-search-smoke|--local-image-input-smoke|--review-smoke|--slash-smoke|--catalog-smoke|--account-auth-smoke|--account-device-code-smoke|--connection-recovery-smoke|--account-api-key-smoke|--profile-privacy-smoke|--profile-share-smoke|--add-credits-nudge-smoke|--feedback-upload-smoke|--windows-sandbox-smoke|--experimental-features-smoke|--mention-smoke|--plugin-read-smoke|--skill-read-smoke|--skill-extra-roots-smoke|--skill-toggle-smoke|--plugin-scaffold-smoke|--plugin-install-response-smoke|--plugin-share-smoke|--marketplace-upgrade-smoke|--codex-home-directory-smoke|--mcp-resource-smoke|--mcp-tool-smoke|--mcp-elicitation-smoke|--tool-user-input-smoke|--approval-compat-smoke|--dynamic-tool-smoke|--interrupt-smoke|--auth-attestation-smoke|--guardian-denial-approve-smoke|--runtime-pages-smoke|--settings-scene-smoke|--sample-data-gate-smoke|--usage-activity-smoke|--settings-project-smoke|--automation-smoke|--automation-hook-smoke|--hook-notification-smoke|--file-change-stream-smoke|--runtime-diagnostics-smoke|--process-stream-smoke|--app-server-notification-smoke|--hook-controls-smoke|--integration-pages-smoke|--home-connection-actions-smoke|--home-connection-app-mention-smoke|--app-mention-config-smoke|--app-mention-turn-smoke|--file-mention-turn-smoke|--project-switch-smoke|--workspace-switch-smoke|--branch-switch-smoke|--worktree-switch-smoke|--remote-control-smoke|--remote-control-mode-smoke|--remote-control-revoke-smoke|--realtime-voices-smoke|--realtime-session-smoke|--access-mode-smoke|--new-thread-permissions-smoke|--personality-smoke|--model-catalog-smoke|--model-provider-capabilities-smoke|--external-agent-config-smoke|--external-agent-real-smoke|--app-list-updated-smoke|--model-config-smoke|--provider-sidecar-smoke|--provider-onboarding-smoke|--provider-unauthorized-smoke|--reasoning-config-smoke|--instructions-config-smoke|--default-permissions-smoke|--auto-review-smoke|--service-tier-smoke|--memory-settings-smoke|--thread-memory-mode-smoke|--work-mode-smoke|--desktop-settings-smoke|--open-target-smoke|--prevent-sleep-smoke|--goal-smoke|--browser-navigation-smoke|--browser-clear-data-smoke|--browser-snapshot-smoke|--browser-snapshot-input-smoke|--settings-browser-snapshot-smoke|--ui-smoke|--functional-smoke|--bundle-audit|--release-audit|--package|--package-zip|--package-dmg|--package-audit]" >&2
     exit 2
     ;;
 esac

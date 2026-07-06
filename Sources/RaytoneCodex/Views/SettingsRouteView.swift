@@ -14,6 +14,7 @@ struct SettingsRouteView: View {
     @State private var providerEndpointDraftProviderID = ""
     @State private var providerStatusMessage = "未测试"
     @State private var instructionsStatus = ""
+    @State private var gitWritingInstructionsStatus = ""
     @State private var profileStatus = ""
     @State private var didRequestSettingsBrowserSnapshotSmoke = false
     @State private var showFeedbackUpload = false
@@ -22,9 +23,11 @@ struct SettingsRouteView: View {
     @State private var feedbackIncludeLogs = false
     @State private var usageActivityScale = "每日"
     @State private var customInstructions = """
-    Prefer concise, actionable engineering updates.
-    Keep implementation notes tied to real files and runtime evidence.
+    默认使用简洁、可执行的工程说明。
+    汇报时绑定真实文件、命令和运行时证据。
     """
+    @State private var commitInstructions = ""
+    @State private var pullRequestInstructions = ""
 
     private var defaultPermissionsBinding: Binding<Bool> {
         Binding(
@@ -190,6 +193,8 @@ struct SettingsRouteView: View {
             } else if let instructions = store.runtimeConfig?.instructions, !instructions.isEmpty {
                 customInstructions = instructions
             }
+            commitInstructions = store.desktopCommitInstructions
+            pullRequestInstructions = store.desktopPullRequestInstructions
         }
     }
 
@@ -1731,6 +1736,71 @@ struct SettingsRouteView: View {
                 }
             }
 
+            SettingsSection(title: "提交与拉取请求", description: "保存后会写入 config.toml，并在 /commit 或 /pr 生成文案时注入给 Codex。") {
+                VStack(alignment: .trailing, spacing: 12) {
+                    SettingsCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack {
+                                    Text("提交指令")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Spacer(minLength: 0)
+                                    Text("用于 /commit")
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
+                                TextEditor(text: $commitInstructions)
+                                    .font(Theme.mono(12))
+                                    .scrollContentBackground(.hidden)
+                                    .padding(10)
+                                    .frame(minHeight: 82)
+                                    .background(Theme.fillSubtle)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                            }
+
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack {
+                                    Text("拉取请求指令")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Spacer(minLength: 0)
+                                    Text("用于 /pr")
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
+                                TextEditor(text: $pullRequestInstructions)
+                                    .font(Theme.mono(12))
+                                    .scrollContentBackground(.hidden)
+                                    .padding(10)
+                                    .frame(minHeight: 94)
+                                    .background(Theme.fillSubtle)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                            }
+                        }
+                    }
+
+                    HStack {
+                        Text(gitWritingInstructionsStatus.isEmpty ? store.runtimeCatalogStatusText : gitWritingInstructionsStatus)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Button("保存") {
+                            gitWritingInstructionsStatus = "正在保存…"
+                            Task {
+                                await store.saveGitWritingInstructions(
+                                    commit: commitInstructions,
+                                    pullRequest: pullRequestInstructions
+                                )
+                                gitWritingInstructionsStatus = store.runtimeCatalogStatusText
+                            }
+                        }
+                        .buttonStyle(ChipButtonStyle(prominent: true))
+                    }
+                }
+            }
+
             realtimeVoiceSection
 
             SettingsSection(title: "记忆（实验性）", description: "设置 Codex 如何收集、保留和整合记忆。了解更多") {
@@ -2617,6 +2687,89 @@ struct SettingsRouteView: View {
                 metricRow("上游代理", optionalBoolText(store.runtimeRequirements?.allowUpstreamProxy))
                 metricRow("Windows 沙箱", listPreview(store.runtimeRequirements?.allowedWindowsSandboxImplementations ?? []))
                 metricRow("受管 Hooks", managedHooksPreview(store.runtimeRequirements))
+            }
+
+            SettingsSection(title: "远程执行环境") {
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SettingsValueRow(title: "环境 ID", description: "传给 Codex app-server 的 environmentId") {
+                            TextField("remote-a", text: $store.runtimeEnvironmentIDDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(Theme.mono(11.5))
+                                .frame(width: 190)
+                        }
+                        SettingsValueRow(title: "执行服务器", description: "远程 exec server URL，用于 environment/add 注册") {
+                            TextField("http://127.0.0.1:8080", text: $store.runtimeEnvironmentURLDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(Theme.mono(11.5))
+                                .frame(width: 260)
+                        }
+                        SettingsValueRow(title: "工作目录", description: "thread/start 与 turn/start 选择环境时使用的 cwd") {
+                            TextField(store.workspacePath, text: $store.runtimeEnvironmentCwdDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(Theme.mono(11.5))
+                                .frame(width: 260)
+                        }
+                        SettingsValueRow(title: "当前选择", description: "默认本地环境不会发送 environments 字段") {
+                            Menu {
+                                Button("默认本地") {
+                                    store.selectRuntimeEnvironment(nil)
+                                }
+                                ForEach(store.runtimeRegisteredEnvironments) { environment in
+                                    Button(environment.environmentID) {
+                                        store.selectRuntimeEnvironment(environment.environmentID)
+                                    }
+                                }
+                            } label: {
+                                menuLabel(store.selectedRuntimeEnvironmentID ?? "默认本地")
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                        }
+                        HStack(spacing: 8) {
+                            Button("注册环境") {
+                                Task { await store.registerRuntimeEnvironment() }
+                            }
+                            .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                            .disabled(store.runtimeCatalogIsRefreshing)
+
+                            Text(store.runtimeEnvironmentStatusText)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        if !store.runtimeRegisteredEnvironments.isEmpty {
+                            Divider()
+                                .overlay(Theme.borderSoft)
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(store.runtimeRegisteredEnvironments) { environment in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Image(systemName: environment.environmentID == store.selectedRuntimeEnvironmentID ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundStyle(environment.environmentID == store.selectedRuntimeEnvironmentID ? Theme.success : Theme.textTertiary)
+                                            .frame(width: 18)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(environment.environmentID)
+                                                .font(.system(size: 12.5, weight: .semibold))
+                                                .foregroundStyle(Theme.textPrimary)
+                                            Text(environment.execServerURL)
+                                                .font(Theme.mono(10.5))
+                                                .foregroundStyle(Theme.textSecondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                            Text(Project.abbreviate(environment.cwd))
+                                                .font(Theme.mono(10.5))
+                                                .foregroundStyle(Theme.textTertiary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             SettingsSection(title: "权限配置") {

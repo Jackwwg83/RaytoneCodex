@@ -74,7 +74,15 @@ struct ThreadView: View {
                 ActiveGoalBar(
                     goal: activeGoal,
                     onEdit: { store.promptEditActiveGoal() },
-                    onPause: { Task { await store.pauseActiveGoal() } },
+                    onPause: {
+                        Task {
+                            if activeGoal.status == .paused {
+                                await store.resumeActiveGoal()
+                            } else {
+                                await store.pauseActiveGoal()
+                            }
+                        }
+                    },
                     onDelete: { Task { await store.clearActiveGoal() } },
                     onExpand: {
                         withAnimation(.easeInOut(duration: 0.18)) {

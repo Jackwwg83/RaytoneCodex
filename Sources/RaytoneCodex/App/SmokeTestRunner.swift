@@ -219,6 +219,12 @@ enum SmokeTestRunner {
             runSideChatInjectionSmoke()
         } else if CommandLine.arguments.contains("--environment-smoke-test") {
             runEnvironmentSmoke()
+        } else if CommandLine.arguments.contains("--runtime-environment-smoke-test") {
+            runRuntimeEnvironmentSmoke()
+        } else if CommandLine.arguments.contains("--git-repo-create-smoke-test") {
+            runGitRepoCreateSmoke()
+        } else if CommandLine.arguments.contains("--git-push-smoke-test") {
+            runGitPushSmoke()
         } else if CommandLine.arguments.contains("--slash-smoke-test") {
             runSlashSmoke()
         }
@@ -510,6 +516,12 @@ enum SmokeTestRunner {
                 await store.stopTerminalCommand()
                 _ = await terminateTask.value
                 let terminatedRun = store.terminalRuns.last
+                let terminalFact = store.environmentSourceFacts.first { fact in
+                    fact.title == "终端"
+                }
+                let terminalFactMatchesProcess = terminalFact?.source == "process/spawn" &&
+                    terminalFact?.active == true &&
+                    terminalFact?.detail.contains("2 次") == true
 
                 let ok = store.runtimeSnapshot.executable != nil &&
                     streamedBeforeInput &&
@@ -521,6 +533,7 @@ enum SmokeTestRunner {
                     terminatedRun?.output.contains("sleeping") == true &&
                     terminatedRun?.output.contains("done") != true &&
                     store.runtimeCatalogStatusText.contains("process/exited") &&
+                    terminalFactMatchesProcess &&
                     store.terminalIsRunning == false
 
                 let stdinOutput = stdinRun?.output ?? ""
@@ -546,7 +559,16 @@ enum SmokeTestRunner {
                     "terminatedProcessHandle": terminatedRun?.processID ?? "",
                     "terminatedExitCode": Int(terminatedRun?.exitCode ?? -999),
                     "terminatedStatus": terminalStatusName(terminatedRun?.status),
-                    "terminatedOutput": terminatedOutput
+                    "terminatedOutput": terminatedOutput,
+                    "terminalFactMatchesProcess": terminalFactMatchesProcess,
+                    "terminalFact": terminalFact.map { fact in
+                        [
+                            "title": fact.title,
+                            "source": fact.source,
+                            "detail": fact.detail,
+                            "active": fact.active
+                        ] as [String: Any]
+                    } ?? NSNull()
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -774,6 +796,12 @@ enum SmokeTestRunner {
             await store.openFileEntry(createdEntry)
         }
         let mutationPreview = store.filePreview
+        let fileFact = store.environmentSourceFacts.first { fact in
+            fact.title == "文件"
+        }
+        let fileFactUsesRuntimeSource = fileFact?.source == "fs/getMetadata + fs/readFile" &&
+            fileFact?.active == true &&
+            fileFact?.detail.contains(createdFileURL.lastPathComponent) == true
 
         let ok = store.runtimeSnapshot.executable != nil &&
             targetResult != nil &&
@@ -798,6 +826,7 @@ enum SmokeTestRunner {
             sourceAfterCreateFolder.contains("fs/createDirectory") &&
             mutationPreview?.path == createdFileURL.path &&
             mutationPreview?.byteCount == 0 &&
+            fileFactUsesRuntimeSource &&
             watchedStatus.contains("已监听") &&
             watchedResult?.name == "WatchedRuntimeFile.txt"
 
@@ -868,7 +897,16 @@ enum SmokeTestRunner {
                 "source": previewReferenceSource
             ],
             "fileMutations": mutationsPayload,
-            "openedPreview": previewPayload
+            "openedPreview": previewPayload,
+            "fileFactUsesRuntimeSource": fileFactUsesRuntimeSource,
+            "fileFact": fileFact.map { fact in
+                [
+                    "title": fact.title,
+                    "source": fact.source,
+                    "detail": fact.detail,
+                    "active": fact.active
+                ] as [String: Any]
+            } ?? NSNull()
         ]
     }
 
@@ -1571,6 +1609,14 @@ enum SmokeTestRunner {
                 await store.runPrompt()
                 let elicitationItemID = await waitForMCPElicitation(in: store)
                 let defaultDraft = elicitationItemID.flatMap { store.mcpElicitationDrafts[$0] } ?? ""
+                let incrementDeadline = Date().addingTimeInterval(4)
+                while Date() < incrementDeadline {
+                    let currentLog = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if currentLog.contains(#""method":"thread/increment_elicitation""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
                 if let elicitationItemID {
                     store.updateMcpElicitationDraft(
                         itemID: elicitationItemID,
@@ -1590,6 +1636,7 @@ enum SmokeTestRunner {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                 }
                 await waitForStoreToSettle(store)
+                logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? logText
 
                 let elicitationRequests = store.selectedThread.items.compactMap { item -> McpElicitationRequest? in
                     if case let .mcpElicitation(request) = item.kind {
@@ -1602,8 +1649,12 @@ enum SmokeTestRunner {
                         request.serverName == "raytone_mcp" &&
                         request.message.contains("访问令牌")
                 }
+                let counterObserved = logText.contains(#""method":"thread/increment_elicitation""#) &&
+                    logText.contains(#""method":"thread/decrement_elicitation""#) &&
+                    logText.contains(#""threadId":"thread-smoke""#)
                 let ok = elicitationItemID != nil &&
                     accepted &&
+                    counterObserved &&
                     defaultDraft.contains(#""token""#) &&
                     defaultDraft.contains(#""confirmed""#) &&
                     logText.contains(#""method":"turn/start""#) &&
@@ -1622,6 +1673,8 @@ enum SmokeTestRunner {
                     "elicitationCount": elicitationRequests.count,
                     "defaultDraft": defaultDraft,
                     "accepted": accepted,
+                    "elicitationCounterObserved": counterObserved,
+                    "runtimeElicitationStatus": store.runtimeElicitationStatusText,
                     "isRunning": store.isRunning,
                     "requestLogPreview": String(logText.prefix(2200))
                 ])
@@ -1668,6 +1721,14 @@ enum SmokeTestRunner {
 
                 await store.runPrompt()
                 let requestItemID = await waitForToolUserInput(in: store)
+                let incrementDeadline = Date().addingTimeInterval(4)
+                while Date() < incrementDeadline {
+                    let currentLog = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if currentLog.contains(#""method":"thread/increment_elicitation""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
                 if let requestItemID {
                     store.selectToolUserInputOption(
                         itemID: requestItemID,
@@ -1693,6 +1754,7 @@ enum SmokeTestRunner {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                 }
                 await waitForStoreToSettle(store)
+                logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? logText
 
                 let requests = store.selectedThread.items.compactMap { item -> ToolUserInputRequest? in
                     if case let .toolUserInput(request) = item.kind {
@@ -1705,8 +1767,12 @@ enum SmokeTestRunner {
                         request.questions.count == 2 &&
                         request.questions.contains { $0.id == "q_secret" && $0.isSecret }
                 }
+                let counterObserved = logText.contains(#""method":"thread/increment_elicitation""#) &&
+                    logText.contains(#""method":"thread/decrement_elicitation""#) &&
+                    logText.contains(#""threadId":"thread-smoke""#)
                 let ok = requestItemID != nil &&
                     submitted &&
+                    counterObserved &&
                     logText.contains(#""method":"turn/start""#) &&
                     logText.contains(#""method":"item/tool/requestUserInput""#) &&
                     logText.contains(#""toolUserInputResponse""#) &&
@@ -1722,6 +1788,8 @@ enum SmokeTestRunner {
                     "transcriptItemCount": store.selectedThread.items.count,
                     "toolUserInputCount": requests.count,
                     "submitted": submitted,
+                    "elicitationCounterObserved": counterObserved,
+                    "runtimeElicitationStatus": store.runtimeElicitationStatusText,
                     "isRunning": store.isRunning,
                     "requestLogPreview": String(logText.prefix(2200))
                 ])
@@ -1806,6 +1874,7 @@ enum SmokeTestRunner {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                 }
                 await waitForStoreToSettle(store)
+                logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? logText
 
                 let approvals = store.selectedThread.items.compactMap { item -> ApprovalRequest? in
                     if case let .approval(request) = item.kind {
@@ -1813,7 +1882,11 @@ enum SmokeTestRunner {
                     }
                     return nil
                 }
+                let counterObserved = logText.contains(#""method":"thread/increment_elicitation""#) &&
+                    logText.contains(#""method":"thread/decrement_elicitation""#) &&
+                    logText.contains(#""threadId":"thread-smoke""#)
                 let ok = approvals.count >= 3 &&
+                    counterObserved &&
                     logText.contains(#""method":"item/permissions/requestApproval""#) &&
                     logText.contains(#""permissionsResponse""#) &&
                     logText.contains(#""network":{"enabled":true}"#) &&
@@ -1829,6 +1902,8 @@ enum SmokeTestRunner {
                     "fakeExecutable": scriptURL.path,
                     "requestLog": logURL.path,
                     "approvalCount": approvals.count,
+                    "elicitationCounterObserved": counterObserved,
+                    "runtimeElicitationStatus": store.runtimeElicitationStatusText,
                     "isRunning": store.isRunning,
                     "requestLogPreview": String(logText.prefix(2600))
                 ])
@@ -1931,7 +2006,7 @@ enum SmokeTestRunner {
                 var logText = ""
                 while Date() < deadline {
                     logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                    if logText.contains(#""dynamicToolBrowserResponse""#) {
+                    if logText.contains(#""dynamicToolTerminalResponse""#) {
                         break
                     }
                     try? await Task.sleep(nanoseconds: 100_000_000)
@@ -1954,28 +2029,50 @@ enum SmokeTestRunner {
                 let mcpResourceCommand = commands.last { command in
                     command.command.contains("动态工具 raytone_mcp.read_resource")
                 }
+                let browserOpenCommand = commands.last { command in
+                    command.command.contains("动态工具 raytone_browser.open_url")
+                }
+                let browserSnapshotCommand = commands.last { command in
+                    command.command.contains("动态工具 raytone_browser.capture_snapshot")
+                }
                 let browserCommand = commands.last { command in
                     command.command.contains("动态工具 raytone_browser.current_page")
+                }
+                let terminalCommand = commands.last { command in
+                    command.command.contains("动态工具 raytone_terminal.run_command")
                 }
                 let output = dynamicCommand?.output ?? ""
                 let filesOutput = filesCommand?.output ?? ""
                 let readFileOutput = readFileCommand?.output ?? ""
                 let mcpToolOutput = mcpToolCommand?.output ?? ""
                 let mcpResourceOutput = mcpResourceCommand?.output ?? ""
+                let browserOpenOutput = browserOpenCommand?.output ?? ""
+                let browserSnapshotOutput = browserSnapshotCommand?.output ?? ""
                 let browserOutput = browserCommand?.output ?? ""
+                let terminalOutput = terminalCommand?.output ?? ""
                 let normalizedOutput = output.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedFilesOutput = filesOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedReadFileOutput = readFileOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedMCPToolOutput = mcpToolOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedMCPResourceOutput = mcpResourceOutput.replacingOccurrences(of: "\\/", with: "/")
+                let normalizedBrowserOpenOutput = browserOpenOutput.replacingOccurrences(of: "\\/", with: "/")
+                let normalizedBrowserSnapshotOutput = browserSnapshotOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedBrowserOutput = browserOutput.replacingOccurrences(of: "\\/", with: "/")
+                let normalizedTerminalOutput = terminalOutput.replacingOccurrences(of: "\\/", with: "/")
+                let terminalPanelRun = store.terminalRuns.last { run in
+                    run.command.contains("Raytone dynamic terminal OK")
+                }
                 let registeredDynamicTool = logText.contains(#""dynamicTools""#) &&
                     logText.contains(#""namespace":"raytone_context""#) &&
                     logText.contains(#""name":"workspace_snapshot""#) &&
                     logText.contains(#""name":"list_workspace_files""#) &&
                     logText.contains(#""name":"read_workspace_file""#) &&
                     logText.contains(#""namespace":"raytone_browser""#) &&
+                    logText.contains(#""name":"open_url""#) &&
+                    logText.contains(#""name":"capture_snapshot""#) &&
                     logText.contains(#""name":"current_page""#) &&
+                    logText.contains(#""namespace":"raytone_terminal""#) &&
+                    logText.contains(#""name":"run_command""#) &&
                     logText.contains(#""namespace":"raytone_mcp""#) &&
                     logText.contains(#""name":"call_tool""#) &&
                     logText.contains(#""name":"read_resource""#)
@@ -1985,17 +2082,25 @@ enum SmokeTestRunner {
                     logText.contains(#""tool":"read_workspace_file""#) &&
                     logText.contains(#""tool":"call_tool""#) &&
                     logText.contains(#""tool":"read_resource""#) &&
-                    logText.contains(#""tool":"current_page""#)
+                    logText.contains(#""tool":"open_url""#) &&
+                    logText.contains(#""tool":"capture_snapshot""#) &&
+                    logText.contains(#""tool":"current_page""#) &&
+                    logText.contains(#""tool":"run_command""#)
                 let responseObserved = logText.contains(#""dynamicToolResponse""#) &&
                     logText.contains(#""dynamicToolFilesResponse""#) &&
                     logText.contains(#""dynamicToolReadFileResponse""#) &&
                     logText.contains(#""dynamicToolMCPToolResponse""#) &&
                     logText.contains(#""dynamicToolMCPResourceResponse""#) &&
+                    logText.contains(#""dynamicToolBrowserOpenResponse""#) &&
+                    logText.contains(#""dynamicToolBrowserSnapshotResponse""#) &&
                     logText.contains(#""dynamicToolBrowserResponse""#) &&
+                    logText.contains(#""dynamicToolTerminalResponse""#) &&
                     logText.contains(#""success":true"#) &&
                     logText.contains(#""contentItems""#)
                 let commandExecObserved = logText.contains(#""method":"command/exec""#) ||
                     logText.contains(#""method": "command/exec""#)
+                let terminalCommandExecObserved = commandExecObserved &&
+                    logText.contains("Raytone dynamic terminal OK")
                 let readFileRequestObserved = logText.contains(#""method":"fs/readFile""#) ||
                     logText.contains(#""method": "fs/readFile""#)
                 let getMetadataRequestObserved = logText.contains(#""method":"fs/getMetadata""#) ||
@@ -2044,16 +2149,34 @@ enum SmokeTestRunner {
                 let mcpResourceObserved = normalizedMCPResourceOutput.contains(#""requestedURI" : "raytone://dynamic/resource""#) &&
                     normalizedMCPResourceOutput.contains("Raytone dynamic MCP resource OK") &&
                     mcpResourceOutput.contains(#""contentCount" : 1"#)
+                let browserOpenObserved = normalizedBrowserOpenOutput.contains(#""opened" : true"#) &&
+                    normalizedBrowserOpenOutput.contains(#""source" : "RaytoneCodex BrowserPanel + Codex app-server fs/getMetadata""#) &&
+                    normalizedBrowserOpenOutput.contains(browserHTMLURL.path) &&
+                    normalizedBrowserOpenOutput.contains(#""toolPanel" : "browser""#)
+                let staleBrowserSnapshotCleared = normalizedBrowserOpenOutput.contains(#""attachedSnapshotPath" : """#) &&
+                    normalizedBrowserOpenOutput.contains(#""attachedSnapshotRelativePath" : """#) &&
+                    !normalizedBrowserOpenOutput.contains(browserSnapshotURL.path)
+                let browserSnapshotObserved = normalizedBrowserSnapshotOutput.contains(#""snapshotRequested" : true"#) &&
+                    normalizedBrowserSnapshotOutput.contains(#""pendingSnapshotPath""#) &&
+                    normalizedBrowserSnapshotOutput.contains(#""source" : "RaytoneCodex BrowserPanel WKWebView snapshot request""#)
+                let browserCurrentPageStaleSnapshotCleared = normalizedBrowserOutput.contains(#""pendingSnapshotPath""#) &&
+                    !normalizedBrowserOutput.contains(browserSnapshotURL.path)
                 let browserObserved = normalizedBrowserOutput.contains(#""url""#) &&
                     normalizedBrowserOutput.contains(browserHTMLURL.path) &&
-                    normalizedBrowserOutput.contains("Raytone 浏览器动态工具") &&
-                    normalizedBrowserOutput.contains(browserSnapshotURL.path) &&
-                    browserOutput.contains(#""canGoBack" : true"#) &&
+                    normalizedBrowserOutput.contains("browser-dynamic-tool.html") &&
+                    normalizedBrowserOutput.contains(#""pendingSnapshotPath""#) &&
+                    normalizedBrowserOutput.contains(#""hasPendingSnapshotRequest" : true"#) &&
                     browserOutput.contains(#""toolPanel" : "browser""#)
+                let terminalObserved = normalizedTerminalOutput.contains(#""source" : "Codex app-server command/exec""#) &&
+                    normalizedTerminalOutput.contains("Raytone dynamic terminal OK") &&
+                    normalizedTerminalOutput.contains(#""exitCode" : 0"#) &&
+                    terminalPanelRun?.status == .succeeded &&
+                    (terminalPanelRun?.output.contains("Raytone dynamic terminal OK") ?? false)
                 let ok = registeredDynamicTool &&
                     requestObserved &&
                     responseObserved &&
                     commandExecObserved &&
+                    terminalCommandExecObserved &&
                     getMetadataRequestObserved &&
                     readFileRequestObserved &&
                     mcpToolCallObserved &&
@@ -2066,13 +2189,21 @@ enum SmokeTestRunner {
                     fileReadObserved &&
                     mcpToolObserved &&
                     mcpResourceObserved &&
+                    browserOpenObserved &&
+                    staleBrowserSnapshotCleared &&
+                    browserSnapshotObserved &&
+                    browserCurrentPageStaleSnapshotCleared &&
                     browserObserved &&
+                    terminalObserved &&
                     dynamicCommand?.status == .succeeded &&
                     filesCommand?.status == .succeeded &&
                     readFileCommand?.status == .succeeded &&
                     mcpToolCommand?.status == .succeeded &&
                     mcpResourceCommand?.status == .succeeded &&
+                    browserOpenCommand?.status == .succeeded &&
+                    browserSnapshotCommand?.status == .succeeded &&
                     browserCommand?.status == .succeeded &&
+                    terminalCommand?.status == .succeeded &&
                     output.contains(#""workspacePath""#) &&
                     output.contains(#""browser""#) &&
                     normalizedOutput.contains(workspaceURL.path) &&
@@ -2089,6 +2220,7 @@ enum SmokeTestRunner {
                     "requestObserved": requestObserved,
                     "responseObserved": responseObserved,
                     "commandExecObserved": commandExecObserved,
+                    "terminalCommandExecObserved": terminalCommandExecObserved,
                     "getMetadataRequestObserved": getMetadataRequestObserved,
                     "readFileRequestObserved": readFileRequestObserved,
                     "mcpToolCallObserved": mcpToolCallObserved,
@@ -2101,20 +2233,32 @@ enum SmokeTestRunner {
                     "fileReadObserved": fileReadObserved,
                     "mcpToolObserved": mcpToolObserved,
                     "mcpResourceObserved": mcpResourceObserved,
+                    "browserOpenObserved": browserOpenObserved,
+                    "staleBrowserSnapshotCleared": staleBrowserSnapshotCleared,
+                    "browserSnapshotObserved": browserSnapshotObserved,
+                    "browserCurrentPageStaleSnapshotCleared": browserCurrentPageStaleSnapshotCleared,
                     "browserObserved": browserObserved,
+                    "terminalObserved": terminalObserved,
                     "isRunning": store.isRunning,
                     "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
                     "filesCommandStatus": runStatusName(filesCommand?.status),
                     "readFileCommandStatus": runStatusName(readFileCommand?.status),
                     "mcpToolCommandStatus": runStatusName(mcpToolCommand?.status),
                     "mcpResourceCommandStatus": runStatusName(mcpResourceCommand?.status),
+                    "browserOpenCommandStatus": runStatusName(browserOpenCommand?.status),
+                    "browserSnapshotCommandStatus": runStatusName(browserSnapshotCommand?.status),
                     "browserCommandStatus": runStatusName(browserCommand?.status),
+                    "terminalCommandStatus": runStatusName(terminalCommand?.status),
                     "dynamicCommandOutputPreview": String(output.prefix(1200)),
                     "filesCommandOutputPreview": String(filesOutput.prefix(1200)),
                     "readFileCommandOutputPreview": String(readFileOutput.prefix(1200)),
                     "mcpToolOutputPreview": String(mcpToolOutput.prefix(1200)),
                     "mcpResourceOutputPreview": String(mcpResourceOutput.prefix(1200)),
+                    "browserOpenOutputPreview": String(browserOpenOutput.prefix(1200)),
+                    "browserSnapshotOutputPreview": String(browserSnapshotOutput.prefix(1200)),
                     "browserOutputPreview": String(browserOutput.prefix(1200)),
+                    "terminalOutputPreview": String(terminalOutput.prefix(1200)),
+                    "terminalPanelOutputPreview": String((terminalPanelRun?.output ?? "").prefix(1200)),
                     "requestLogPreview": String(logText.prefix(2400))
                 ])
                 exit(ok ? 0 : 1)
@@ -3918,16 +4062,56 @@ enum SmokeTestRunner {
 
                 await store.saveRuntimeModelSelection(providerID: "openai", model: selectedModel)
                 let config = store.runtimeConfig
+                let configURL = codexHome.appendingPathComponent("config.toml")
+                let sidecarProviderID = "model-switch-a-\(UUID().uuidString.prefix(8))"
+                let sidecarProviderID2 = "model-switch-b-\(UUID().uuidString.prefix(8))"
+                let sidecarModel = "sidecar-model-a-\(UUID().uuidString.prefix(6))"
+                let sidecarModel2 = "sidecar-model-b-\(UUID().uuidString.prefix(6))"
+                store.providers.append(RaytoneProviderConfiguration(
+                    id: sidecarProviderID,
+                    displayName: "Model Switch Provider A",
+                    baseURL: "http://127.0.0.1:65530/v1",
+                    model: sidecarModel,
+                    models: [sidecarModel],
+                    kind: .chatCompletionsSidecar
+                ))
+                store.providers.append(RaytoneProviderConfiguration(
+                    id: sidecarProviderID2,
+                    displayName: "Model Switch Provider B",
+                    baseURL: "http://127.0.0.1:65531/v1",
+                    model: sidecarModel2,
+                    models: [sidecarModel2],
+                    kind: .chatCompletionsSidecar
+                ))
+                await store.saveRuntimeModelSelection(providerID: sidecarProviderID, model: sidecarModel)
+                let persistedSidecarSelectedProviderID = store.runtimeConfig?.raytoneSelectedProviderID ?? ""
+                let persistedSidecarConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                store.chooseProviderModel(providerID: sidecarProviderID, model: sidecarModel)
+                store.chooseProviderModel(providerID: sidecarProviderID2, model: sidecarModel2)
+                let sidecarSelectedProviderID = store.selectedProviderID
+                let sidecarSelectedModel = store.model
+                let selectedThreadModelAfterSidecarMenu = store.selectedThread.model
+                store.chooseProviderModel(providerID: "openai", model: selectedModel)
+                await store.waitForProviderSelectionToSettleForTesting()
+                let openAISwitchedBackModel = store.model
+                let selectedThreadModelAfterSwitchBack = store.selectedThread.model
                 await store.stopAppServerForTesting()
 
-                let configURL = codexHome.appendingPathComponent("config.toml")
                 let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
                 let ok = store.selectedProviderID == "openai" &&
                     store.model == selectedModel &&
+                    persistedSidecarSelectedProviderID == sidecarProviderID &&
+                    persistedSidecarConfigText.contains("selected_provider_id = \"\(sidecarProviderID)\"") &&
+                    sidecarSelectedProviderID == sidecarProviderID2 &&
+                    sidecarSelectedModel == sidecarModel2 &&
+                    selectedThreadModelAfterSidecarMenu == sidecarModel2 &&
+                    openAISwitchedBackModel == selectedModel &&
+                    selectedThreadModelAfterSwitchBack == selectedModel &&
                     config?.model == selectedModel &&
                     config?.modelProvider == "openai" &&
                     configText.contains("model = \"\(selectedModel)\"") &&
-                    configText.contains("model_provider = \"openai\"")
+                    configText.contains("model_provider = \"openai\"") &&
+                    configText.contains("selected_provider_id = \"openai\"")
 
                 emitJSON([
                     "ok": ok,
@@ -3942,6 +4126,16 @@ enum SmokeTestRunner {
                     "modelDisplayName": store.modelDisplayName,
                     "configModel": config?.model ?? "",
                     "configModelProvider": config?.modelProvider ?? "",
+                    "sidecarProviderID": sidecarProviderID,
+                    "sidecarProviderID2": sidecarProviderID2,
+                    "sidecarSelectedProviderID": sidecarSelectedProviderID,
+                    "sidecarSelectedModel": sidecarSelectedModel,
+                    "sidecarSelectedModel2": sidecarModel2,
+                    "persistedSidecarSelectedProviderID": persistedSidecarSelectedProviderID,
+                    "persistedSidecarConfigText": persistedSidecarConfigText,
+                    "selectedThreadModelAfterSidecarMenu": selectedThreadModelAfterSidecarMenu,
+                    "openAISwitchedBackModel": openAISwitchedBackModel,
+                    "selectedThreadModelAfterSwitchBack": selectedThreadModelAfterSwitchBack,
                     "modelCatalogStatusText": store.modelCatalogStatusText,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText,
                     "configText": configText
@@ -5598,6 +5792,7 @@ enum SmokeTestRunner {
                 )
                 let readGoal = try await client.getThreadGoal(threadID: thread.id)
                 let pausedGoal = try await client.setThreadGoal(threadID: thread.id, status: .paused)
+                let resumedGoal = try await client.setThreadGoal(threadID: thread.id, status: .active)
                 let cleared = try await client.clearThreadGoal(threadID: thread.id)
                 let afterClear = try await client.getThreadGoal(threadID: thread.id)
                 await client.stop()
@@ -5613,6 +5808,7 @@ enum SmokeTestRunner {
                     activeGoal.tokenBudget == 1234 &&
                     readGoal?.objective == activeGoal.objective &&
                     pausedGoal.status == .paused &&
+                    resumedGoal.status == .active &&
                     cleared &&
                     afterClear == nil &&
                     storeSmoke.ok
@@ -5627,6 +5823,7 @@ enum SmokeTestRunner {
                     "activeGoal": goalPayload(activeGoal),
                     "readGoal": readGoal.map(goalPayload) ?? NSNull(),
                     "pausedGoal": goalPayload(pausedGoal),
+                    "resumedGoal": goalPayload(resumedGoal),
                     "cleared": cleared,
                     "afterClear": afterClear.map(goalPayload) ?? NSNull()
                 ]
@@ -5668,11 +5865,23 @@ enum SmokeTestRunner {
         let storeThreadID = store.selectedThread.appServerThreadID ?? ""
         let storeSetTitle = store.selectedThread.activeGoal?.title ?? ""
         let storeSetRuntimeBacked = store.selectedThread.activeGoal?.runtimeBacked ?? false
+        let storeSetStatus = store.selectedThread.activeGoal?.status
 
         await store.updateActiveGoalObjective("RaytoneCodex edited goal smoke")
         let storeEditedGoal = await store.refreshSelectedRuntimeGoal()
         let storeEditedTitle = store.selectedThread.activeGoal?.title ?? ""
         let storeStatusAfterEdit = store.runtimeCatalogStatusText
+        let storeEditedStatus = store.selectedThread.activeGoal?.status
+
+        await store.pauseActiveGoal()
+        let storePausedGoal = await store.refreshSelectedRuntimeGoal()
+        let storePausedStatus = store.selectedThread.activeGoal?.status
+        let storeStatusAfterPause = store.runtimeCatalogStatusText
+
+        await store.resumeActiveGoal()
+        let storeResumedGoal = await store.refreshSelectedRuntimeGoal()
+        let storeResumedStatus = store.selectedThread.activeGoal?.status
+        let storeStatusAfterResume = store.runtimeCatalogStatusText
 
         await store.clearActiveGoal()
         let storeAfterClear = await store.refreshSelectedRuntimeGoal()
@@ -5682,8 +5891,14 @@ enum SmokeTestRunner {
         let ok = !storeThreadID.isEmpty &&
             storeSetTitle == "RaytoneCodex store goal smoke" &&
             storeSetRuntimeBacked &&
+            storeSetStatus == .active &&
             storeEditedGoal?.objective == "RaytoneCodex edited goal smoke" &&
             storeEditedTitle == "RaytoneCodex edited goal smoke" &&
+            storeEditedStatus == .active &&
+            storePausedGoal?.status == .paused &&
+            storePausedStatus == .paused &&
+            storeResumedGoal?.status == .active &&
+            storeResumedStatus == .active &&
             storeAfterClear == nil
 
         return StoreGoalSmokeResult(
@@ -5691,9 +5906,17 @@ enum SmokeTestRunner {
             storeThreadID: storeThreadID,
             storeSetTitle: storeSetTitle,
             storeSetRuntimeBacked: storeSetRuntimeBacked,
+            storeSetStatus: storeSetStatus?.rawValue ?? "",
             storeEditedGoalObjective: storeEditedGoal?.objective,
             storeEditedTitle: storeEditedTitle,
+            storeEditedStatus: storeEditedStatus?.rawValue ?? "",
             storeStatusAfterEdit: storeStatusAfterEdit,
+            storePausedGoalStatus: storePausedGoal?.status.rawValue,
+            storePausedStatus: storePausedStatus?.rawValue ?? "",
+            storeStatusAfterPause: storeStatusAfterPause,
+            storeResumedGoalStatus: storeResumedGoal?.status.rawValue,
+            storeResumedStatus: storeResumedStatus?.rawValue ?? "",
+            storeStatusAfterResume: storeStatusAfterResume,
             storeAfterClearObjective: storeAfterClear?.objective,
             storeStatusAfterClear: storeStatusAfterClear
         )
@@ -5704,9 +5927,17 @@ enum SmokeTestRunner {
         let storeThreadID: String
         let storeSetTitle: String
         let storeSetRuntimeBacked: Bool
+        let storeSetStatus: String
         let storeEditedGoalObjective: String?
         let storeEditedTitle: String
+        let storeEditedStatus: String
         let storeStatusAfterEdit: String
+        let storePausedGoalStatus: String?
+        let storePausedStatus: String
+        let storeStatusAfterPause: String
+        let storeResumedGoalStatus: String?
+        let storeResumedStatus: String
+        let storeStatusAfterResume: String
         let storeAfterClearObjective: String?
         let storeStatusAfterClear: String
 
@@ -5715,9 +5946,17 @@ enum SmokeTestRunner {
                 "storeThreadID": storeThreadID,
                 "storeSetTitle": storeSetTitle,
                 "storeSetRuntimeBacked": storeSetRuntimeBacked,
+                "storeSetStatus": storeSetStatus,
                 "storeEditedGoal": storeEditedGoalObjective.map { ["objective": $0] } ?? NSNull(),
                 "storeEditedTitle": storeEditedTitle,
+                "storeEditedStatus": storeEditedStatus,
                 "storeStatusAfterEdit": storeStatusAfterEdit,
+                "storePausedGoalStatus": storePausedGoalStatus ?? "",
+                "storePausedStatus": storePausedStatus,
+                "storeStatusAfterPause": storeStatusAfterPause,
+                "storeResumedGoalStatus": storeResumedGoalStatus ?? "",
+                "storeResumedStatus": storeResumedStatus,
+                "storeStatusAfterResume": storeStatusAfterResume,
                 "storeAfterClear": storeAfterClearObjective.map { ["objective": $0] } ?? NSNull(),
                 "storeStatusAfterClear": storeStatusAfterClear
             ]
@@ -5752,11 +5991,25 @@ enum SmokeTestRunner {
             let firstURL = URL(fileURLWithPath: "/tmp/raytone-browser-one.html")
             let secondURL = URL(fileURLWithPath: "/tmp/raytone-browser-two.html")
             await store.openBrowserAddress(localHTMLURL.path)
+            let addressBrowserFact = store.environmentSourceFacts.first { fact in
+                fact.title == "浏览器"
+            }
+            let addressBrowserFactOK = addressBrowserFact?.source == "WKWebView + fs/getMetadata" &&
+                addressBrowserFact?.active == true &&
+                addressBrowserFact?.detail == "address-bar.html"
             let addressBarState: [String: Any] = [
                 "url": store.browserURL?.path ?? "",
                 "title": store.browserTitle,
                 "dataStatus": store.browserDataStatusText,
-                "toolPanel": store.toolPanel == .browser ? "browser" : "other"
+                "toolPanel": store.toolPanel == .browser ? "browser" : "other",
+                "browserFact": addressBrowserFact.map { fact in
+                    [
+                        "title": fact.title,
+                        "source": fact.source,
+                        "detail": fact.detail,
+                        "active": fact.active
+                    ] as [String: Any]
+                } ?? NSNull()
             ]
 
             store.updateBrowserNavigationState(
@@ -5821,9 +6074,11 @@ enum SmokeTestRunner {
                 afterForwardState["canGoBack"] as? Bool == true &&
                 addressBarState["url"] as? String == localHTMLURL.path &&
                 addressBarState["title"] as? String == "address-bar.html" &&
+                addressBrowserFactOK &&
                 (addressBarState["dataStatus"] as? String)?.contains("fs/getMetadata：已确认地址栏本地文件") == true
             emitJSON([
                 "ok": ok,
+                "addressBrowserFactOK": addressBrowserFactOK,
                 "addressBar": addressBarState,
                 "initial": initialState,
                 "afterBack": afterBackState,
@@ -5848,14 +6103,29 @@ enum SmokeTestRunner {
             let reloadTokenBefore = store.browserReloadToken
 
             await store.clearBrowserWebsiteData()
+            let browserFact = store.environmentSourceFacts.first { fact in
+                fact.title == "浏览器"
+            }
+            let browserFactOK = browserFact?.source == "WKWebsiteDataStore" &&
+                browserFact?.active == true
 
             let ok = store.browserDataStatusText == "已清除浏览数据和缓存" &&
                 store.browserCanGoBack == false &&
                 store.browserCanGoForward == false &&
-                store.browserReloadToken != reloadTokenBefore
+                store.browserReloadToken != reloadTokenBefore &&
+                browserFactOK
 
             emitJSON([
                 "ok": ok,
+                "browserFactOK": browserFactOK,
+                "browserFact": browserFact.map { fact in
+                    [
+                        "title": fact.title,
+                        "source": fact.source,
+                        "detail": fact.detail,
+                        "active": fact.active
+                    ] as [String: Any]
+                } ?? NSNull(),
                 "browserURL": store.browserURL?.absoluteString ?? "",
                 "browserTitle": store.browserTitle,
                 "browserCanGoBack": store.browserCanGoBack,
@@ -5966,6 +6236,11 @@ enum SmokeTestRunner {
                 store.completeBrowserPanelScreenshot(request: request, result: .success(request.outputURL))
                 let queuedImages = store.pendingLocalImagePaths
                 let promptAfterSnapshot = store.prompt
+                let snapshotBrowserFact = store.environmentSourceFacts.first { fact in
+                    fact.title == "浏览器"
+                }
+                let snapshotBrowserFactOK = snapshotBrowserFact?.source == "WKWebView snapshot PNG" &&
+                    snapshotBrowserFact?.active == true
                 store.prompt = "\(promptAfterSnapshot)\n\n请回复：Raytone browser snapshot input OK"
                 let turnInput = CodexAppServerClient.userInputItems(
                     prompt: store.prompt,
@@ -5994,6 +6269,7 @@ enum SmokeTestRunner {
                     promptAfterSnapshot.contains("请参考这张浏览器截图") &&
                     store.lastLocalImageInputPreview == [canonicalSnapshotPath] &&
                     store.pendingLocalImagePaths.isEmpty &&
+                    snapshotBrowserFactOK &&
                     agentMessages.contains("Raytone browser snapshot input OK") &&
                     requestLog.contains("/v1/responses") &&
                     requestContainsSnapshot
@@ -6010,6 +6286,15 @@ enum SmokeTestRunner {
                     "snapshotOutput": request.outputURL.path,
                     "browserScreenshotStatus": store.browserScreenshotStatusText,
                     "browserAttachedSnapshotPath": store.browserAttachedSnapshotPath,
+                    "snapshotBrowserFactOK": snapshotBrowserFactOK,
+                    "snapshotBrowserFact": snapshotBrowserFact.map { fact in
+                        [
+                            "title": fact.title,
+                            "source": fact.source,
+                            "detail": fact.detail,
+                            "active": fact.active
+                        ] as [String: Any]
+                    } ?? NSNull(),
                     "queuedImagesBeforePrompt": queuedImages,
                     "lastLocalImageInputPreview": store.lastLocalImageInputPreview,
                     "pendingLocalImageCount": store.pendingLocalImagePaths.count,
@@ -7374,8 +7659,13 @@ enum SmokeTestRunner {
                 let loggedTurnsList = logText.contains(#""method":"thread/turns/list""#) &&
                     logText.contains(#""itemsView":"full""#) &&
                     logText.contains(#""sortDirection":"asc""#)
+                let loggedTurnItemsList = logText.contains(#""method":"thread/turns/items/list""#) &&
+                    logText.contains(#""threadId":"thread-resume-smoke""#) &&
+                    logText.contains(#""turnId":"turn-resume-smoke""#) &&
+                    logText.contains(#""sortDirection":"asc""#)
                 let ok = loggedResume &&
                     loggedTurnsList &&
+                    loggedTurnItemsList &&
                     selected.appServerThreadID == serverThreadID &&
                     selected.appServerSessionID == sessionID &&
                     store.loadedRuntimeThreadIDs.contains(serverThreadID) &&
@@ -7390,6 +7680,7 @@ enum SmokeTestRunner {
                     "requestLog": logURL.path,
                     "loggedResume": loggedResume,
                     "loggedTurnsList": loggedTurnsList,
+                    "loggedTurnItemsList": loggedTurnItemsList,
                     "resumedSessionID": selected.appServerSessionID ?? "",
                     "loadedRuntimeThreadIDs": store.loadedRuntimeThreadIDs,
                     "runtimeThreadSyncStatus": store.runtimeThreadSyncStatusText,
@@ -7827,6 +8118,12 @@ enum SmokeTestRunner {
                 let backgroundTerminalCleanSourceFactActive = store.environmentSourceFacts.contains { fact in
                     fact.source == "thread/backgroundTerminals/clean" && fact.active
                 }
+                let marketplaceFact = store.environmentSourceFacts.first { fact in
+                    fact.title == "插件市场"
+                }
+                let marketplaceFactIsIsolated = marketplaceFact?.source == "plugin/list" &&
+                    marketplaceFact?.detail == "未读取插件市场" &&
+                    marketplaceFact?.active == false
                 let backgroundTerminalCleanStatus = store.backgroundTerminalCleanStatusText
 
                 await store.stopAppServerForTesting()
@@ -7840,6 +8137,7 @@ enum SmokeTestRunner {
                     backgroundTerminalCleanStatus.hasPrefix("thread/backgroundTerminals/clean") &&
                     threadShellSourceFactActive &&
                     backgroundTerminalCleanSourceFactActive &&
+                    marketplaceFactIsIsolated &&
                     store.terminalRuns.isEmpty
 
                 emitJSON([
@@ -7854,6 +8152,15 @@ enum SmokeTestRunner {
                     "backgroundTerminalCleanStatus": backgroundTerminalCleanStatus,
                     "threadShellSourceFactActive": threadShellSourceFactActive,
                     "backgroundTerminalCleanSourceFactActive": backgroundTerminalCleanSourceFactActive,
+                    "marketplaceFactIsIsolated": marketplaceFactIsIsolated,
+                    "marketplaceFact": marketplaceFact.map { fact in
+                        [
+                            "title": fact.title,
+                            "source": fact.source,
+                            "detail": fact.detail,
+                            "active": fact.active
+                        ] as [String: Any]
+                    } ?? NSNull(),
                     "terminalRunCount": store.terminalRuns.count,
                     "commandRuns": commandRuns.map { run in
                         [
@@ -8186,6 +8493,361 @@ enum SmokeTestRunner {
                 "sourceEvidenceOk": sourceEvidenceOk
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runGitRepoCreateSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexGitRepoCreateSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let remoteURL = rootURL.appendingPathComponent("remote.git", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let fakeBinURL = rootURL.appendingPathComponent("bin", isDirectory: true)
+            let fakeGHURL = fakeBinURL.appendingPathComponent("gh")
+            let ghLogURL = rootURL.appendingPathComponent("gh.log")
+            let repoName = "raytone-repo-create-smoke"
+            let branchName = "codex/repo-create-smoke"
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: fakeBinURL, withIntermediateDirectories: true)
+
+                try """
+                #!/usr/bin/env bash
+                printf '%s\n' "gh $*" >> "\(ghLogURL.path)"
+                if [[ "$1" == "auth" && "$2" == "status" ]]; then
+                  exit 0
+                fi
+                if [[ "$1" == "repo" && "$2" == "create" ]]; then
+                  remote="${RAYTONE_GITHUB_FAKE_REMOTE:?missing fake remote}"
+                  git init --bare "$remote" >/dev/null 2>&1 || exit 21
+                  git remote add origin "$remote" || exit 22
+                  echo "https://github.com/raytone/$3"
+                  exit 0
+                fi
+                echo "unsupported gh command: $*" >&2
+                exit 2
+                """.write(to: fakeGHURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeGHURL.path)
+
+                try "# Git repo create smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                _ = try runProcess(["git", "init"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.email", "raytone-smoke@example.com"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.name", "Raytone Smoke"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "README.md"], cwd: workspaceURL)
+                _ = try runProcess(["git", "commit", "-m", "Initial smoke commit"], cwd: workspaceURL)
+                _ = try runProcess(["git", "branch", "-M", branchName], cwd: workspaceURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path,
+                    "PATH": "\(fakeBinURL.path):\(inheritedPath)",
+                    "RAYTONE_GH_PATH": fakeGHURL.path,
+                    "RAYTONE_GITHUB_FAKE_REMOTE": remoteURL.path,
+                    "RAYTONE_GITHUB_REPO_NAME": repoName
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "GitRepoCreateSmoke"
+                }
+
+                await store.refreshRuntime()
+                await store.runGitCreateRepositoryInTerminal()
+                await waitForStoreToSettle(store)
+
+                let terminalRun = store.terminalRuns.last
+                let terminalOutput = terminalRun?.output ?? ""
+                let origin = (try? runProcess(["git", "remote", "get-url", "origin"], cwd: workspaceURL).output)
+                    ?? ""
+                let remoteHeadExists = fileManager.fileExists(atPath: remoteURL.appendingPathComponent("HEAD").path)
+                let ghLog = (try? String(contentsOf: ghLogURL, encoding: .utf8)) ?? ""
+                let metadataStatus = store.runtimeThreadMetadataStatusText
+                await store.stopAppServerForTesting()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    terminalRun?.exitCode == 0 &&
+                    terminalRun?.status == .succeeded &&
+                    terminalRun?.command.contains("GitHub 建库预检") == true &&
+                    terminalOutput.contains("== GitHub 建库预检 ==") &&
+                    terminalOutput.contains("执行：\(fakeGHURL.path) repo create \(repoName) --private --source=. --remote=origin") &&
+                    terminalOutput.contains("== 仓库已创建 ==") &&
+                    origin.trimmingCharacters(in: .whitespacesAndNewlines) == remoteURL.path &&
+                    remoteHeadExists &&
+                    ghLog.contains("gh auth status") &&
+                    ghLog.contains("gh repo create \(repoName) --private --source=. --remote=origin")
+
+                emitJSON([
+                    "ok": ok,
+                    "source": "EnvironmentInfoPanel 建库按钮 -> process/spawn -> gh repo create -> git remote origin",
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "remotePath": remoteURL.path,
+                    "repoName": repoName,
+                    "origin": origin.trimmingCharacters(in: .whitespacesAndNewlines),
+                    "metadataStatus": metadataStatus,
+                    "remoteHeadExists": remoteHeadExists,
+                    "ghLog": ghLog,
+                    "terminal": [
+                        "command": terminalRun?.command ?? "",
+                        "exitCode": Int(terminalRun?.exitCode ?? -999),
+                        "status": terminalStatusName(terminalRun?.status),
+                        "output": terminalOutput
+                    ] as [String: Any]
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "error": error.localizedDescription,
+                    "workspacePath": workspaceURL.path,
+                    "remotePath": remoteURL.path,
+                    "ghLog": (try? String(contentsOf: ghLogURL, encoding: .utf8)) ?? ""
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runGitPushSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexGitPushSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let remoteURL = rootURL.appendingPathComponent("remote.git", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let fakeBinURL = rootURL.appendingPathComponent("bin", isDirectory: true)
+            let fakeGHURL = fakeBinURL.appendingPathComponent("gh")
+            let ghLogURL = rootURL.appendingPathComponent("gh.log")
+            let branchName = "codex/git-push-smoke"
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: fakeBinURL, withIntermediateDirectories: true)
+
+                try """
+                #!/usr/bin/env bash
+                printf '%s\n' "gh $*" >> "\(ghLogURL.path)"
+                if [[ "$1" == "auth" && "$2" == "status" ]]; then
+                  exit 0
+                fi
+                if [[ "$1" == "pr" && "$2" == "view" ]]; then
+                  echo "no pull requests found for branch"
+                  exit 1
+                fi
+                exit 0
+                """.write(to: fakeGHURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeGHURL.path)
+
+                try "# Git push smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                _ = try runProcess(["git", "init"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.email", "raytone-smoke@example.com"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.name", "Raytone Smoke"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "README.md"], cwd: workspaceURL)
+                _ = try runProcess(["git", "commit", "-m", "Initial smoke commit"], cwd: workspaceURL)
+                _ = try runProcess(["git", "branch", "-M", branchName], cwd: workspaceURL)
+                _ = try runProcess(["git", "init", "--bare", remoteURL.path], cwd: rootURL)
+                _ = try runProcess(["git", "remote", "add", "origin", remoteURL.path], cwd: workspaceURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path,
+                    "PATH": "\(fakeBinURL.path):\(inheritedPath)",
+                    "RAYTONE_GH_PATH": fakeGHURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "GitPushSmoke"
+                }
+
+                await store.refreshRuntime()
+                await store.runGitPushCurrentBranchInTerminal()
+                await waitForStoreToSettle(store)
+
+                let terminalRun = store.terminalRuns.last
+                let terminalOutput = terminalRun?.output ?? ""
+                let remoteRef = (try? runProcess([
+                    "git",
+                    "--git-dir",
+                    remoteURL.path,
+                    "show-ref",
+                    "refs/heads/\(branchName)"
+                ], cwd: rootURL).output) ?? ""
+                let ghLog = (try? String(contentsOf: ghLogURL, encoding: .utf8)) ?? ""
+                let pullRequestStatus = store.workspacePullRequestStatusText
+                await store.stopAppServerForTesting()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    terminalRun?.exitCode == 0 &&
+                    terminalRun?.status == .succeeded &&
+                    terminalRun?.command.contains("GitHub 推送预检") == true &&
+                    terminalOutput.contains("== GitHub 推送预检 ==") &&
+                    terminalOutput.contains("执行：git push -u origin \(branchName)") &&
+                    terminalOutput.contains("== 推送完成 ==") &&
+                    remoteRef.contains("refs/heads/\(branchName)") &&
+                    ghLog.contains("gh auth status") &&
+                    ghLog.contains("gh pr view") &&
+                    pullRequestStatus.contains("无 PR")
+
+                emitJSON([
+                    "ok": ok,
+                    "source": "EnvironmentInfoPanel 推送按钮 -> process/spawn -> git push -> gh auth/pr status",
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "remotePath": remoteURL.path,
+                    "branch": branchName,
+                    "terminal": [
+                        "command": terminalRun?.command ?? "",
+                        "exitCode": Int(terminalRun?.exitCode ?? -999),
+                        "status": terminalStatusName(terminalRun?.status),
+                        "output": terminalOutput
+                    ] as [String: Any],
+                    "remoteRef": remoteRef,
+                    "ghLog": ghLog,
+                    "pullRequestStatus": pullRequestStatus
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "error": error.localizedDescription,
+                    "workspacePath": workspaceURL.path,
+                    "remotePath": remoteURL.path,
+                    "ghLog": (try? String(contentsOf: ghLogURL, encoding: .utf8)) ?? ""
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runRuntimeEnvironmentSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexRuntimeEnvironmentSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+            let environmentID = "remote-env-smoke"
+            let execServerURL = "http://127.0.0.1:43210"
+            let remoteCwd = workspaceURL.appendingPathComponent("remote-root", isDirectory: true).path
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeRuntimeEnvironmentAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.prompt = "环境注册 smoke"
+                store.runtimeEnvironmentIDDraft = environmentID
+                store.runtimeEnvironmentURLDraft = execServerURL
+                store.runtimeEnvironmentCwdDraft = remoteCwd
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-runtime-environment"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_RUNTIME_ENVIRONMENT_LOG": logURL.path
+                ]
+
+                let registered = await store.registerRuntimeEnvironment()
+                await store.runPrompt()
+                for _ in 0..<40 where store.isRunning {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let requests = logText.split(separator: "\n").compactMap { line -> [String: Any]? in
+                    guard let data = String(line).data(using: .utf8) else { return nil }
+                    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                }
+                func params(for method: String) -> [String: Any]? {
+                    requests.first { $0["method"] as? String == method }?["params"] as? [String: Any]
+                }
+                func hasSelectedEnvironment(method: String) -> Bool {
+                    guard let environments = params(for: method)?["environments"] as? [[String: Any]],
+                          let first = environments.first else {
+                        return false
+                    }
+                    return first["environmentId"] as? String == environmentID &&
+                        first["cwd"] as? String == remoteCwd
+                }
+
+                let environmentAddParams = params(for: "environment/add")
+                let loggedEnvironmentAdd = environmentAddParams?["environmentId"] as? String == environmentID &&
+                    environmentAddParams?["execServerUrl"] as? String == execServerURL
+                let loggedThreadStartEnvironment = hasSelectedEnvironment(method: "thread/start")
+                let loggedTurnStartEnvironment = hasSelectedEnvironment(method: "turn/start")
+                let registeredEnvironment = store.runtimeRegisteredEnvironments.first {
+                    $0.environmentID == environmentID
+                }
+                let ok = registered &&
+                    loggedEnvironmentAdd &&
+                    loggedThreadStartEnvironment &&
+                    loggedTurnStartEnvironment &&
+                    store.selectedRuntimeEnvironmentID == environmentID &&
+                    registeredEnvironment?.execServerURL == execServerURL &&
+                    registeredEnvironment?.cwd == remoteCwd
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "registered": registered,
+                    "selectedRuntimeEnvironmentID": store.selectedRuntimeEnvironmentID ?? "",
+                    "registeredEnvironmentCount": store.runtimeRegisteredEnvironments.count,
+                    "runtimeEnvironmentStatus": store.runtimeEnvironmentStatusText,
+                    "loggedEnvironmentAdd": loggedEnvironmentAdd,
+                    "loggedThreadStartEnvironment": loggedThreadStartEnvironment,
+                    "loggedTurnStartEnvironment": loggedTurnStartEnvironment,
+                    "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
@@ -10188,17 +10850,41 @@ enum SmokeTestRunner {
                 let emailMentions = store.lastMentionInputPreview
                 let emailStatus = store.homeConnectionStatusText
 
+                let installStore = SessionStore()
+                installStore.workspacePath = workspaceURL.path
+                installStore.filePanelPath = workspaceURL.path
+                installStore.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-home-connection-install"
+                )
+                installStore.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_HOME_CONNECTION_APP_MENTION_LOG": logURL.path,
+                    "RAYTONE_HOME_CONNECTION_INSTALL_ONLY": "1"
+                ]
+                fputs("home-connection-app-mention-smoke: open install fallback card\n", stderr)
+                await installStore.refreshNewThreadHeroRuntime()
+                let installFallbackOK = await installStore.openHomeConnection(.messaging, openExternalInstall: false)
+                let installFallbackStatus = installStore.homeConnectionStatusText
+                let installFallbackURL = installStore.lastOpenedRuntimeAppInstallURL
+
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
                 let appListCount = logText.components(separatedBy: #""method":"app/list""#).count - 1
-                let requestObserved = appListCount >= 3 &&
+                let requestObserved = appListCount >= 5 &&
                     logText.contains(#""method":"mcpServerStatus/list""#) &&
                     logText.contains(#""method":"fs/readDirectory""#)
                 let messagingMentionOK = messagingPrompt.contains("$slack") &&
                     messagingMentions.contains { $0["path"] == "app://raytone.slack" }
                 let emailMentionOK = emailPrompt.contains("$gmail") &&
                     emailMentions.contains { $0["path"] == "app://raytone.gmail" }
+                let installFallbackObserved = installFallbackOK &&
+                    installFallbackStatus.contains("Microsoft Teams") &&
+                    installFallbackStatus.contains("已打开安装/授权链接") &&
+                    installFallbackURL == "https://chatgpt.com/apps/raytone/teams/install" &&
+                    logText.contains(#""isAccessible":false"#) &&
+                    logText.contains("raytone.teams")
                 let ok = messagingOK &&
                     emailOK &&
+                    installFallbackObserved &&
                     refreshedAppCount == 2 &&
                     refreshedFileCount > 0 &&
                     requestObserved &&
@@ -10207,6 +10893,7 @@ enum SmokeTestRunner {
                     store.route == .thread
 
                 await store.stopAppServerForTesting()
+                await installStore.stopAppServerForTesting()
                 emitJSON([
                     "ok": ok,
                     "workspacePath": workspaceURL.path,
@@ -10226,8 +10913,12 @@ enum SmokeTestRunner {
                     "emailPrompt": emailPrompt,
                     "emailMentions": emailMentions,
                     "emailStatus": emailStatus,
+                    "installFallbackOK": installFallbackOK,
+                    "installFallbackObserved": installFallbackObserved,
+                    "installFallbackStatus": installFallbackStatus,
+                    "installFallbackURL": installFallbackURL,
                     "route": "\(store.route)",
-                    "source": "home connection cards + app/list + previewInputMentions app:// mentions",
+                    "source": "home connection cards + app/list + previewInputMentions app:// mentions + installUrl fallback",
                     "requestLogPreview": String(logText.prefix(2400))
                 ])
                 exit(ok ? 0 : 1)
@@ -11868,12 +12559,42 @@ enum SmokeTestRunner {
                 let testCommands = commandRuns(in: store.selectedThread.items)
                 let testCommand = testCommands.last
                 let slashCommandStatus = store.slashCommandStatusText
+
+                let commitInstruction = "使用 Conventional Commits，并突出运行时证据"
+                let pullRequestInstruction = "描述里必须包含验证命令和风险说明"
+                await store.saveGitWritingInstructions(
+                    commit: commitInstruction,
+                    pullRequest: pullRequestInstruction
+                )
+                let saveGitWritingStatus = store.runtimeCatalogStatusText
+
+                store.prompt = "/commit"
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+                let commitSlashStatus = store.slashCommandStatusText
+
+                store.prompt = "/pr"
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+                let pullRequestSlashStatus = store.slashCommandStatusText
+
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
                 let getMetadataRequestObserved = logText.contains(#""method":"fs/getMetadata""#) ||
                     logText.contains(#""method": "fs/getMetadata""#)
                 let testScriptMetadataObserved = logText.contains("script/test.sh")
                 let commandExecObserved = logText.contains(#""method":"command/exec""#) ||
                     logText.contains(#""method": "command/exec""#)
+                let gitWritingConfigObserved = logText.contains(#""method":"config/batchWrite""#) &&
+                    logText.contains("desktop.raytone.commit_instructions") &&
+                    logText.contains("desktop.raytone.pull_request_instructions") &&
+                    logText.contains(commitInstruction) &&
+                    logText.contains(pullRequestInstruction)
+                let commitTurnStartObserved = logText.contains(#""method":"turn/start""#) &&
+                    logText.contains("生成一条高质量 git commit message") &&
+                    logText.contains(commitInstruction)
+                let pullRequestTurnStartObserved = logText.contains(#""method":"turn/start""#) &&
+                    logText.contains("生成拉取请求标题和描述草稿") &&
+                    logText.contains(pullRequestInstruction)
 
                 store.prompt = "/clear"
                 await store.runPrompt()
@@ -11890,6 +12611,12 @@ enum SmokeTestRunner {
                     getMetadataRequestObserved &&
                     testScriptMetadataObserved &&
                     commandExecObserved &&
+                    gitWritingConfigObserved &&
+                    saveGitWritingStatus.contains("config/batchWrite") &&
+                    commitSlashStatus.contains("turn/start") &&
+                    pullRequestSlashStatus.contains("turn/start") &&
+                    commitTurnStartObserved &&
+                    pullRequestTurnStartObserved &&
                     afterClearItemCount == 0
 
                 await store.stopAppServerForTesting()
@@ -11904,7 +12631,13 @@ enum SmokeTestRunner {
                     "getMetadataRequestObserved": getMetadataRequestObserved,
                     "testScriptMetadataObserved": testScriptMetadataObserved,
                     "commandExecObserved": commandExecObserved,
+                    "gitWritingConfigObserved": gitWritingConfigObserved,
+                    "commitTurnStartObserved": commitTurnStartObserved,
+                    "pullRequestTurnStartObserved": pullRequestTurnStartObserved,
+                    "saveGitWritingStatus": saveGitWritingStatus,
                     "slashCommandStatus": slashCommandStatus,
+                    "commitSlashStatus": commitSlashStatus,
+                    "pullRequestSlashStatus": pullRequestSlashStatus,
                     "diffCommandExitCode": Int(diffCommand?.exitCode ?? -999),
                     "diffCommandPreview": diffCommand?.command ?? "",
                     "diffOutputPreview": String((diffCommand?.output ?? "").prefix(1200)),
@@ -12568,19 +13301,26 @@ enum SmokeTestRunner {
                     "status": "completed",
                     "startedAt": 1700000030,
                     "completedAt": 1700000042,
-                    "items": [
-                        {
-                            "id": "user-resume-smoke",
-                            "type": "userMessage",
-                            "content": [{"type": "text", "text": "历史恢复问题"}],
-                        },
-                        {
-                            "id": "agent-resume-smoke",
-                            "type": "agentMessage",
-                            "text": "历史恢复后的回复",
-                        },
-                    ],
+                    "items": [],
                 }],
+                "nextCursor": None,
+                "backwardsCursor": None,
+            }
+
+        def turn_items_page():
+            return {
+                "data": [
+                    {
+                        "id": "user-resume-smoke",
+                        "type": "userMessage",
+                        "content": [{"type": "text", "text": "历史恢复问题"}],
+                    },
+                    {
+                        "id": "agent-resume-smoke",
+                        "type": "agentMessage",
+                        "text": "历史恢复后的回复",
+                    },
+                ],
                 "nextCursor": None,
                 "backwardsCursor": None,
             }
@@ -12608,6 +13348,86 @@ enum SmokeTestRunner {
                 })
             elif method == "thread/turns/list":
                 send_result(request_id, turns_page())
+            elif method == "thread/turns/items/list":
+                if params.get("turnId") == "turn-resume-smoke":
+                    send_result(request_id, turn_items_page())
+                else:
+                    send_result(request_id, {"data": [], "nextCursor": None, "backwardsCursor": None})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeRuntimeEnvironmentAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_RUNTIME_ENVIRONMENT_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def thread_payload():
+            return {
+                "id": "thread-runtime-environment",
+                "sessionId": "session-runtime-environment",
+                "name": "远程环境 smoke",
+                "preview": "环境注册 smoke",
+                "cwd": cwd,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000001,
+                "memoryMode": "enabled",
+                "status": {"type": "idle"},
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "environment/add":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "workspace-write",
+                })
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {
+                        "id": "turn-runtime-environment",
+                        "status": "completed",
+                    }
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
@@ -14073,6 +14893,7 @@ enum SmokeTestRunner {
         import sys
 
         log_path = os.environ.get("RAYTONE_MCP_ELICITATION_LOG")
+        elicitation_count = 0
 
         def log(message):
             if not log_path:
@@ -14173,6 +14994,18 @@ enum SmokeTestRunner {
                     }
                 })
                 send_elicitation_request()
+            elif method == "thread/increment_elicitation":
+                elicitation_count += 1
+                send_result(request_id, {
+                    "count": elicitation_count,
+                    "paused": elicitation_count > 0
+                })
+            elif method == "thread/decrement_elicitation":
+                elicitation_count = max(0, elicitation_count - 1)
+                send_result(request_id, {
+                    "count": elicitation_count,
+                    "paused": elicitation_count > 0
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
@@ -14186,6 +15019,7 @@ enum SmokeTestRunner {
         import sys
 
         log_path = os.environ.get("RAYTONE_TOOL_USER_INPUT_LOG")
+        elicitation_count = 0
 
         def log(message):
             if not log_path:
@@ -14294,6 +15128,18 @@ enum SmokeTestRunner {
                     }
                 })
                 send_tool_user_input_request()
+            elif method == "thread/increment_elicitation":
+                elicitation_count += 1
+                send_result(request_id, {
+                    "count": elicitation_count,
+                    "paused": elicitation_count > 0
+                })
+            elif method == "thread/decrement_elicitation":
+                elicitation_count = max(0, elicitation_count - 1)
+                send_result(request_id, {
+                    "count": elicitation_count,
+                    "paused": elicitation_count > 0
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
@@ -14307,6 +15153,7 @@ enum SmokeTestRunner {
         import sys
 
         log_path = os.environ.get("RAYTONE_APPROVAL_COMPAT_LOG")
+        elicitation_count = 0
 
         def log(message):
             if not log_path:
@@ -14449,6 +15296,18 @@ enum SmokeTestRunner {
                     }
                 })
                 send_permissions_request()
+            elif method == "thread/increment_elicitation":
+                elicitation_count += 1
+                send_result(request_id, {
+                    "count": elicitation_count,
+                    "paused": elicitation_count > 0
+                })
+            elif method == "thread/decrement_elicitation":
+                elicitation_count = max(0, elicitation_count - 1)
+                send_result(request_id, {
+                    "count": elicitation_count,
+                    "paused": elicitation_count > 0
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
@@ -14476,7 +15335,18 @@ enum SmokeTestRunner {
             "server": "raytone-smoke-mcp",
             "uri": "raytone://dynamic/resource"
         }
+        browser_open_arguments = {
+            "url": "./browser-dynamic-tool.html",
+            "captureSnapshot": False,
+            "includeSnapshotPath": True
+        }
+        browser_snapshot_arguments = {"includeSnapshotPath": True}
         browser_tool_arguments = {"includeSnapshotPath": True}
+        terminal_tool_arguments = {
+            "command": "printf 'Raytone dynamic terminal OK\\n'",
+            "timeoutSeconds": 5
+        }
+        config_state = {"desktop": {"raytone": {}}}
 
         def log(message):
             if not log_path:
@@ -14515,6 +15385,19 @@ enum SmokeTestRunner {
             }
             log({"serverRequest": message})
             send(message)
+
+        def set_config_value(key_path, value):
+            keys = [part for part in str(key_path or "").split(".") if part]
+            if not keys:
+                return
+            current = config_state
+            for key in keys[:-1]:
+                child = current.get(key)
+                if not isinstance(child, dict):
+                    child = {}
+                    current[key] = child
+                current = child
+            current[keys[-1]] = value
 
         for line in sys.stdin:
             line = line.strip()
@@ -14652,6 +15535,60 @@ enum SmokeTestRunner {
                     "requestId": "dynamic-tool-mcp-resource-smoke"
                 })
                 send_dynamic_tool_request(
+                    "dynamic-tool-browser-open-smoke",
+                    "call-browser-open-smoke",
+                    "raytone_browser",
+                    "open_url",
+                    browser_open_arguments,
+                )
+                continue
+            if request_id == "dynamic-tool-browser-open-smoke" and "result" in request:
+                result = request.get("result") or {}
+                log({"dynamicToolBrowserOpenResponse": result})
+                send_notification("item/completed", {
+                    "item": {
+                        "id": "call-browser-open-smoke",
+                        "type": "dynamicToolCall",
+                        "namespace": "raytone_browser",
+                        "tool": "open_url",
+                        "arguments": browser_open_arguments,
+                        "status": "completed",
+                        "success": result.get("success"),
+                        "contentItems": result.get("contentItems") or []
+                    }
+                })
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "dynamic-tool-browser-open-smoke"
+                })
+                send_dynamic_tool_request(
+                    "dynamic-tool-browser-snapshot-smoke",
+                    "call-browser-snapshot-smoke",
+                    "raytone_browser",
+                    "capture_snapshot",
+                    browser_snapshot_arguments,
+                )
+                continue
+            if request_id == "dynamic-tool-browser-snapshot-smoke" and "result" in request:
+                result = request.get("result") or {}
+                log({"dynamicToolBrowserSnapshotResponse": result})
+                send_notification("item/completed", {
+                    "item": {
+                        "id": "call-browser-snapshot-smoke",
+                        "type": "dynamicToolCall",
+                        "namespace": "raytone_browser",
+                        "tool": "capture_snapshot",
+                        "arguments": browser_snapshot_arguments,
+                        "status": "completed",
+                        "success": result.get("success"),
+                        "contentItems": result.get("contentItems") or []
+                    }
+                })
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "dynamic-tool-browser-snapshot-smoke"
+                })
+                send_dynamic_tool_request(
                     "dynamic-tool-browser-smoke",
                     "call-browser-smoke",
                     "raytone_browser",
@@ -14677,6 +15614,33 @@ enum SmokeTestRunner {
                 send_notification("serverRequest/resolved", {
                     "threadId": "thread-smoke",
                     "requestId": "dynamic-tool-browser-smoke"
+                })
+                send_dynamic_tool_request(
+                    "dynamic-tool-terminal-smoke",
+                    "call-terminal-smoke",
+                    "raytone_terminal",
+                    "run_command",
+                    terminal_tool_arguments,
+                )
+                continue
+            if request_id == "dynamic-tool-terminal-smoke" and "result" in request:
+                result = request.get("result") or {}
+                log({"dynamicToolTerminalResponse": result})
+                send_notification("item/completed", {
+                    "item": {
+                        "id": "call-terminal-smoke",
+                        "type": "dynamicToolCall",
+                        "namespace": "raytone_terminal",
+                        "tool": "run_command",
+                        "arguments": terminal_tool_arguments,
+                        "status": "completed",
+                        "success": result.get("success"),
+                        "contentItems": result.get("contentItems") or []
+                    }
+                })
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "dynamic-tool-terminal-smoke"
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-smoke", "status": "completed"}
@@ -14783,6 +15747,23 @@ enum SmokeTestRunner {
                     }]
                 }
                 log({"mcpResourceReadResponse": result})
+                send_result(request_id, result)
+            elif method == "config/value/write":
+                params = request.get("params") or {}
+                set_config_value(params.get("keyPath"), params.get("value"))
+                result = {"ok": True, "config": config_state}
+                log({"configValueWriteResponse": result})
+                send_result(request_id, result)
+            elif method == "config/batchWrite":
+                params = request.get("params") or {}
+                for edit in params.get("edits") or []:
+                    set_config_value(edit.get("keyPath"), edit.get("value"))
+                result = {"ok": True, "config": config_state}
+                log({"configBatchWriteResponse": result})
+                send_result(request_id, result)
+            elif method == "config/read":
+                result = {"config": config_state, "layers": [], "origins": {"desktop.raytone": "memory"}}
+                log({"configReadResponse": result})
                 send_result(request_id, result)
             elif method == "thread/start":
                 send_result(request_id, {
@@ -15032,7 +16013,9 @@ enum SmokeTestRunner {
         def send_error(request_id, message):
             send({"id": request_id, "error": {"code": -32602, "message": message}})
 
-        def app_payload(app_id, name, description, category, install_url):
+        install_only = os.environ.get("RAYTONE_HOME_CONNECTION_INSTALL_ONLY") == "1"
+
+        def app_payload(app_id, name, description, category, install_url, accessible=True):
             return {
                 "id": app_id,
                 "name": name,
@@ -15059,12 +16042,23 @@ enum SmokeTestRunner {
                 },
                 "labels": {"source": "home-connection-app-mention-smoke"},
                 "installUrl": install_url,
-                "isAccessible": True,
+                "isAccessible": accessible,
                 "isEnabled": True,
                 "pluginDisplayNames": [name],
             }
 
         def apps():
+            if install_only:
+                return [
+                    app_payload(
+                        "raytone.teams",
+                        "Microsoft Teams",
+                        "消息传送 app，未授权时用于验证主页连接卡片会打开安装/授权链接。",
+                        "消息",
+                        "https://chatgpt.com/apps/raytone/teams/install",
+                        accessible=False,
+                    )
+                ]
             return [
                 app_payload(
                     "raytone.slack",
@@ -15109,7 +16103,9 @@ enum SmokeTestRunner {
             if method == "configRequirements/read":
                 return config_requirements()
             if method == "app/list":
-                return {"data": apps(), "nextCursor": None}
+                result = {"data": apps(), "nextCursor": None}
+                log({"appListResponse": result})
+                return result
             if method == "remoteControl/status/read":
                 return {"status": "disabled", "serverName": "fake", "installationId": "fake-installation", "environmentId": None}
             if method == "permissionProfile/list":

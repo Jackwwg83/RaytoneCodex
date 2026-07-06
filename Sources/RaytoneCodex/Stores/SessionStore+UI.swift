@@ -288,6 +288,19 @@ extension SessionStore {
         } else {
             browserDetail = "未打开网页"
         }
+        let browserSource: String
+        if !browserAttachedSnapshotPath.isEmpty ||
+            browserScreenshotStatusText.contains("已加入下次对话图片") {
+            browserSource = "WKWebView snapshot PNG"
+        } else if browserDataStatusText.contains("fs/getMetadata + fs/readFile") {
+            browserSource = "WKWebView + fs/getMetadata + fs/readFile"
+        } else if browserDataStatusText.contains("fs/getMetadata") {
+            browserSource = "WKWebView + fs/getMetadata"
+        } else if browserDataStatusText.contains("清除浏览数据") {
+            browserSource = "WKWebsiteDataStore"
+        } else {
+            browserSource = "WKWebView"
+        }
 
         let fileSource: String
         let fileDetail: String
@@ -365,6 +378,18 @@ extension SessionStore {
         } else {
             marketplaceSource = "plugin/list"
         }
+        let marketplaceDetail: String
+        if marketplaceRuntimeActive {
+            marketplaceDetail = runtimeCatalogStatusText
+        } else if !runtimePlugins.isEmpty {
+            let sharedSuffix = runtimeSharedPluginCount > 0 ? " · 共享 \(runtimeSharedPluginCount)" : ""
+            marketplaceDetail = "plugin/list：\(runtimePlugins.count) 个插件\(sharedSuffix)"
+        } else if runtimeCatalogStatusText.hasPrefix("app-server"),
+                  runtimeCatalogStatusText.contains("插件") {
+            marketplaceDetail = runtimeCatalogStatusText
+        } else {
+            marketplaceDetail = "未读取插件市场"
+        }
 
         return [
             EnvironmentSourceFact(
@@ -406,7 +431,7 @@ extension SessionStore {
             EnvironmentSourceFact(
                 symbol: "puzzlepiece.extension",
                 title: "插件市场",
-                detail: runtimeCatalogStatusText,
+                detail: marketplaceDetail,
                 source: marketplaceSource,
                 active: marketplaceRuntimeActive || !runtimePlugins.isEmpty
             ),
@@ -421,7 +446,7 @@ extension SessionStore {
                 symbol: "globe",
                 title: "浏览器",
                 detail: browserDetail,
-                source: "WKWebView",
+                source: browserSource,
                 active: browserURL != nil
             ),
             EnvironmentSourceFact(
@@ -442,7 +467,7 @@ extension SessionStore {
                 symbol: "terminal",
                 title: "终端",
                 detail: terminalDetail,
-                source: "command/exec",
+                source: "process/spawn",
                 active: !terminalRuns.isEmpty
             )
         ]
@@ -674,7 +699,10 @@ extension SessionStore {
     }
 
     @discardableResult
-    func openHomeConnection(_ kind: HomeConnectionKind) async -> Bool {
+    func openHomeConnection(
+        _ kind: HomeConnectionKind,
+        openExternalInstall: Bool = true
+    ) async -> Bool {
         homeConnectionStatusText = "正在打开\(kind.title)…"
 
         switch kind {
@@ -692,6 +720,12 @@ extension SessionStore {
                 let actionText = inserted ? "已放入输入框" : "mention 解析失败"
                 homeConnectionStatusText = "\(kind.title)：app/list \(runtimeApps.count) 个 · \(app.name) \(actionText) · \(connectionText)"
                 return inserted
+            }
+            if ok, let installableApp = preferredInstallableRuntimeApp(matching: kind.matchTokens) {
+                let opened = openRuntimeAppInstallURL(installableApp, openExternal: openExternalInstall)
+                let actionText = opened ? "已打开安装/授权链接" : "缺少安装链接"
+                homeConnectionStatusText = "\(kind.title)：app/list \(runtimeApps.count) 个 · \(installableApp.name) \(actionText) · \(connectionText)"
+                return opened
             }
             homeConnectionStatusText = "\(kind.title)：app/list \(runtimeApps.count) 个 · MCP \(runtimeMCPServers.count) 个 · \(connectionText)"
             return ok
@@ -1005,6 +1039,28 @@ extension SessionStore {
         let normalizedTokens = tokens.map { $0.lowercased() }
         return runtimeApps.first { app in
             guard app.isEnabled, app.isAccessible else {
+                return false
+            }
+            let haystack = [
+                app.id,
+                app.name,
+                app.description ?? "",
+                app.category ?? "",
+                app.developer ?? "",
+                app.pluginDisplayNames.joined(separator: " ")
+            ]
+                .joined(separator: " ")
+                .lowercased()
+            return normalizedTokens.contains { haystack.contains($0) }
+        }
+    }
+
+    private func preferredInstallableRuntimeApp(matching tokens: [String]) -> CodexRuntimeAppInfo? {
+        let normalizedTokens = tokens.map { $0.lowercased() }
+        return runtimeApps.first { app in
+            guard app.isEnabled,
+                  !app.isAccessible,
+                  app.installURL?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 return false
             }
             let haystack = [

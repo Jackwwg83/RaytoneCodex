@@ -196,6 +196,33 @@ public struct CodexAppServerTurn: Equatable, Sendable {
     }
 }
 
+public struct CodexThreadElicitationCounter: Equatable, Sendable {
+    public var count: Int
+    public var paused: Bool
+
+    public init(count: Int, paused: Bool) {
+        self.count = count
+        self.paused = paused
+    }
+}
+
+public struct CodexTurnEnvironment: Equatable, Sendable {
+    public var environmentID: String
+    public var cwd: String
+
+    public init(environmentID: String, cwd: String) {
+        self.environmentID = environmentID
+        self.cwd = cwd
+    }
+
+    fileprivate var jsonValue: JSONValue {
+        .object([
+            "environmentId": .string(environmentID),
+            "cwd": .string(cwd)
+        ])
+    }
+}
+
 public struct CodexCollaborationModePreset: Equatable, Sendable, Identifiable {
     public var id: String { mode ?? name }
     public var name: String
@@ -1102,6 +1129,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var memoryDisableOnExternalContext: Bool?
     public var instructions: String?
     public var developerInstructions: String?
+    public var raytoneCommitInstructions: String?
+    public var raytonePullRequestInstructions: String?
     public var desktopKeys: [String]
     public var desktopSettings: CodexRuntimeDesktopSettings
     public var raytoneSelectedProviderID: String?
@@ -1125,6 +1154,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         memoryDisableOnExternalContext: Bool?,
         instructions: String?,
         developerInstructions: String?,
+        raytoneCommitInstructions: String?,
+        raytonePullRequestInstructions: String?,
         desktopKeys: [String],
         desktopSettings: CodexRuntimeDesktopSettings,
         raytoneSelectedProviderID: String?,
@@ -1147,6 +1178,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.memoryDisableOnExternalContext = memoryDisableOnExternalContext
         self.instructions = instructions
         self.developerInstructions = developerInstructions
+        self.raytoneCommitInstructions = raytoneCommitInstructions
+        self.raytonePullRequestInstructions = raytonePullRequestInstructions
         self.desktopKeys = desktopKeys
         self.desktopSettings = desktopSettings
         self.raytoneSelectedProviderID = raytoneSelectedProviderID
@@ -1437,6 +1470,18 @@ public struct CodexRuntimeThreadTurnsPage: Equatable, Sendable {
 
     public init(turns: [JSONValue], nextCursor: String?, backwardsCursor: String?) {
         self.turns = turns
+        self.nextCursor = nextCursor
+        self.backwardsCursor = backwardsCursor
+    }
+}
+
+public struct CodexRuntimeThreadItemsPage: Equatable, Sendable {
+    public var items: [JSONValue]
+    public var nextCursor: String?
+    public var backwardsCursor: String?
+
+    public init(items: [JSONValue], nextCursor: String?, backwardsCursor: String?) {
+        self.items = items
         self.nextCursor = nextCursor
         self.backwardsCursor = backwardsCursor
     }
@@ -1907,6 +1952,7 @@ public struct CodexAppServerOptions: Equatable, Sendable {
     public var approvalsReviewer: CodexApprovalsReviewer
     public var personality: CodexPersonality?
     public var collaborationMode: CodexCollaborationModePreset?
+    public var environments: [CodexTurnEnvironment]?
 
     public init(
         workspaceURL: URL,
@@ -1915,7 +1961,8 @@ public struct CodexAppServerOptions: Equatable, Sendable {
         approvalPolicy: CodexApprovalPolicy = .onRequest,
         approvalsReviewer: CodexApprovalsReviewer = .user,
         personality: CodexPersonality? = nil,
-        collaborationMode: CodexCollaborationModePreset? = nil
+        collaborationMode: CodexCollaborationModePreset? = nil,
+        environments: [CodexTurnEnvironment]? = nil
     ) {
         self.workspaceURL = workspaceURL
         self.model = model
@@ -1924,6 +1971,7 @@ public struct CodexAppServerOptions: Equatable, Sendable {
         self.approvalsReviewer = approvalsReviewer
         self.personality = personality
         self.collaborationMode = collaborationMode
+        self.environments = environments
     }
 }
 
@@ -2153,6 +2201,9 @@ public actor CodexAppServerClient {
         if let personality = options.personality {
             params["personality"] = .string(personality.rawValue)
         }
+        if let environments = options.environments {
+            params["environments"] = .array(environments.map(\.jsonValue))
+        }
 
         let result = try await request(method: "thread/start", params: .object(params))
         guard let thread = result["thread"]?.objectValue else {
@@ -2206,6 +2257,9 @@ public actor CodexAppServerClient {
             params["collaborationMode"] = collaborationMode.collaborationModeValue(
                 effectiveModel: effectiveModel?.isEmpty == false ? effectiveModel! : "gpt-5.5"
             )
+        }
+        if let environments = options.environments {
+            params["environments"] = .array(environments.map(\.jsonValue))
         }
 
         let result = try await request(method: "turn/start", params: .object(params))
@@ -2373,6 +2427,76 @@ public actor CodexAppServerClient {
                         ])
                     ]),
                     "required": .array([])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_browser"),
+                "name": .string("open_url"),
+                "description": .string("在 RaytoneCodex 右侧内置浏览器打开 URL 或工作区内本地文件，并返回导航状态。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "url": .object([
+                            "type": .string("string"),
+                            "description": .string("要打开的 URL、域名、工作区内相对路径或工作区内绝对路径。")
+                        ]),
+                        "captureSnapshot": .object([
+                            "type": .string("boolean"),
+                            "description": .string("打开后是否立即请求浏览器面板截图，默认 false。")
+                        ]),
+                        "includeSnapshotPath": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否返回已附加或待生成截图路径，默认 true。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("url")
+                    ])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_browser"),
+                "name": .string("capture_snapshot"),
+                "description": .string("请求 RaytoneCodex 内置浏览器为当前页面截图，截图完成后会自动加入下一轮对话图片。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "includeSnapshotPath": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否返回已附加或待生成截图路径，默认 true。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_terminal"),
+                "name": .string("run_command"),
+                "description": .string("通过 Codex app-server 的 command/exec 在当前工作区运行一个终端命令，并把输出显示到 RaytoneCodex 终端面板。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "command": .object([
+                            "type": .string("string"),
+                            "description": .string("要交给 /bin/zsh -lc 执行的命令。")
+                        ]),
+                        "cwd": .object([
+                            "type": .string("string"),
+                            "description": .string("工作区内运行目录，默认当前工作区根目录。")
+                        ]),
+                        "timeoutSeconds": .object([
+                            "type": .string("integer"),
+                            "minimum": .number(1),
+                            "maximum": .number(120),
+                            "description": .string("命令超时时间，默认 30 秒，最多 120 秒。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("command")
+                    ])
                 ])
             ]),
             .object([
@@ -3024,6 +3148,20 @@ public actor CodexAppServerClient {
         return CodexThreadUnsubscribeStatus(rawValue: result["status"]?.stringValue ?? "unknown")
     }
 
+    public func incrementThreadElicitation(threadID: String) async throws -> CodexThreadElicitationCounter {
+        let result = try await request(method: "thread/increment_elicitation", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return Self.threadElicitationCounter(from: result)
+    }
+
+    public func decrementThreadElicitation(threadID: String) async throws -> CodexThreadElicitationCounter {
+        let result = try await request(method: "thread/decrement_elicitation", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return Self.threadElicitationCounter(from: result)
+    }
+
     public func readThread(id threadID: String, includeTurns: Bool = true) async throws -> JSONValue {
         try await request(method: "thread/read", params: .object([
             "threadId": .string(threadID),
@@ -3050,6 +3188,27 @@ public actor CodexAppServerClient {
 
         let result = try await request(method: "thread/turns/list", params: .object(params))
         return Self.threadTurnsPage(from: result)
+    }
+
+    public func listThreadTurnItems(
+        id threadID: String,
+        turnID: String,
+        limit: Int = 100,
+        cursor: String? = nil,
+        sortDirection: String = "asc"
+    ) async throws -> CodexRuntimeThreadItemsPage {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "turnId": .string(turnID),
+            "limit": .number(Double(limit)),
+            "sortDirection": .string(sortDirection)
+        ]
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/turns/items/list", params: .object(params))
+        return Self.threadItemsPage(from: result)
     }
 
     public func updateThreadGitMetadata(
@@ -3146,6 +3305,13 @@ public actor CodexAppServerClient {
         let result = try await request(method: "collaborationMode/list", params: .object([:]))
         let items = result["data"]?.arrayValue ?? result.arrayValue ?? []
         return items.map(Self.collaborationModePreset(from:))
+    }
+
+    public func addEnvironment(environmentID: String, execServerURL: String) async throws {
+        _ = try await request(method: "environment/add", params: .object([
+            "environmentId": .string(environmentID),
+            "execServerUrl": .string(execServerURL)
+        ]))
     }
 
     public func updateThreadCollaborationMode(
@@ -4624,6 +4790,8 @@ public actor CodexAppServerClient {
             memoryDisableOnExternalContext: memories?["disable_on_external_context"]?.boolValue ?? memories?["disableOnExternalContext"]?.boolValue,
             instructions: config?["instructions"]?.stringValue,
             developerInstructions: config?["developer_instructions"]?.stringValue,
+            raytoneCommitInstructions: configString(raytoneDesktop, snake: "commit_instructions", camel: "commitInstructions"),
+            raytonePullRequestInstructions: configString(raytoneDesktop, snake: "pull_request_instructions", camel: "pullRequestInstructions"),
             desktopKeys: desktopKeys,
             desktopSettings: CodexRuntimeDesktopSettings(
                 showInMenuBar: configBool(raytoneDesktop, snake: "show_in_menu_bar", camel: "showInMenuBar"),
@@ -4886,6 +5054,21 @@ public actor CodexAppServerClient {
             turns: result["data"]?.arrayValue ?? [],
             nextCursor: result["nextCursor"]?.stringValue,
             backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func threadItemsPage(from result: JSONValue) -> CodexRuntimeThreadItemsPage {
+        CodexRuntimeThreadItemsPage(
+            items: result["data"]?.arrayValue ?? [],
+            nextCursor: result["nextCursor"]?.stringValue,
+            backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func threadElicitationCounter(from result: JSONValue) -> CodexThreadElicitationCounter {
+        CodexThreadElicitationCounter(
+            count: result["count"]?.intValue ?? 0,
+            paused: result["paused"]?.boolValue ?? false
         )
     }
 

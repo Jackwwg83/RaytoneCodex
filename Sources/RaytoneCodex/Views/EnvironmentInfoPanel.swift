@@ -118,7 +118,17 @@ struct EnvironmentInfoPanel: View {
                 Button("预检") {
                     Task { await store.runGitCommitPushPreflightInTerminal() }
                 }
+                .buttonStyle(ChipButtonStyle())
+                Button("建库") {
+                    Task { await store.runGitCreateRepositoryInTerminal() }
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(store.terminalIsRunning)
+                Button("推送") {
+                    Task { await store.runGitPushCurrentBranchInTerminal() }
+                }
                 .buttonStyle(ChipButtonStyle(prominent: true))
+                .disabled(store.terminalIsRunning)
             }
             EnvironmentInfoRow(symbol: "cpu", title: store.modelDisplayName, trailing: nil)
             EnvironmentInfoActionRow(symbol: "bubble.left.and.text.bubble.right", title: "已加载线程", detail: loadedThreadText) {
