@@ -1343,13 +1343,20 @@ struct SettingsRouteView: View {
                     configMetric("审批路由", store.runtimeConfig?.approvalsReviewer ?? "用户")
                     configMetric("沙盒", store.runtimeConfig?.sandboxMode ?? "默认")
                     configMetric("默认权限", store.runtimeConfig?.defaultPermissions ?? store.runtimeDefaultPermissionsProfile)
+                    configMetric("允许批准策略", listPreview(store.runtimeRequirements?.allowedApprovalPolicies ?? []))
+                    configMetric("允许沙盒", listPreview(store.runtimeRequirements?.allowedSandboxModes ?? []))
+                    configMetric("允许权限配置", boolMapPreview(store.runtimeRequirements?.allowedPermissionProfiles ?? [:]))
                     configMetric("推理强度", store.runtimeConfig?.reasoningEffort ?? "默认")
                     configMetric("推理摘要", store.runtimeConfig?.reasoningSummary ?? "默认")
                     configMetric("输出详细度", store.runtimeConfig?.modelVerbosity ?? "默认")
                     configMetric("服务层级", store.runtimeConfig?.serviceTier ?? "默认")
+                    configMetric("功能要求", boolMapPreview(store.runtimeRequirements?.featureRequirements ?? [:]))
                     configMetric("生成记忆", boolMetric(store.runtimeConfig?.memoryGenerateMemories))
                     configMetric("使用记忆", boolMetric(store.runtimeConfig?.memoryUseMemories))
                     configMetric("外部上下文跳过记忆", boolMetric(store.runtimeConfig?.memoryDisableOnExternalContext))
+                    configMetric("网络约束", networkRequirementsPreview(store.runtimeRequirements))
+                    configMetric("受管 Hooks", managedHooksPreview(store.runtimeRequirements))
+                    configMetric("驻留要求", store.runtimeRequirements?.enforceResidency ?? "未配置")
                     configMetric("桌面设置", store.runtimeDesktopSettingsSummary)
                     configMetric("菜单栏", boolMetric(store.runtimeConfig?.desktopSettings.showInMenuBar))
                     configMetric("底部面板", boolMetric(store.runtimeConfig?.desktopSettings.showBottomPanel))
@@ -2455,6 +2462,11 @@ struct SettingsRouteView: View {
                 metricRow("运行时", store.runtimeSummary)
                 metricRow("Sidecar", store.sidecarStatusText)
                 metricRow("网络要求", optionalBoolText(store.runtimeRequirements?.networkEnabled))
+                metricRow("域名约束", networkDomainPreview(store.runtimeRequirements))
+                metricRow("本地监听", optionalBoolText(store.runtimeRequirements?.allowLocalBinding))
+                metricRow("上游代理", optionalBoolText(store.runtimeRequirements?.allowUpstreamProxy))
+                metricRow("Windows 沙箱", listPreview(store.runtimeRequirements?.allowedWindowsSandboxImplementations ?? []))
+                metricRow("受管 Hooks", managedHooksPreview(store.runtimeRequirements))
             }
 
             SettingsSection(title: "权限配置") {
@@ -2938,6 +2950,114 @@ struct SettingsRouteView: View {
     private func optionalBoolText(_ value: Bool?) -> String {
         guard let value else { return "未配置" }
         return value ? "允许" : "禁止"
+    }
+
+    private func listPreview(_ values: [String], empty: String = "未配置") -> String {
+        guard !values.isEmpty else { return empty }
+        let shown = values.prefix(4).joined(separator: "、")
+        if values.count > 4 {
+            return "\(shown) 等 \(values.count) 项"
+        }
+        return shown
+    }
+
+    private func boolMapPreview(_ values: [String: Bool], empty: String = "未配置") -> String {
+        guard !values.isEmpty else { return empty }
+        let pairs = values
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+            .prefix(4)
+            .map { "\($0.key)：\($0.value ? "允许" : "禁止")" }
+            .joined(separator: "、")
+        if values.count > 4 {
+            return "\(pairs) 等 \(values.count) 项"
+        }
+        return pairs
+    }
+
+    private func stringMapPreview(_ values: [String: String], empty: String = "未配置") -> String {
+        guard !values.isEmpty else { return empty }
+        let pairs = values
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+            .prefix(4)
+            .map { "\($0.key)：\($0.value)" }
+            .joined(separator: "、")
+        if values.count > 4 {
+            return "\(pairs) 等 \(values.count) 项"
+        }
+        return pairs
+    }
+
+    private func networkDomainPreview(_ requirements: CodexRuntimeConfigRequirements?) -> String {
+        guard let requirements else { return "未配置" }
+        if !requirements.networkDomains.isEmpty {
+            return stringMapPreview(requirements.networkDomains)
+        }
+        let allowed = listPreview(requirements.networkAllowedDomains, empty: "")
+        let denied = listPreview(requirements.networkDeniedDomains, empty: "")
+        switch (allowed.isEmpty, denied.isEmpty) {
+        case (false, false):
+            return "允许 \(allowed) · 禁止 \(denied)"
+        case (false, true):
+            return "允许 \(allowed)"
+        case (true, false):
+            return "禁止 \(denied)"
+        case (true, true):
+            return "未配置"
+        }
+    }
+
+    private func networkRequirementsPreview(_ requirements: CodexRuntimeConfigRequirements?) -> String {
+        guard let requirements else { return "未配置" }
+        var parts = ["网络\(optionalBoolText(requirements.networkEnabled))"]
+        let domains = networkDomainPreview(requirements)
+        if domains != "未配置" {
+            parts.append(domains)
+        }
+        if let local = requirements.allowLocalBinding {
+            parts.append("本地监听\(local ? "允许" : "禁止")")
+        }
+        if let proxy = requirements.allowUpstreamProxy {
+            parts.append("上游代理\(proxy ? "允许" : "禁止")")
+        }
+        if let managed = requirements.managedAllowedDomainsOnly {
+            parts.append(managed ? "仅受管 allowlist" : "允许用户域名规则")
+        }
+        if let httpPort = requirements.httpPort {
+            parts.append("HTTP \(httpPort)")
+        }
+        if let socksPort = requirements.socksPort {
+            parts.append("SOCKS \(socksPort)")
+        }
+        if requirements.dangerouslyAllowAllUnixSockets == true {
+            parts.append("允许所有 Unix socket")
+        } else if !requirements.networkUnixSockets.isEmpty {
+            parts.append("Unix socket \(stringMapPreview(requirements.networkUnixSockets))")
+        } else if !requirements.allowUnixSockets.isEmpty {
+            parts.append("Unix socket \(listPreview(requirements.allowUnixSockets))")
+        }
+        if requirements.dangerouslyAllowNonLoopbackProxy == true {
+            parts.append("允许非 loopback proxy")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func managedHooksPreview(_ requirements: CodexRuntimeConfigRequirements?) -> String {
+        guard let requirements else { return "未配置" }
+        var parts: [String] = []
+        if let managedHooksOnly = requirements.managedHooksOnly {
+            parts.append(managedHooksOnly ? "仅受管 hooks" : "允许用户 hooks")
+        }
+        let enabledEvents = requirements.managedHookEventCounts
+            .filter { $0.value > 0 }
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+        if !enabledEvents.isEmpty {
+            let shown = enabledEvents.prefix(4).map { "\($0.key)×\($0.value)" }.joined(separator: "、")
+            parts.append(enabledEvents.count > 4 ? "\(shown) 等 \(enabledEvents.count) 项" : shown)
+        }
+        if let dir = requirements.managedHooksDirectory, !dir.isEmpty {
+            parts.append(Project.abbreviate(dir))
+        }
+        return parts.isEmpty ? "未配置" : parts.joined(separator: " · ")
     }
 
     private func externalAgentItemTitle(_ item: CodexExternalAgentMigrationItem) -> String {

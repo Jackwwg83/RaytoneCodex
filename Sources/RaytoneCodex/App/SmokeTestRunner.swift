@@ -9396,7 +9396,15 @@ enum SmokeTestRunner {
                     "allowAppSnapshots": store.runtimeRequirements?.allowAppSnapshots.map { $0 as Any } ?? NSNull(),
                     "allowLockedComputerUse": store.runtimeRequirements?.allowLockedComputerUse.map { $0 as Any } ?? NSNull(),
                     "networkEnabled": store.runtimeRequirements?.networkEnabled.map { $0 as Any } ?? NSNull(),
-                    "defaultPermissions": store.runtimeRequirements?.defaultPermissions ?? ""
+                    "defaultPermissions": store.runtimeRequirements?.defaultPermissions ?? "",
+                    "allowedApprovalPolicies": store.runtimeRequirements?.allowedApprovalPolicies ?? [],
+                    "allowedSandboxModes": store.runtimeRequirements?.allowedSandboxModes ?? [],
+                    "allowedPermissionProfiles": store.runtimeRequirements?.allowedPermissionProfiles ?? [:],
+                    "featureRequirements": store.runtimeRequirements?.featureRequirements ?? [:],
+                    "networkDomains": store.runtimeRequirements?.networkDomains ?? [:],
+                    "networkUnixSockets": store.runtimeRequirements?.networkUnixSockets ?? [:],
+                    "managedHookEventCounts": store.runtimeRequirements?.managedHookEventCounts ?? [:],
+                    "enforceResidency": store.runtimeRequirements?.enforceResidency ?? ""
                 ] as [String: Any],
                 "remoteControl": [
                     "status": store.runtimeRemoteControlStatus?.status ?? "",
@@ -9794,6 +9802,8 @@ enum SmokeTestRunner {
                 let apps = store.runtimeApps
                 let status = store.runtimeCatalogStatusText
                 let appStatus = store.runtimeAppsStatusText
+                let requirements = store.runtimeRequirements
+                let permissionProfiles = store.runtimePermissionProfiles
                 await store.stopAppServerForTesting()
 
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
@@ -9803,7 +9813,18 @@ enum SmokeTestRunner {
                     firstApp?.screenshotPrompts == ["打开设置并截取主窗口"] &&
                     firstApp?.installURL == "https://chatgpt.com/apps/raytone/snapshot" &&
                     appStatus.contains("app/list/updated") &&
+                    requirements?.allowedApprovalPolicies == ["on-request", "never"] &&
+                    requirements?.allowedSandboxModes == ["read-only", "workspace-write"] &&
+                    requirements?.allowedPermissionProfiles[":workspace"] == true &&
+                    requirements?.featureRequirements["web_search"] == false &&
+                    requirements?.networkDomains["api.openai.com"] == "allow" &&
+                    requirements?.networkUnixSockets["/tmp/raytone.sock"] == "deny" &&
+                    requirements?.managedHookEventCounts["UserPromptSubmit"] == 1 &&
+                    requirements?.enforceResidency == "us" &&
+                    permissionProfiles.map(\.id).contains(":workspace") &&
                     logText.contains(#""method":"app/list""#) &&
+                    logText.contains(#""method":"configRequirements/read""#) &&
+                    logText.contains(#""method":"permissionProfile/list""#) &&
                     logText.contains(#""forceRefetch":true"#)
 
                 emitJSON([
@@ -9815,6 +9836,24 @@ enum SmokeTestRunner {
                     "appStatus": appStatus,
                     "appCount": apps.count,
                     "appsWithScreenshotMetadata": apps.filter { !$0.screenshotPrompts.isEmpty }.count,
+                    "requirements": [
+                        "allowedApprovalPolicies": requirements?.allowedApprovalPolicies ?? [],
+                        "allowedSandboxModes": requirements?.allowedSandboxModes ?? [],
+                        "allowedPermissionProfiles": requirements?.allowedPermissionProfiles ?? [:],
+                        "featureRequirements": requirements?.featureRequirements ?? [:],
+                        "networkDomains": requirements?.networkDomains ?? [:],
+                        "networkUnixSockets": requirements?.networkUnixSockets ?? [:],
+                        "managedHookEventCounts": requirements?.managedHookEventCounts ?? [:],
+                        "enforceResidency": requirements?.enforceResidency ?? "",
+                        "httpPort": requirements?.httpPort.map { $0 as Any } ?? NSNull(),
+                        "socksPort": requirements?.socksPort.map { $0 as Any } ?? NSNull()
+                    ] as [String: Any],
+                    "permissionProfiles": permissionProfiles.map { profile in
+                        [
+                            "id": profile.id,
+                            "description": profile.description ?? ""
+                        ] as [String: Any]
+                    },
                     "appPreview": apps.map { app in
                         [
                             "id": app.id,
@@ -14036,9 +14075,59 @@ enum SmokeTestRunner {
                     "requirements": {
                         "defaultPermissions": ":workspace",
                         "allowAppshots": True,
+                        "allowedApprovalPolicies": ["on-request", "never"],
+                        "allowedSandboxModes": ["read-only", "workspace-write"],
+                        "allowedWebSearchModes": ["enabled", "disabled"],
+                        "allowedWindowsSandboxImplementations": ["unelevated"],
+                        "allowedPermissionProfiles": {
+                            ":read-only": True,
+                            ":workspace": True,
+                            ":danger-full-access": False
+                        },
+                        "featureRequirements": {
+                            "web_search": False,
+                            "browser": True
+                        },
                         "computerUse": {"allowLockedComputerUse": False},
-                        "network": {"enabled": True},
+                        "network": {
+                            "enabled": True,
+                            "allowedDomains": ["api.openai.com"],
+                            "deniedDomains": ["example.invalid"],
+                            "domains": {
+                                "api.openai.com": "allow",
+                                "example.invalid": "deny"
+                            },
+                            "unixSockets": {
+                                "/tmp/raytone.sock": "deny"
+                            },
+                            "allowLocalBinding": True,
+                            "allowUpstreamProxy": False,
+                            "allowUnixSockets": ["/tmp/codex.sock"],
+                            "managedAllowedDomainsOnly": True,
+                            "dangerouslyAllowAllUnixSockets": False,
+                            "dangerouslyAllowNonLoopbackProxy": False,
+                            "httpPort": 18080,
+                            "socksPort": 18081
+                        },
                         "allowManagedHooksOnly": False,
+                        "hooks": {
+                            "managedDir": "/tmp/raytone-managed-hooks",
+                            "windowsManagedDir": "C:\\\\raytone-managed-hooks",
+                            "UserPromptSubmit": [{
+                                "matcher": "*",
+                                "hooks": [{"type": "command", "command": "echo raytone"}]
+                            }],
+                            "PreToolUse": [],
+                            "PostToolUse": [],
+                            "Stop": [],
+                            "SessionStart": [],
+                            "PreCompact": [],
+                            "PostCompact": [],
+                            "SubagentStart": [],
+                            "SubagentStop": [],
+                            "PermissionRequest": []
+                        },
+                        "enforceResidency": "us",
                     }
                 }
             if method == "app/list":
@@ -14046,7 +14135,15 @@ enum SmokeTestRunner {
             if method == "remoteControl/status/read":
                 return {"status": "disabled", "serverName": "fake", "installationId": "fake-installation", "environmentId": None}
             if method == "permissionProfile/list":
-                return {"data": [], "nextCursor": None}
+                return {
+                    "data": [
+                        {"id": ":read-only", "description": "只读内置配置"},
+                        {"id": ":workspace", "description": "工作区写入内置配置"}
+                    ],
+                    "nextCursor": None
+                }
+            if method == "windowsSandbox/readiness":
+                return {"status": "unsupported"}
             if method in ("plugin/list", "plugin/installed"):
                 return {"marketplaces": [], "featuredPluginIds": [], "marketplaceLoadErrors": []}
             if method == "mcpServerStatus/list":

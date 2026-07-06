@@ -1520,30 +1520,87 @@ public struct CodexRuntimeConfigRequirements: Equatable, Sendable {
     public var allowedApprovalPolicies: [String]
     public var allowedSandboxModes: [String]
     public var allowedWebSearchModes: [String]
+    public var allowedWindowsSandboxImplementations: [String]
+    public var allowedPermissionProfiles: [String: Bool]
+    public var featureRequirements: [String: Bool]
     public var defaultPermissions: String?
     public var allowAppSnapshots: Bool?
     public var allowLockedComputerUse: Bool?
     public var networkEnabled: Bool?
+    public var networkAllowedDomains: [String]
+    public var networkDeniedDomains: [String]
+    public var networkDomains: [String: String]
+    public var networkUnixSockets: [String: String]
+    public var allowLocalBinding: Bool?
+    public var allowUpstreamProxy: Bool?
+    public var allowUnixSockets: [String]
+    public var dangerouslyAllowAllUnixSockets: Bool?
+    public var dangerouslyAllowNonLoopbackProxy: Bool?
+    public var managedAllowedDomainsOnly: Bool?
+    public var httpPort: Int?
+    public var socksPort: Int?
     public var managedHooksOnly: Bool?
+    public var managedHookEventCounts: [String: Int]
+    public var managedHooksDirectory: String?
+    public var windowsManagedHooksDirectory: String?
+    public var enforceResidency: String?
 
     public init(
         allowedApprovalPolicies: [String],
         allowedSandboxModes: [String],
         allowedWebSearchModes: [String],
+        allowedWindowsSandboxImplementations: [String],
+        allowedPermissionProfiles: [String: Bool],
+        featureRequirements: [String: Bool],
         defaultPermissions: String?,
         allowAppSnapshots: Bool?,
         allowLockedComputerUse: Bool?,
         networkEnabled: Bool?,
-        managedHooksOnly: Bool?
+        networkAllowedDomains: [String],
+        networkDeniedDomains: [String],
+        networkDomains: [String: String],
+        networkUnixSockets: [String: String],
+        allowLocalBinding: Bool?,
+        allowUpstreamProxy: Bool?,
+        allowUnixSockets: [String],
+        dangerouslyAllowAllUnixSockets: Bool?,
+        dangerouslyAllowNonLoopbackProxy: Bool?,
+        managedAllowedDomainsOnly: Bool?,
+        httpPort: Int?,
+        socksPort: Int?,
+        managedHooksOnly: Bool?,
+        managedHookEventCounts: [String: Int],
+        managedHooksDirectory: String?,
+        windowsManagedHooksDirectory: String?,
+        enforceResidency: String?
     ) {
         self.allowedApprovalPolicies = allowedApprovalPolicies
         self.allowedSandboxModes = allowedSandboxModes
         self.allowedWebSearchModes = allowedWebSearchModes
+        self.allowedWindowsSandboxImplementations = allowedWindowsSandboxImplementations
+        self.allowedPermissionProfiles = allowedPermissionProfiles
+        self.featureRequirements = featureRequirements
         self.defaultPermissions = defaultPermissions
         self.allowAppSnapshots = allowAppSnapshots
         self.allowLockedComputerUse = allowLockedComputerUse
         self.networkEnabled = networkEnabled
+        self.networkAllowedDomains = networkAllowedDomains
+        self.networkDeniedDomains = networkDeniedDomains
+        self.networkDomains = networkDomains
+        self.networkUnixSockets = networkUnixSockets
+        self.allowLocalBinding = allowLocalBinding
+        self.allowUpstreamProxy = allowUpstreamProxy
+        self.allowUnixSockets = allowUnixSockets
+        self.dangerouslyAllowAllUnixSockets = dangerouslyAllowAllUnixSockets
+        self.dangerouslyAllowNonLoopbackProxy = dangerouslyAllowNonLoopbackProxy
+        self.managedAllowedDomainsOnly = managedAllowedDomainsOnly
+        self.httpPort = httpPort
+        self.socksPort = socksPort
         self.managedHooksOnly = managedHooksOnly
+        self.managedHookEventCounts = managedHookEventCounts
+        self.managedHooksDirectory = managedHooksDirectory
+        self.windowsManagedHooksDirectory = windowsManagedHooksDirectory
+        self.enforceResidency = enforceResidency
     }
 }
 
@@ -4730,16 +4787,64 @@ public actor CodexAppServerClient {
 
     private static func configRequirements(from result: JSONValue) -> CodexRuntimeConfigRequirements {
         let requirements = result["requirements"]
+        let network = requirements?["network"]
+        let hooks = requirements?["hooks"]
         return CodexRuntimeConfigRequirements(
             allowedApprovalPolicies: requirements?["allowedApprovalPolicies"]?.stringList ?? [],
             allowedSandboxModes: requirements?["allowedSandboxModes"]?.stringList ?? [],
             allowedWebSearchModes: requirements?["allowedWebSearchModes"]?.stringList ?? [],
+            allowedWindowsSandboxImplementations: requirements?["allowedWindowsSandboxImplementations"]?.stringList ?? [],
+            allowedPermissionProfiles: boolMap(from: requirements?["allowedPermissionProfiles"]),
+            featureRequirements: boolMap(from: requirements?["featureRequirements"]),
             defaultPermissions: requirements?["defaultPermissions"]?.stringValue,
             allowAppSnapshots: requirements?["allowAppshots"]?.boolValue,
             allowLockedComputerUse: requirements?["computerUse"]?["allowLockedComputerUse"]?.boolValue,
-            networkEnabled: requirements?["network"]?["enabled"]?.boolValue,
-            managedHooksOnly: requirements?["allowManagedHooksOnly"]?.boolValue
+            networkEnabled: network?["enabled"]?.boolValue,
+            networkAllowedDomains: network?["allowedDomains"]?.stringList ?? [],
+            networkDeniedDomains: network?["deniedDomains"]?.stringList ?? [],
+            networkDomains: stringMap(from: network?["domains"]),
+            networkUnixSockets: stringMap(from: network?["unixSockets"]),
+            allowLocalBinding: network?["allowLocalBinding"]?.boolValue,
+            allowUpstreamProxy: network?["allowUpstreamProxy"]?.boolValue,
+            allowUnixSockets: network?["allowUnixSockets"]?.stringList ?? [],
+            dangerouslyAllowAllUnixSockets: network?["dangerouslyAllowAllUnixSockets"]?.boolValue,
+            dangerouslyAllowNonLoopbackProxy: network?["dangerouslyAllowNonLoopbackProxy"]?.boolValue,
+            managedAllowedDomainsOnly: network?["managedAllowedDomainsOnly"]?.boolValue,
+            httpPort: network?["httpPort"]?.intValue,
+            socksPort: network?["socksPort"]?.intValue,
+            managedHooksOnly: requirements?["allowManagedHooksOnly"]?.boolValue,
+            managedHookEventCounts: hookEventCounts(from: hooks),
+            managedHooksDirectory: hooks?["managedDir"]?.stringValue,
+            windowsManagedHooksDirectory: hooks?["windowsManagedDir"]?.stringValue,
+            enforceResidency: requirements?["enforceResidency"]?.stringValue
         )
+    }
+
+    private static func boolMap(from value: JSONValue?) -> [String: Bool] {
+        value?.objectValue?.reduce(into: [String: Bool]()) { result, pair in
+            if let bool = pair.value.boolValue {
+                result[pair.key] = bool
+            }
+        } ?? [:]
+    }
+
+    private static func stringMap(from value: JSONValue?) -> [String: String] {
+        value?.objectValue?.reduce(into: [String: String]()) { result, pair in
+            if let string = pair.value.stringValue {
+                result[pair.key] = string
+            }
+        } ?? [:]
+    }
+
+    private static func hookEventCounts(from value: JSONValue?) -> [String: Int] {
+        value?.objectValue?.reduce(into: [String: Int]()) { result, pair in
+            guard pair.key != "managedDir",
+                  pair.key != "windowsManagedDir",
+                  let count = pair.value.arrayValue?.count else {
+                return
+            }
+            result[pair.key] = count
+        } ?? [:]
     }
 
     public static func remoteControlStatus(from result: JSONValue?) -> CodexRuntimeRemoteControlStatus {
