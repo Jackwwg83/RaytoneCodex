@@ -10889,6 +10889,10 @@ enum SmokeTestRunner {
                 fputs("realtime-session-smoke: start realtime\n", stderr)
                 let started = await store.startRealtimeTextSessionForVoiceInput(prompt: "Raytone realtime session smoke prompt")
 
+                fputs("realtime-session-smoke: append audio\n", stderr)
+                let audioAppended = await store.appendRealtimeSilenceForVoiceInput(samplesPerChannel: 2)
+                let audioAppendStatusText = store.voiceInputStatusText
+
                 fputs("realtime-session-smoke: append text\n", stderr)
                 let appended = await store.appendRealtimeTextForVoiceInput("Raytone realtime append text smoke")
 
@@ -10914,21 +10918,41 @@ enum SmokeTestRunner {
                         return nil
                     }
                 }
+                let reasoningTexts = store.selectedThread.items.compactMap { item -> String? in
+                    switch item.kind {
+                    case let .reasoning(block):
+                        return "\(block.title) \(block.detail)"
+                    default:
+                        return nil
+                    }
+                }
                 let requestObserved = logText.contains(#""method":"thread/realtime/listVoices""#) &&
                     logText.contains(#""method":"thread/start""#) &&
                     logText.contains(#""method":"thread/realtime/start""#) &&
                     logText.contains(#""outputModality":"text""#) &&
                     logText.contains(#""voice":"marin""#) &&
                     logText.contains("Raytone realtime session smoke prompt") &&
+                    logText.contains(#""method":"thread/realtime/appendAudio""#) &&
+                    logText.contains(#""sampleRate":24000"#) &&
+                    logText.contains(#""numChannels":1"#) &&
+                    logText.contains(#""samplesPerChannel":2"#) &&
+                    logText.contains("realtimeAppendAudio") &&
                     logText.contains(#""method":"thread/realtime/appendText""#) &&
                     logText.contains("Raytone realtime append text smoke") &&
                     logText.contains(#""method":"thread/realtime/stop""#)
+                let audioNotificationObserved = reasoningTexts.contains { text in
+                    text.contains("实时语音输出") &&
+                        text.contains("24000 Hz") &&
+                        text.contains("2 samples/channel")
+                }
                 let notificationObserved = transcriptTexts.contains("Raytone realtime append text smoke") &&
+                    audioNotificationObserved &&
                     (
                         store.voiceInputStatusText.contains("已停止") ||
                         store.voiceInputStatusText.contains("已关闭")
                     )
                 let ok = started &&
+                    audioAppended &&
                     appended &&
                     stopped &&
                     requestObserved &&
@@ -10943,16 +10967,20 @@ enum SmokeTestRunner {
                     "fakeExecutable": scriptURL.path,
                     "requestLog": logURL.path,
                     "started": started,
+                    "audioAppended": audioAppended,
                     "appended": appended,
                     "stopped": stopped,
                     "requestObserved": requestObserved,
                     "notificationObserved": notificationObserved,
+                    "audioNotificationObserved": audioNotificationObserved,
+                    "audioAppendStatusText": audioAppendStatusText,
                     "voiceInputStatusText": store.voiceInputStatusText,
                     "threadID": store.selectedThread.appServerThreadID ?? "",
                     "voices": realtimeVoicesPayload(voices),
                     "transcriptTexts": transcriptTexts,
+                    "reasoningTexts": reasoningTexts,
                     "requestLogPreview": String(logText.prefix(2600)),
-                    "source": "thread/realtime/listVoices + start + appendText + stop"
+                    "source": "thread/realtime/listVoices + start + appendAudio + appendText + stop"
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -11476,6 +11504,20 @@ enum SmokeTestRunner {
                     "version": "v2",
                 })
                 log({"realtimeStarted": True, "params": params})
+            elif method == "thread/realtime/appendAudio":
+                audio = params.get("audio") or {}
+                send_result(request_id, {})
+                send_notification("thread/realtime/outputAudio/delta", {
+                    "threadId": "thread-realtime-smoke",
+                    "audio": {
+                        "itemId": audio.get("itemId") or "rt-audio-smoke",
+                        "data": audio.get("data") or "AAAA",
+                        "numChannels": audio.get("numChannels") or 1,
+                        "sampleRate": audio.get("sampleRate") or 24000,
+                        "samplesPerChannel": audio.get("samplesPerChannel") or 2,
+                    },
+                })
+                log({"realtimeAppendAudio": audio})
             elif method == "thread/realtime/appendText":
                 text = params.get("text", "")
                 send_result(request_id, {})

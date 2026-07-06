@@ -2103,6 +2103,60 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func appendRealtimeAudioForVoiceInput(
+        _ data: Data,
+        sampleRate: Int = 24_000,
+        numChannels: Int = 1,
+        samplesPerChannel: Int? = nil,
+        itemID: String = "raytone-audio-\(UUID().uuidString)"
+    ) async -> Bool {
+        guard !data.isEmpty else { return false }
+        guard let client = appServerClient,
+              let threadID = selectedThread.appServerThreadID else {
+            voiceInputStatusText = "thread/realtime/appendAudio：没有活动 realtime 线程"
+            return false
+        }
+
+        let safeChannels = max(1, numChannels)
+        let inferredSamples = max(1, data.count / max(safeChannels * 2, 1))
+        let sampleCount = max(1, samplesPerChannel ?? inferredSamples)
+        let chunk = CodexRealtimeAudioChunk(
+            data: data.base64EncodedString(),
+            sampleRate: max(1, sampleRate),
+            numChannels: safeChannels,
+            samplesPerChannel: sampleCount,
+            itemID: itemID
+        )
+
+        do {
+            try await client.appendRealtimeAudio(threadID: threadID, audio: chunk)
+            voiceInputStatusText = "thread/realtime/appendAudio：已追加音频 \(sampleCount) samples/channel"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return true
+        } catch {
+            voiceInputStatusText = "thread/realtime/appendAudio 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return false
+        }
+    }
+
+    @discardableResult
+    func appendRealtimeSilenceForVoiceInput(
+        sampleRate: Int = 24_000,
+        samplesPerChannel: Int = 2
+    ) async -> Bool {
+        let sampleCount = max(1, samplesPerChannel)
+        let pcm16Silence = Data(repeating: 0, count: sampleCount * 2)
+        return await appendRealtimeAudioForVoiceInput(
+            pcm16Silence,
+            sampleRate: sampleRate,
+            numChannels: 1,
+            samplesPerChannel: sampleCount,
+            itemID: "raytone-silence-\(UUID().uuidString)"
+        )
+    }
+
     func stopRealtimeVoiceInput() async -> Bool {
         guard let client = appServerClient,
               let threadID = selectedThread.appServerThreadID else {

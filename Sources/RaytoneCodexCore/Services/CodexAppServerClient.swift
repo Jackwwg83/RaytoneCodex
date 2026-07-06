@@ -1741,6 +1741,28 @@ public struct CodexRealtimeVoices: Equatable, Sendable {
     }
 }
 
+public struct CodexRealtimeAudioChunk: Equatable, Sendable {
+    public var data: String
+    public var sampleRate: Int
+    public var numChannels: Int
+    public var samplesPerChannel: Int?
+    public var itemID: String?
+
+    public init(
+        data: String,
+        sampleRate: Int,
+        numChannels: Int,
+        samplesPerChannel: Int? = nil,
+        itemID: String? = nil
+    ) {
+        self.data = data
+        self.sampleRate = sampleRate
+        self.numChannels = numChannels
+        self.samplesPerChannel = samplesPerChannel
+        self.itemID = itemID
+    }
+}
+
 public struct CodexRuntimeAppCatalog: Equatable, Sendable {
     public var apps: [CodexRuntimeAppInfo]
     public var nextCursor: String?
@@ -3378,6 +3400,23 @@ public actor CodexAppServerClient {
         _ = try await request(method: "thread/realtime/appendText", params: .object([
             "threadId": .string(threadID),
             "text": .string(text)
+        ]))
+    }
+
+    public func appendRealtimeAudio(threadID: String, audio: CodexRealtimeAudioChunk) async throws {
+        var audioPayload: [String: JSONValue] = [
+            "data": .string(audio.data),
+            "sampleRate": .number(Double(max(0, audio.sampleRate))),
+            "numChannels": .number(Double(max(0, audio.numChannels)))
+        ]
+        if let samplesPerChannel = audio.samplesPerChannel {
+            audioPayload["samplesPerChannel"] = .number(Double(max(0, samplesPerChannel)))
+        }
+        audioPayload["itemId"] = audio.itemID.map(JSONValue.string) ?? .null
+
+        _ = try await request(method: "thread/realtime/appendAudio", params: .object([
+            "threadId": .string(threadID),
+            "audio": .object(audioPayload)
         ]))
     }
 
