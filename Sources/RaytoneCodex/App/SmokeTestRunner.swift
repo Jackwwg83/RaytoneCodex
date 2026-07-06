@@ -880,6 +880,7 @@ enum SmokeTestRunner {
                 try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
 
                 let imageURL = workspaceURL.appendingPathComponent("raytone-local-image-smoke.png")
+                let missingImageURL = workspaceURL.appendingPathComponent("raytone-missing-image-smoke.png")
                 let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
                 guard let pngData = Data(base64Encoded: pngBase64) else {
                     throw NSError(
@@ -909,11 +910,15 @@ enum SmokeTestRunner {
 
                 await store.refreshRuntime()
                 store.prompt = "请根据图片回复：Raytone local image smoke OK"
-                await store.addImageReferencesToPrompt(paths: [imageURL.path])
+                await store.addImageReferencesToPrompt(paths: [imageURL.path, missingImageURL.path])
+                let attachmentStatus = store.filePanelStatusText
+                let attachmentSource = store.filePanelLastOperationSource
+                let promptBeforeRun = store.prompt
                 let turnInput = CodexAppServerClient.userInputItems(
-                    prompt: store.prompt,
+                    prompt: promptBeforeRun,
                     localImagePaths: store.pendingLocalImagePaths
                 )
+                let queuedImages = store.pendingLocalImagePaths
                 await store.runPrompt()
                 await waitForStoreToSettle(store)
                 await store.stopAppServerForTesting()
@@ -930,9 +935,14 @@ enum SmokeTestRunner {
                     !store.isRunning &&
                     store.lastLocalImageInputPreview == [imageURL.path] &&
                     store.pendingLocalImagePaths.isEmpty &&
+                    queuedImages == [imageURL.path] &&
+                    promptBeforeRun.contains(imageURL.lastPathComponent) &&
+                    !promptBeforeRun.contains(missingImageURL.lastPathComponent) &&
+                    attachmentSource.contains("fs/getMetadata") &&
                     agentMessages.contains("Raytone local image smoke OK") &&
                     requestLog.contains("/v1/responses") &&
-                    requestContainsImage
+                    requestContainsImage &&
+                    !requestLog.contains(missingImageURL.lastPathComponent)
 
                 mockServer?.stop()
                 emitJSON([
@@ -943,6 +953,11 @@ enum SmokeTestRunner {
                     "workspacePath": workspaceURL.path,
                     "codexHomePath": codexHomeURL.path,
                     "imagePath": imageURL.path,
+                    "missingImagePath": missingImageURL.path,
+                    "queuedImagesBeforePrompt": queuedImages,
+                    "promptBeforeRun": promptBeforeRun,
+                    "attachmentStatus": attachmentStatus,
+                    "attachmentSource": attachmentSource,
                     "lastLocalImageInputPreview": store.lastLocalImageInputPreview,
                     "pendingLocalImageCount": store.pendingLocalImagePaths.count,
                     "turnInput": jsonObject(from: turnInput),

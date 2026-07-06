@@ -2290,20 +2290,13 @@ final class SessionStore: ObservableObject {
     }
 
     func addFileReferencesToPrompt(paths: [String], label: String = "文件") async {
-        let normalizedPaths = paths
-            .map { URL(fileURLWithPath: $0).standardizedFileURL.path }
-            .filter { !$0.isEmpty }
-        guard !normalizedPaths.isEmpty else { return }
-
-        let references = normalizedPaths.map { Self.promptReferencePath(for: $0, workspacePath: workspacePath) }
-        let block = """
-        请参考以下\(label)：
-        \(references.map { "- `\($0)`" }.joined(separator: "\n"))
-        """
-
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        prompt = trimmed.isEmpty ? block : "\(trimmed)\n\n\(block)"
-        await openFilePathInPanel(normalizedPaths[0])
+        let normalizedPaths = await verifiedPromptAttachmentPaths(
+            paths
+                .map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+                .filter { !$0.isEmpty },
+            label: label
+        )
+        await appendVerifiedFileReferencesToPrompt(paths: normalizedPaths, label: label)
     }
 
     func addPreviewedFileReferenceToPrompt() async {
@@ -2317,9 +2310,12 @@ final class SessionStore: ObservableObject {
     }
 
     func addImageReferencesToPrompt(paths: [String]) async {
-        let normalizedPaths = paths
-            .map { URL(fileURLWithPath: $0).standardizedFileURL.path }
-            .filter { !$0.isEmpty }
+        let normalizedPaths = await verifiedPromptAttachmentPaths(
+            paths
+                .map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+                .filter { !$0.isEmpty },
+            label: "图片"
+        )
         guard !normalizedPaths.isEmpty else { return }
 
         var seenPaths = Set(pendingLocalImagePaths)
@@ -2328,7 +2324,51 @@ final class SessionStore: ObservableObject {
             seenPaths.insert(path)
         }
 
-        await addFileReferencesToPrompt(paths: normalizedPaths, label: "图片")
+        await appendVerifiedFileReferencesToPrompt(paths: normalizedPaths, label: "图片")
+    }
+
+    private func appendVerifiedFileReferencesToPrompt(paths normalizedPaths: [String], label: String) async {
+        guard !normalizedPaths.isEmpty else { return }
+
+        let references = normalizedPaths.map { Self.promptReferencePath(for: $0, workspacePath: workspacePath) }
+        let block = """
+        请参考以下\(label)：
+        \(references.map { "- `\($0)`" }.joined(separator: "\n"))
+        """
+
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        prompt = trimmed.isEmpty ? block : "\(trimmed)\n\n\(block)"
+        await openFilePathInPanel(normalizedPaths[0])
+    }
+
+    private func verifiedPromptAttachmentPaths(_ paths: [String], label: String) async -> [String] {
+        guard !paths.isEmpty else { return [] }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            var verified: [String] = []
+            var rejected: [String] = []
+            for path in paths {
+                do {
+                    let metadata = try await client.getMetadata(path: path)
+                    if metadata.isFile {
+                        verified.append(path)
+                    } else {
+                        rejected.append(path)
+                    }
+                } catch {
+                    rejected.append(path)
+                }
+            }
+
+            let rejectedSuffix = rejected.isEmpty ? "" : " · 跳过 \(rejected.count) 项"
+            filePanelStatusText = "fs/getMetadata：已确认 \(verified.count) 个\(label)\(rejectedSuffix)"
+            filePanelLastOperationSource = "fs/getMetadata"
+            return verified
+        } catch {
+            filePanelStatusText = "fs/getMetadata 校验\(label)失败：\(error.localizedDescription)"
+            return []
+        }
     }
 
     private func consumePendingLocalImages() -> [String] {
