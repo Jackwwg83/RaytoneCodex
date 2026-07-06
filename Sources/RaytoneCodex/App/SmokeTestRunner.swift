@@ -38,6 +38,8 @@ enum SmokeTestRunner {
             runConnectionRecoverySmoke()
         } else if CommandLine.arguments.contains("--account-api-key-smoke-test") {
             runAccountAPIKeySmoke()
+        } else if CommandLine.arguments.contains("--profile-privacy-smoke-test") {
+            runProfilePrivacySmoke()
         } else if CommandLine.arguments.contains("--add-credits-nudge-smoke-test") {
             runAddCreditsNudgeSmoke()
         } else if CommandLine.arguments.contains("--experimental-features-smoke-test") {
@@ -5297,6 +5299,49 @@ enum SmokeTestRunner {
                 ])
                 exit(1)
             }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runProfilePrivacySmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            fputs("profile-privacy-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("profile-privacy-smoke: refreshProfilePrivacyRuntimeStatus\n", stderr)
+            let profileStatus = await store.refreshProfilePrivacyRuntimeStatus()
+            let catalogStatus = store.runtimeCatalogStatusText
+            let errors = store.runtimeCatalogErrors
+            let displayName = store.runtimeProfileDisplayName
+            let accountKind = store.runtimeAccount?.kind ?? "notLoggedIn"
+            let ok = store.runtimeSnapshot.executable != nil &&
+                catalogStatus.contains("account/read") &&
+                profileStatus.contains("account/read") &&
+                profileStatus.contains("profile/privacy") &&
+                !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                errors.isEmpty
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "accountKind": accountKind,
+                "profileDisplayName": displayName,
+                "profileHandle": store.runtimeProfileHandle,
+                "profileStatus": profileStatus,
+                "catalogStatus": catalogStatus,
+                "errors": errors,
+                "source": "account/read"
+            ])
+            exit(ok ? 0 : 1)
         }
 
         dispatchMain()

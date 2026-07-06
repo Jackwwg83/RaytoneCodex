@@ -2875,6 +2875,27 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func refreshProfilePrivacyRuntimeStatus() async -> String {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 account/read 刷新个人资料状态…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            runtimeAccount = try await client.readAccount(refreshToken: false)
+            let accountLabel = runtimeAccount.map { Self.accountDisplayName($0) } ?? "未返回账户"
+            runtimeCatalogStatusText = "account/read：个人资料状态已刷新 · \(accountLabel)"
+            runtimeCatalogIsRefreshing = false
+            return "个人资料保持私有；app-server 未提供 profile/privacy 写接口，已通过 account/read 刷新账户状态"
+        } catch {
+            let message = "个人资料状态刷新失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = message
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return message
+        }
+    }
+
     func refreshSelectedProviderUsage() async {
         let provider = selectedProvider
         guard provider.usesSidecar else {

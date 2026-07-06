@@ -392,7 +392,9 @@ struct SettingsRouteView: View {
                 }
                     .buttonStyle(ChipButtonStyle())
                 Button("私有") {
-                    profileStatus = "个人资料保持私有"
+                    Task { @MainActor in
+                        profileStatus = await store.refreshProfilePrivacyRuntimeStatus()
+                    }
                 }
                     .buttonStyle(ChipButtonStyle())
                 Button("编辑") {
