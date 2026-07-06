@@ -2172,6 +2172,11 @@ enum SmokeTestRunner {
                 let trialPrepared = await store.usePluginInComposer(plugin)
                 let trialPrompt = store.prompt
                 let trialMentionPath = store.lastMentionInputPreview.first?["path"] ?? ""
+                let remoteSkillSmoke = await runRemotePluginSkillPreviewSmoke(
+                    rootURL: rootURL,
+                    workspaceURL: workspaceURL
+                )
+                let remoteSkillOK = remoteSkillSmoke["remoteSkillOK"] as? Bool == true
                 let ok = store.runtimeSnapshot.executable != nil &&
                     plugin.installed &&
                     plugin.enabled &&
@@ -2189,10 +2194,11 @@ enum SmokeTestRunner {
                     trialPrompt.contains("技能：") &&
                     trialPrompt.contains("MCP：demo") &&
                     trialPrompt.contains("钩子：preToolUse") &&
-                    trialMentionPath == plugin.mentionPath
+                    trialMentionPath == plugin.mentionPath &&
+                    remoteSkillOK
 
                 await store.stopAppServerForTesting()
-                emitJSON([
+                var payload: [String: Any] = [
                     "ok": ok,
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
@@ -2229,7 +2235,9 @@ enum SmokeTestRunner {
                             "eventName": hook.eventName
                         ] as [String: Any]
                     } ?? []
-                ])
+                ]
+                payload["remoteSkillSmoke"] = remoteSkillSmoke
+                emitJSON(payload)
                 exit(ok ? 0 : 1)
             } catch {
                 emitJSON([
@@ -2246,6 +2254,94 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    @MainActor
+    private static func runRemotePluginSkillPreviewSmoke(
+        rootURL: URL,
+        workspaceURL: URL
+    ) async -> [String: Any] {
+        let scriptURL = rootURL.appendingPathComponent("fake-remote-plugin-codex")
+        let logURL = rootURL.appendingPathComponent("remote-plugin-skill-requests.jsonl")
+
+        do {
+            try fakeRemotePluginSkillAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+            let store = SessionStore()
+            store.workspacePath = workspaceURL.path
+            store.runtimeSnapshot = CodexRuntimeSnapshot(
+                executable: CodexExecutable(url: scriptURL, source: .environment),
+                version: "fake-remote-plugin-skill"
+            )
+            store.appServerEnvironmentOverridesForTesting = [
+                "RAYTONE_PLUGIN_REMOTE_SKILL_LOG": logURL.path
+            ]
+
+            let skill = CodexRuntimePluginSkill(
+                name: "plan-work",
+                displayName: "Plan Work",
+                description: "Plan work from remote plugin issues",
+                enabled: true,
+                path: nil
+            )
+            store.runtimePluginDetail = CodexRuntimePluginDetail(
+                plugin: CodexRuntimePlugin(
+                    id: "linear@openai-curated-remote",
+                    remotePluginID: "plugins~Plugin_00000000000000000000000000000000",
+                    name: "linear",
+                    displayName: "Linear",
+                    summary: "Plan and track work",
+                    marketplaceName: "openai-curated-remote",
+                    marketplaceDisplayName: "OpenAI Curated Remote",
+                    marketplacePath: nil,
+                    localPluginPath: nil,
+                    category: "Productivity",
+                    developerName: "OpenAI",
+                    sourceType: "remote",
+                    installPolicy: "AVAILABLE",
+                    authPolicy: "ON_USE",
+                    availability: "AVAILABLE",
+                    installed: true,
+                    enabled: true
+                ),
+                description: "Remote plugin skill smoke",
+                skills: [skill],
+                hooks: [],
+                mcpServers: [],
+                apps: []
+            )
+
+            let previewOK = await store.readRuntimePluginSkillPreview(skill)
+            let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+            let methodOK = logText.contains(#""method":"plugin/skill/read""#) &&
+                logText.contains(#""remoteMarketplaceName":"openai-curated-remote""#) &&
+                logText.contains(#""remotePluginId":"plugins~Plugin_00000000000000000000000000000000""#) &&
+                logText.contains(#""skillName":"plan-work""#)
+            let contentOK = store.runtimePluginSkillPreviewText.contains("# Plan Work") &&
+                store.runtimePluginSkillPreviewStatusText.hasPrefix("plugin/skill/read")
+            let ok = previewOK && methodOK && contentOK
+            let status = store.runtimePluginSkillPreviewStatusText
+            let previewText = store.runtimePluginSkillPreviewText
+            await store.stopAppServerForTesting()
+
+            return [
+                "remoteSkillOK": ok,
+                "previewOK": previewOK,
+                "methodOK": methodOK,
+                "contentOK": contentOK,
+                "requestLog": logURL.path,
+                "status": status,
+                "previewText": previewText,
+                "requestLogPreview": String(logText.prefix(1200))
+            ]
+        } catch {
+            return [
+                "remoteSkillOK": false,
+                "requestLog": logURL.path,
+                "error": error.localizedDescription
+            ]
+        }
     }
 
     private static func runSkillReadSmoke() {
@@ -13660,6 +13756,52 @@ enum SmokeTestRunner {
                     "turn": {"id": "turn-app-mention", "status": "completed"}
                 })
                 log({"turnCompletedAfterMention": True})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeRemotePluginSkillAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_PLUGIN_REMOTE_SKILL_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({"id": request_id, "error": {"code": -32602, "message": message}})
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "plugin/skill/read":
+                send_result(request_id, {
+                    "contents": "# Plan Work\n\nUse Linear issues to create a plan."
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

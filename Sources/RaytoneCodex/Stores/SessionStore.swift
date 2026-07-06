@@ -5698,23 +5698,51 @@ final class SessionStore: ObservableObject {
         runtimePluginSkillPreviewText = ""
         runtimeCatalogErrors = []
 
-        guard let path = skill.path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            runtimePluginSkillPreviewStatusText = "plugin/read 没有返回 \(skill.displayName) 的 skill path"
+        if let path = skill.path, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            runtimePluginSkillPreviewStatusText = "正在通过 fs/readFile 读取 \(skill.displayName)…"
+            runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
+
+            do {
+                let client = try await ensureAppServerClient(useProviderConfiguration: false)
+                let data = try await client.readFile(path: path)
+                let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+                runtimePluginSkillPreviewText = text
+                runtimePluginSkillPreviewStatusText = "plugin/read + fs/readFile：\(skill.displayName) · \(data.count) 字节"
+                runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
+                return true
+            } catch {
+                runtimePluginSkillPreviewStatusText = "插件技能读取失败：\(error.localizedDescription)"
+                runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
+                runtimeCatalogErrors = [error.localizedDescription]
+                return false
+            }
+        }
+
+        guard let plugin = runtimePluginDetail?.plugin,
+              let remotePluginID = plugin.remotePluginID ?? plugin.shareContext?.remotePluginID,
+              !remotePluginID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            runtimePluginSkillPreviewStatusText = "plugin/read 没有返回 \(skill.displayName) 的本地 path 或 remotePluginId"
             runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
             return false
         }
 
-        runtimePluginSkillPreviewStatusText = "正在通过 fs/readFile 读取 \(skill.displayName)…"
+        runtimePluginSkillPreviewStatusText = "正在通过 plugin/skill/read 读取 \(skill.displayName)…"
         runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            let data = try await client.readFile(path: path)
-            let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+            let result = try await client.readRemotePluginSkill(
+                remoteMarketplaceName: plugin.marketplaceName,
+                remotePluginID: remotePluginID,
+                skillName: skill.name
+            )
+            let text = result.contents ?? ""
             runtimePluginSkillPreviewText = text
-            runtimePluginSkillPreviewStatusText = "plugin/read + fs/readFile：\(skill.displayName) · \(data.count) 字节"
+            runtimePluginSkillPreviewStatusText = result.contents == nil
+                ? "plugin/skill/read：\(skill.displayName) · 未返回正文"
+                : "plugin/skill/read：\(skill.displayName) · \(text.utf8.count) 字节"
             runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText
-            return true
+            return result.contents != nil
         } catch {
             runtimePluginSkillPreviewStatusText = "插件技能读取失败：\(error.localizedDescription)"
             runtimeCatalogStatusText = runtimePluginSkillPreviewStatusText

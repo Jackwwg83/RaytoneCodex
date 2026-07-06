@@ -537,6 +537,7 @@ public struct CodexRuntimePluginShareCheckoutResult: Equatable, Sendable {
 
 public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
     public var id: String
+    public var remotePluginID: String?
     public var name: String
     public var displayName: String
     public var summary: String
@@ -560,6 +561,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
 
     public init(
         id: String,
+        remotePluginID: String? = nil,
         name: String,
         displayName: String,
         summary: String,
@@ -578,6 +580,7 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
         enabled: Bool
     ) {
         self.id = id
+        self.remotePluginID = remotePluginID
         self.name = name
         self.displayName = displayName
         self.summary = summary
@@ -3908,6 +3911,9 @@ public actor CodexAppServerClient {
         if plugin.shareContext == nil {
             plugin.shareContext = fallback.shareContext
         }
+        if plugin.remotePluginID == nil {
+            plugin.remotePluginID = fallback.remotePluginID
+        }
 
         return CodexRuntimePluginDetail(
             plugin: plugin,
@@ -3938,6 +3944,7 @@ public actor CodexAppServerClient {
         let localPluginPath = sourceType == "local" ? source?["path"]?.pathString : nil
         return CodexRuntimePlugin(
             id: plugin["id"]?.stringValue ?? "\(name)@\(marketplaceName)",
+            remotePluginID: plugin["remotePluginId"]?.stringValue,
             name: name,
             displayName: displayName,
             summary: summary,
