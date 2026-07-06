@@ -25,6 +25,7 @@ struct EnvironmentInfoPanel: View {
             await store.refreshWorkspacePullRequestStatus()
             await store.refreshWorkspaceWorktrees()
             await store.refreshLoadedRuntimeThreads()
+            await store.syncSelectedThreadGitMetadata()
         }
         .frame(width: Theme.Layout.inspectorWidth)
         .frame(maxHeight: .infinity)
@@ -99,6 +100,16 @@ struct EnvironmentInfoPanel: View {
                 }
                 .buttonStyle(GhostIconButtonStyle(size: 26))
                 .help("新建分支")
+            }
+            EnvironmentInfoActionRow(symbol: "arrow.triangle.branch", title: "线程 Git", detail: store.runtimeThreadMetadataStatusText) {
+                Button {
+                    Task { await store.syncSelectedThreadGitMetadata() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help("同步到 Codex 线程")
             }
             EnvironmentInfoActionRow(symbol: "tray.and.arrow.up", title: "提交或推送", detail: commitPushText) {
                 Button("预检") {

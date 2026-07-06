@@ -134,6 +134,8 @@ enum SmokeTestRunner {
             runHistorySmoke()
         } else if CommandLine.arguments.contains("--loaded-threads-smoke-test") {
             runLoadedThreadsSmoke()
+        } else if CommandLine.arguments.contains("--thread-metadata-smoke-test") {
+            runThreadMetadataSmoke()
         } else if CommandLine.arguments.contains("--side-chat-smoke-test") {
             runSideChatSmoke()
         } else if CommandLine.arguments.contains("--environment-smoke-test") {
@@ -4606,6 +4608,137 @@ enum SmokeTestRunner {
                     "agentMessages": agentMessages,
                     "mockRequestLogPreview": String(requestLog.prefix(1200)),
                     "source": "thread/loaded/list"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runThreadMetadataSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadMetadataSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadMetadataCodexHome-\(UUID().uuidString)", isDirectory: true)
+            let marker = "Raytone thread metadata smoke OK \(UUID().uuidString.prefix(8))"
+            let prompt = "Reply exactly: \(marker)"
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "thread metadata smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                _ = try runProcess(["git", "init", "-b", "main"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.email", "raytone@example.invalid"], cwd: workspaceURL)
+                _ = try runProcess(["git", "config", "user.name", "Raytone Smoke"], cwd: workspaceURL)
+                _ = try runProcess(["git", "remote", "add", "origin", "https://example.invalid/raytone-smoke.git"], cwd: workspaceURL)
+                _ = try runProcess(["git", "add", "README.md"], cwd: workspaceURL)
+                _ = try runProcess(["git", "commit", "-m", "Initial smoke commit"], cwd: workspaceURL)
+                let expectedSHA = try runProcess(["git", "rev-parse", "HEAD"], cwd: workspaceURL)
+                    .output
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                mockServer = try startMockResponsesServer(message: marker)
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "ThreadMetadataSmoke"
+                }
+
+                await store.refreshRuntime()
+                store.prompt = prompt
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+
+                let appServerThreadID = store.selectedThread.appServerThreadID ?? ""
+                await store.syncSelectedThreadGitMetadata()
+                let metadataStatus = store.runtimeThreadMetadataStatusText
+                await store.refreshRuntimeThreads(searchTerm: marker, limit: 10)
+                let syncedRuntimeThread = store.threads.first { thread in
+                    thread.appServerThreadID == appServerThreadID
+                }
+                let sourceFacts = store.environmentSourceFacts.map { fact in
+                    [
+                        "title": fact.title,
+                        "source": fact.source,
+                        "detail": fact.detail,
+                        "active": fact.active
+                    ] as [String: Any]
+                }
+                let metadataSourceFactActive = store.environmentSourceFacts.contains { fact in
+                    fact.source == "thread/metadata/update" && fact.active
+                }
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let commands = store.selectedThread.items.compactMap { item -> CommandRun? in
+                    if case let .command(run) = item.kind { return run }
+                    return nil
+                }
+                let usedExecFallback = commands.contains { run in
+                    run.command.contains(" codex exec ") || run.command.contains("/codex exec ")
+                }
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
+
+                await store.stopAppServerForTesting()
+                mockServer?.stop()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    !store.isRunning &&
+                    !usedExecFallback &&
+                    !appServerThreadID.isEmpty &&
+                    agentMessages.contains(marker) &&
+                    metadataStatus.contains("thread/metadata/update") &&
+                    metadataStatus.contains("main") &&
+                    metadataStatus.contains(String(expectedSHA.prefix(12))) &&
+                    metadataSourceFactActive &&
+                    syncedRuntimeThread?.appServerThreadID == appServerThreadID &&
+                    requestLog.contains("/v1/responses")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "appServerThreadID": appServerThreadID,
+                    "expectedBranch": "main",
+                    "expectedSHA": expectedSHA,
+                    "metadataStatus": metadataStatus,
+                    "metadataSourceFactActive": metadataSourceFactActive,
+                    "environmentSourceFacts": sourceFacts,
+                    "usedExecFallback": usedExecFallback,
+                    "agentMessages": agentMessages,
+                    "mockRequestLogPreview": String(requestLog.prefix(1200)),
+                    "source": "thread/metadata/update"
                 ])
                 exit(ok ? 0 : 1)
             } catch {

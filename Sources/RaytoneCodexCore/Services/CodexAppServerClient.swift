@@ -2310,6 +2310,34 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func updateThreadGitMetadata(
+        threadID: String,
+        branch: String? = nil,
+        sha: String? = nil,
+        originURL: String? = nil
+    ) async throws -> CodexRuntimeThreadSummary {
+        var gitInfo: [String: JSONValue] = [:]
+        if let branch {
+            gitInfo["branch"] = branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .null : .string(branch)
+        }
+        if let sha {
+            gitInfo["sha"] = sha.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .null : .string(sha)
+        }
+        if let originURL {
+            gitInfo["originUrl"] = originURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .null : .string(originURL)
+        }
+
+        let result = try await request(method: "thread/metadata/update", params: .object([
+            "threadId": .string(threadID),
+            "gitInfo": .object(gitInfo)
+        ]))
+        guard let threadValue = result["thread"],
+              let summary = Self.threadSummary(from: threadValue) else {
+            throw CodexAppServerError.invalidResponse("Missing thread/metadata/update thread.")
+        }
+        return summary
+    }
+
     public func updateThreadPersonality(threadID: String, personality: CodexPersonality) async throws {
         _ = try await request(method: "thread/settings/update", params: .object([
             "threadId": .string(threadID),

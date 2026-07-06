@@ -273,6 +273,7 @@ extension SessionStore {
         let loadedThreadDetail = loadedRuntimeThreadIDs.isEmpty
             ? runtimeLoadedThreadsStatusText
             : "\(loadedRuntimeThreadIDs.count) 个 · \(selectedThreadLoaded ? "当前线程已加载" : "当前线程未加载")"
+        let threadMetadataActive = runtimeThreadMetadataStatusText.hasPrefix("thread/metadata/update")
 
         return [
             EnvironmentSourceFact(
@@ -281,6 +282,13 @@ extension SessionStore {
                 detail: loadedThreadDetail,
                 source: "thread/loaded/list",
                 active: selectedThreadLoaded || !loadedRuntimeThreadIDs.isEmpty
+            ),
+            EnvironmentSourceFact(
+                symbol: "arrow.triangle.branch",
+                title: "线程 Git",
+                detail: runtimeThreadMetadataStatusText,
+                source: "thread/metadata/update",
+                active: threadMetadataActive
             ),
             EnvironmentSourceFact(
                 symbol: "command",

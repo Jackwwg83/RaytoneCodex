@@ -111,6 +111,7 @@ final class SessionStore: ObservableObject {
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
     @Published var loadedRuntimeThreadIDs: [String] = []
     @Published var runtimeLoadedThreadsStatusText = "未读取"
+    @Published var runtimeThreadMetadataStatusText = "未同步"
     @Published var runtimeThreadSyncStatusText = "未同步"
     @Published var workspaceGitDiff: CodexRuntimeGitDiff?
     @Published var workspaceGitStatusText = ""
@@ -3153,6 +3154,49 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func syncSelectedThreadGitMetadata() async {
+        guard let threadID = selectedThread.appServerThreadID, !threadID.isEmpty else {
+            runtimeThreadMetadataStatusText = "当前对话还没有 app-server threadId"
+            return
+        }
+
+        runtimeThreadMetadataStatusText = "正在读取 Git 元数据…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.execCommand(
+                ["/bin/zsh", "-lc", Self.gitMetadataCommand],
+                cwd: URL(fileURLWithPath: workspacePath),
+                sandbox: .readOnly,
+                timeoutMs: 10_000
+            )
+            let metadata = Self.parseGitMetadataCommandOutput(result.stdout)
+            guard metadata.branch != nil || metadata.sha != nil || metadata.originURL != nil else {
+                runtimeThreadMetadataStatusText = "当前工作区没有可同步的 Git 元数据"
+                return
+            }
+
+            let summary = try await client.updateThreadGitMetadata(
+                threadID: threadID,
+                branch: metadata.branch,
+                sha: metadata.sha,
+                originURL: metadata.originURL
+            )
+            mergeRuntimeThreads([summary])
+            if let branch = summary.gitBranch ?? metadata.branch {
+                updateSelectedProject(branch: branch)
+            }
+            let shaPreview = (summary.gitSHA ?? metadata.sha ?? "")
+                .prefix(12)
+            let branchText = summary.gitBranch ?? metadata.branch ?? "无分支"
+            runtimeThreadMetadataStatusText = shaPreview.isEmpty
+                ? "thread/metadata/update：\(branchText)"
+                : "thread/metadata/update：\(branchText) · \(shaPreview)"
+        } catch {
+            runtimeThreadMetadataStatusText = "thread/metadata/update 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     func loadRuntimeThreadTranscript(localThreadID: UUID? = nil) async {
         let targetID = localThreadID ?? selectedThreadID
         guard let localIndex = threads.firstIndex(where: { $0.id == targetID }),
@@ -3527,6 +3571,7 @@ final class SessionStore: ObservableObject {
         await refreshWorkspacePullRequestStatus()
         await refreshWorkspaceWorktrees()
         await refreshLoadedRuntimeThreads()
+        await syncSelectedThreadGitMetadata()
 
         let diff = workspaceGitDiff.map { Self.diffSummary($0.diff) }
         let statusCount = workspaceGitStatusText
@@ -6073,6 +6118,16 @@ final class SessionStore: ObservableObject {
     fi
     """
 
+    private static let gitMetadataCommand = """
+    set +e
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      exit 0
+    fi
+    printf 'BRANCH:%s\\n' "$(git branch --show-current 2>/dev/null)"
+    printf 'SHA:%s\\n' "$(git rev-parse HEAD 2>/dev/null)"
+    printf 'ORIGIN:%s\\n' "$(git config --get remote.origin.url 2>/dev/null)"
+    """
+
     private static func promptReferencePath(for path: String, workspacePath: String) -> String {
         let workspace = URL(fileURLWithPath: workspacePath).standardizedFileURL.path
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
@@ -6080,6 +6135,28 @@ final class SessionStore: ObservableObject {
             return normalizedPath
         }
         return String(normalizedPath.dropFirst(workspace.count + 1))
+    }
+
+    private static func parseGitMetadataCommandOutput(_ output: String) -> (branch: String?, sha: String?, originURL: String?) {
+        var values: [String: String] = [:]
+        for line in output.components(separatedBy: .newlines) {
+            guard let separatorIndex = line.firstIndex(of: ":") else { continue }
+            let key = String(line[..<separatorIndex])
+            let value = String(line[line.index(after: separatorIndex)...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            values[key] = value
+        }
+
+        func nonEmpty(_ key: String) -> String? {
+            guard let value = values[key], !value.isEmpty else { return nil }
+            return value
+        }
+
+        return (
+            branch: nonEmpty("BRANCH"),
+            sha: nonEmpty("SHA"),
+            originURL: nonEmpty("ORIGIN")
+        )
     }
 
     private static func parseBranchOutput(_ output: String) -> (current: String?, branches: [String]) {
