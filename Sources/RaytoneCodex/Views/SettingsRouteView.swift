@@ -1822,7 +1822,7 @@ struct SettingsRouteView: View {
                 metricRow("受管策略", optionalBoolText(store.runtimeRequirements?.allowAppSnapshots))
                 metricRow("应用目录", "\(store.runtimeApps.count) 个 app")
                 metricRow("含快照说明", "\(store.runtimeApps.filter { !$0.screenshotPrompts.isEmpty }.count) 个 app")
-                metricRow("来源", "app/list")
+                metricRow("来源", store.runtimeAppsStatusText)
             }
 
             let snapshotApps = store.runtimeApps.filter { !$0.screenshotPrompts.isEmpty }

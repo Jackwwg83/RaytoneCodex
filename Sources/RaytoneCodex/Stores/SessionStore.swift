@@ -101,6 +101,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeRealtimeVoicesUpdatedAt: Date?
     @Published var voiceInputStatusText = "麦克风"
     @Published var runtimeApps: [CodexRuntimeAppInfo] = []
+    @Published var runtimeAppsStatusText = "未读取"
     @Published var runtimePermissionProfiles: [CodexRuntimePermissionProfile] = []
     @Published var lastOpenedRuntimeAppInstallURL = ""
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
@@ -3317,8 +3318,11 @@ final class SessionStore: ObservableObject {
                     forceRefetch: forceRefetchApps
                 )
                 runtimeApps = catalog.apps
+                let snapshotCount = catalog.apps.filter { !$0.screenshotPrompts.isEmpty }.count
+                runtimeAppsStatusText = "app/list：\(catalog.apps.count) 个 app · \(snapshotCount) 个含快照说明"
             } catch {
                 errors.append("app/list：\(error.localizedDescription)")
+                runtimeAppsStatusText = "app/list 失败：\(error.localizedDescription)"
             }
 
             do {
@@ -5161,6 +5165,13 @@ final class SessionStore: ObservableObject {
             Task { await refreshAccountUsageRuntime() }
         case "account/rateLimits/updated", "thread/tokenUsage/updated":
             Task { await refreshAccountUsageRuntime() }
+        case "app/list/updated":
+            let catalog = CodexAppServerClient.runtimeAppCatalog(from: params ?? .object([:]))
+            runtimeApps = catalog.apps
+            let snapshotCount = catalog.apps.filter { !$0.screenshotPrompts.isEmpty }.count
+            runtimeAppsStatusText = "app/list/updated：\(catalog.apps.count) 个 app · \(snapshotCount) 个含快照说明"
+            runtimeCatalogStatusText = runtimeAppsStatusText
+            runtimeCatalogErrors = []
         case "remoteControl/status/changed":
             let status = CodexAppServerClient.remoteControlStatus(from: params)
             runtimeRemoteControlStatus = status

@@ -2504,6 +2504,10 @@ public actor CodexAppServerClient {
         return Self.appCatalog(from: result)
     }
 
+    public static func runtimeAppCatalog(from result: JSONValue) -> CodexRuntimeAppCatalog {
+        appCatalog(from: result)
+    }
+
     public func listPermissionProfiles(cwd: String? = nil, limit: Int = 100) async throws -> CodexRuntimePermissionProfileCatalog {
         var params: [String: JSONValue] = [
             "limit": .number(Double(limit))
