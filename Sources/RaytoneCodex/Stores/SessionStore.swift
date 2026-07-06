@@ -3038,6 +3038,45 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func copyRuntimeProfileShareSummary() async -> String {
+        await refreshAccountUsageRuntime()
+
+        let summary = runtimeProfileShareSummary()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+
+        let status = "已复制分享摘要 · account/read + account/usage/read + account/rateLimits/read"
+        runtimeCatalogStatusText = status
+        return status
+    }
+
+    func runtimeProfileShareSummary() -> String {
+        let account = runtimeAccount.map(Self.accountDisplayName) ?? "未返回账户"
+        let accountKind = runtimeAccount.map { Self.runtimeAccountKindName($0.kind) } ?? "未返回"
+        let plan = runtimeAccount?.planType ?? "未返回"
+        let tokenTotal = runtimeTokenUsage?.lifetimeTokens.map(Self.compactNumber) ?? "未返回"
+        let peakDaily = runtimeTokenUsage?.peakDailyTokens.map(Self.compactNumber) ?? "未返回"
+        let rateLimitCount = runtimeRateLimits.map { "\($0.buckets.count)" } ?? "未返回"
+        let providerModel = selectedProvider.usesSidecar ? selectedProvider.model : (model.isEmpty ? selectedProvider.model : model)
+        let providerSummary = providerModel.isEmpty ? selectedProvider.displayName : "\(selectedProvider.displayName) / \(providerModel)"
+        let errors = runtimeCatalogErrors.isEmpty ? "无" : runtimeCatalogErrors.joined(separator: "；")
+
+        return """
+        RaytoneCodex
+        账户：\(account)
+        类型：\(accountKind)
+        计划：\(plan)
+        运行时：\(runtimeSummary)
+        工作区：\(Project.abbreviate(workspacePath))
+        累计 Token：\(tokenTotal)
+        单日峰值：\(peakDaily)
+        速率限制桶：\(rateLimitCount)
+        Provider：\(providerSummary)
+        来源：account/read + account/usage/read + account/rateLimits/read
+        读取错误：\(errors)
+        """
+    }
+
     func refreshSelectedProviderUsage() async {
         let provider = selectedProvider
         guard provider.usesSidecar else {
@@ -6743,6 +6782,16 @@ final class SessionStore: ObservableObject {
             return "Amazon Bedrock"
         default:
             return account.requiresOpenAIAuth ? "需要登录 OpenAI" : "未登录"
+        }
+    }
+
+    static func runtimeAccountKindName(_ kind: String?) -> String {
+        switch kind {
+        case "chatgpt": "ChatGPT"
+        case "apiKey": "API Key"
+        case "amazonBedrock": "Amazon Bedrock"
+        case "notLoggedIn", nil: "未登录"
+        default: kind ?? "未返回"
         }
     }
 

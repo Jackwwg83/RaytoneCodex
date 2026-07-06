@@ -1,3 +1,4 @@
+import AppKit
 import Dispatch
 import Foundation
 import RaytoneCodexCore
@@ -48,6 +49,8 @@ enum SmokeTestRunner {
             runAccountAPIKeySmoke()
         } else if CommandLine.arguments.contains("--profile-privacy-smoke-test") {
             runProfilePrivacySmoke()
+        } else if CommandLine.arguments.contains("--profile-share-smoke-test") {
+            runProfileShareSmoke()
         } else if CommandLine.arguments.contains("--add-credits-nudge-smoke-test") {
             runAddCreditsNudgeSmoke()
         } else if CommandLine.arguments.contains("--experimental-features-smoke-test") {
@@ -6396,6 +6399,49 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runProfileShareSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+
+            fputs("profile-share-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("profile-share-smoke: copyRuntimeProfileShareSummary\n", stderr)
+            let status = await store.copyRuntimeProfileShareSummary()
+            let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
+            let accountKind = store.runtimeAccount?.kind ?? "notLoggedIn"
+            let sourceMarker = "account/read + account/usage/read + account/rateLimits/read"
+            let ok = store.runtimeSnapshot.executable != nil &&
+                status.contains("已复制分享摘要") &&
+                status.contains(sourceMarker) &&
+                clipboard.contains("RaytoneCodex") &&
+                clipboard.contains("账户：") &&
+                clipboard.contains("累计 Token：") &&
+                clipboard.contains("速率限制桶：") &&
+                clipboard.contains("来源：\(sourceMarker)")
+
+            emitJSON([
+                "ok": ok,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "accountKind": accountKind,
+                "status": status,
+                "errors": store.runtimeCatalogErrors,
+                "clipboardLength": clipboard.count,
+                "clipboardPreview": redactedProfileSharePreview(String(clipboard.prefix(360))),
+                "source": sourceMarker
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
     private static func runHookControlsSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -8886,6 +8932,20 @@ enum SmokeTestRunner {
         case .null:
             NSNull()
         }
+    }
+
+    private static func redactedProfileSharePreview(_ value: String) -> String {
+        value
+            .replacingOccurrences(
+                of: #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
+                with: "[redacted-email]",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .replacingOccurrences(
+                of: #"sk-[A-Za-z0-9_\-]{8,}"#,
+                with: "[redacted-api-key]",
+                options: .regularExpression
+            )
     }
 
     @MainActor

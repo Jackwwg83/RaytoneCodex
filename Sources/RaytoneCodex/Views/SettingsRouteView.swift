@@ -388,7 +388,9 @@ struct SettingsRouteView: View {
                 accountAuthControlGroup
                 Spacer(minLength: 0)
                 Button("Share") {
-                    copyProfileShareSummary()
+                    Task { @MainActor in
+                        profileStatus = await store.copyRuntimeProfileShareSummary()
+                    }
                 }
                     .buttonStyle(ChipButtonStyle())
                 Button("私有") {
@@ -2589,19 +2591,6 @@ struct SettingsRouteView: View {
         .padding(2)
         .background(Theme.fill)
         .clipShape(Capsule())
-    }
-
-    private func copyProfileShareSummary() {
-        let account = store.runtimeAccount.map(SessionStore.accountDisplayName) ?? "未返回账户"
-        let summary = """
-        RaytoneCodex
-        账户：\(account)
-        运行时：\(store.runtimeSummary)
-        工作区：\(Project.abbreviate(store.workspacePath))
-        """
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(summary, forType: .string)
-        profileStatus = "已复制分享摘要"
     }
 
     private func activeAccountLoginDescription(_ login: CodexAccountLogin) -> String {
