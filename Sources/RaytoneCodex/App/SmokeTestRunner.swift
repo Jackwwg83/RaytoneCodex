@@ -4384,16 +4384,20 @@ enum SmokeTestRunner {
             store.workspacePath = workspacePath
             let codexHome = FileManager.default.temporaryDirectory
                 .appendingPathComponent("RaytoneCodexProviderOnboardingSmoke-\(UUID().uuidString)", isDirectory: true)
+            let openAICodexHome = FileManager.default.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexOpenAIOnboardingSmoke-\(UUID().uuidString)", isDirectory: true)
             let server: MockResponsesServer
 
             do {
                 try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(at: openAICodexHome, withIntermediateDirectories: true)
                 server = try startMockModelsServer(models: [model])
             } catch {
                 emitJSON([
                     "ok": false,
                     "workspacePath": workspacePath,
                     "codexHome": codexHome.path,
+                    "openAICodexHome": openAICodexHome.path,
                     "providerID": providerID,
                     "error": error.localizedDescription
                 ])
@@ -4414,6 +4418,42 @@ enum SmokeTestRunner {
             ))
 
             do {
+                let openAIStore = SessionStore()
+                openAIStore.workspacePath = workspacePath
+                openAIStore.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": openAICodexHome.path
+                ]
+                openAIStore.providers.append(RaytoneProviderConfiguration(
+                    id: providerID,
+                    displayName: "Onboarding Provider",
+                    baseURL: baseURL,
+                    model: model,
+                    models: [model],
+                    kind: .chatCompletionsSidecar
+                ))
+                openAIStore.selectedProviderID = providerID
+                openAIStore.model = model
+                openAIStore.resetProviderOnboardingForTesting()
+                openAIStore.evaluateProviderOnboarding(force: true)
+                let openAIInitiallyPresented = openAIStore.providerOnboardingPresented
+                let continuedOpenAI = await openAIStore.continueProviderOnboardingWithOpenAI()
+                openAIStore.evaluateProviderOnboarding()
+                let openAIPresentedAfterCompletion = openAIStore.providerOnboardingPresented
+                let openAISelectedProviderID = openAIStore.selectedProviderID
+                let openAISelectedModel = openAIStore.model
+                let openAIStatus = openAIStore.providerOnboardingStatusText
+                let openAIConfigURL = openAICodexHome.appendingPathComponent("config.toml")
+                let openAIConfigText = (try? String(contentsOf: openAIConfigURL, encoding: .utf8)) ?? ""
+                let openAIOk = openAIInitiallyPresented &&
+                    continuedOpenAI &&
+                    !openAIPresentedAfterCompletion &&
+                    openAISelectedProviderID == "openai" &&
+                    openAIStatus.contains("已继续使用 OpenAI") &&
+                    openAIConfigText.contains("model_provider = \"openai\"") &&
+                    openAIConfigText.contains("selected_provider_id = \"openai\"")
+                await openAIStore.stopAppServerForTesting()
+                openAIStore.resetProviderOnboardingForTesting()
+
                 try? RaytoneKeychainService.deletePassword(account: providerID)
                 store.resetProviderOnboardingForTesting()
                 store.evaluateProviderOnboarding(force: true)
@@ -4441,7 +4481,8 @@ enum SmokeTestRunner {
                 let requestLog = (try? String(contentsOf: server.requestLogURL, encoding: .utf8)) ?? ""
                 let upstreamVerified = requestLog.contains("\"path\":\"/v1/models\"") ||
                     requestLog.contains("\"path\":\"\\/v1\\/models\"")
-                let ok = initiallyPresented &&
+                let ok = openAIOk &&
+                    initiallyPresented &&
                     completed &&
                     !presentedAfterCompletion &&
                     savedKey == "raytone-onboarding-key" &&
@@ -4472,9 +4513,19 @@ enum SmokeTestRunner {
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
                     "codexHome": codexHome.path,
+                    "openAICodexHome": openAICodexHome.path,
                     "providerID": providerID,
                     "baseURL": baseURL,
                     "model": model,
+                    "openAIOk": openAIOk,
+                    "openAIInitiallyPresented": openAIInitiallyPresented,
+                    "continuedOpenAI": continuedOpenAI,
+                    "openAIPresentedAfterCompletion": openAIPresentedAfterCompletion,
+                    "openAISelectedProviderID": openAISelectedProviderID,
+                    "openAISelectedModel": openAISelectedModel,
+                    "openAIStatus": openAIStatus,
+                    "openAIConfigPath": openAIConfigURL.path,
+                    "openAIConfigText": openAIConfigText,
                     "initiallyPresented": initiallyPresented,
                     "completed": completed,
                     "presentedAfterCompletion": presentedAfterCompletion,
@@ -4505,6 +4556,7 @@ enum SmokeTestRunner {
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
                     "codexHome": codexHome.path,
+                    "openAICodexHome": openAICodexHome.path,
                     "providerID": providerID,
                     "status": store.providerOnboardingStatusText,
                     "connectionStatus": store.providerConnectionStatusText,

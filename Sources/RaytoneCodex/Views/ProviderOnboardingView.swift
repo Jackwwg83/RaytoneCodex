@@ -147,9 +147,10 @@ struct ProviderOnboardingView: View {
 
                 HStack(spacing: 10) {
                     Button("继续使用 OpenAI") {
-                        store.dismissProviderOnboarding()
+                        Task { await continueWithOpenAI() }
                     }
                     .buttonStyle(ChipButtonStyle())
+                    .disabled(isTesting)
 
                     Spacer(minLength: 0)
 
@@ -194,6 +195,12 @@ struct ProviderOnboardingView: View {
             baseURL: baseURL,
             model: model
         )
+    }
+
+    private func continueWithOpenAI() async {
+        isTesting = true
+        defer { isTesting = false }
+        _ = await store.continueProviderOnboardingWithOpenAI()
     }
 
     private func syncDrafts(_ provider: RaytoneProviderConfiguration?) {

@@ -7628,6 +7628,55 @@ final class SessionStore: ObservableObject {
         providerOnboardingStatusText = "已跳过首启向导，可在设置中继续配置"
     }
 
+    @discardableResult
+    func continueProviderOnboardingWithOpenAI() async -> Bool {
+        guard let provider = providers.first(where: { $0.id == "openai" }) else {
+            providerOnboardingStatusText = "未找到 OpenAI provider"
+            return false
+        }
+
+        let selectedModel = defaultOpenAIOnboardingModel(provider: provider)
+        providerOnboardingStatusText = "正在切换到 OpenAI…"
+        await saveRuntimeModelSelection(providerID: provider.id, model: selectedModel)
+
+        let runtimeMatches = runtimeConfig?.model == selectedModel &&
+            (runtimeConfig?.modelProvider == provider.id || runtimeConfig?.raytoneSelectedProviderID == provider.id)
+        let writeSucceeded = runtimeMatches ||
+            modelCatalogStatusText.contains("已写入") ||
+            runtimeCatalogStatusText.contains("已更新")
+
+        guard selectedProviderID == provider.id, model == selectedModel, writeSucceeded else {
+            providerOnboardingStatusText = modelCatalogStatusText.isEmpty ? "OpenAI 配置写入失败" : modelCatalogStatusText
+            return false
+        }
+
+        UserDefaults.standard.set(true, forKey: Self.providerOnboardingCompletedKey)
+        providerOnboardingPresented = false
+        providerOnboardingStatusText = "已继续使用 OpenAI：\(selectedModel)"
+        return true
+    }
+
+    private func defaultOpenAIOnboardingModel(provider: RaytoneProviderConfiguration) -> String {
+        if selectedProviderID == provider.id {
+            let currentModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !currentModel.isEmpty {
+                return currentModel
+            }
+        }
+        if let defaultModel = codexModelCatalog.first(where: \.isDefault)?.id,
+           !defaultModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return defaultModel
+        }
+        if let catalogModel = codexModelCatalog.first?.id,
+           !catalogModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return catalogModel
+        }
+        if let providerModel = provider.models.first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            return providerModel
+        }
+        return provider.model
+    }
+
     func resetProviderOnboardingForTesting() {
         UserDefaults.standard.removeObject(forKey: Self.providerOnboardingCompletedKey)
         providerOnboardingPresented = false
