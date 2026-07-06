@@ -11024,7 +11024,8 @@ final class SessionStore: ObservableObject {
                 "timeUsedSeconds": .number(Double(goal.timeUsedSeconds)),
                 "tokensUsed": .number(Double(goal.tokensUsed)),
                 "tokenBudget": goal.tokenBudget.map { .number(Double($0)) } ?? .null,
-                "runtimeBacked": .bool(goal.runtimeBacked)
+                "runtimeBacked": .bool(goal.runtimeBacked),
+                "source": .string(goal.runtimeBacked ? "thread/goal/get" : "本地 activeGoal")
             ])
         } ?? .null
         snapshot["progressSteps"] = .array(selectedThread.progressSteps.map { step in

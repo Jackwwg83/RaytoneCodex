@@ -359,6 +359,22 @@ extension SessionStore {
         let loadedThreadDetail = loadedRuntimeThreadIDs.isEmpty
             ? runtimeLoadedThreadsStatusText
             : "\(loadedRuntimeThreadIDs.count) 个 · \(selectedThreadLoaded ? "当前线程已加载" : "当前线程未加载")"
+        let activeGoal = selectedThread.activeGoal
+        let goalDetail: String
+        if let activeGoal {
+            let tokenDetail: String
+            if let tokenBudget = activeGoal.tokenBudget {
+                tokenDetail = " · \(activeGoal.tokensUsed)/\(tokenBudget) tokens"
+            } else if activeGoal.tokensUsed > 0 {
+                tokenDetail = " · \(activeGoal.tokensUsed) tokens"
+            } else {
+                tokenDetail = ""
+            }
+            goalDetail = "\(activeGoal.title) · \(Self.goalStatusName(activeGoal.status))\(tokenDetail)"
+        } else {
+            goalDetail = "当前线程没有活动目标"
+        }
+        let goalSource = activeGoal?.runtimeBacked == true ? "thread/goal/get" : "本地目标"
         let threadMetadataActive = runtimeThreadMetadataStatusText.hasPrefix("thread/metadata/update")
         let threadShellActive = threadShellCommandStatusText.hasPrefix("thread/shellCommand")
         let backgroundTerminalCleanActive = backgroundTerminalCleanStatusText.hasPrefix("thread/backgroundTerminals/clean")
@@ -398,6 +414,13 @@ extension SessionStore {
                 detail: loadedThreadDetail,
                 source: "thread/loaded/list",
                 active: selectedThreadLoaded || !loadedRuntimeThreadIDs.isEmpty
+            ),
+            EnvironmentSourceFact(
+                symbol: "target",
+                title: "目标",
+                detail: goalDetail,
+                source: goalSource,
+                active: activeGoal != nil
             ),
             EnvironmentSourceFact(
                 symbol: "arrow.triangle.branch",
@@ -490,6 +513,17 @@ extension SessionStore {
         case .running: "运行中"
         case .succeeded: "成功"
         case .failed: "失败"
+        }
+    }
+
+    private static func goalStatusName(_ status: CodexRuntimeGoalStatus) -> String {
+        switch status {
+        case .active: "进行中"
+        case .paused: "已暂停"
+        case .blocked: "已阻塞"
+        case .usageLimited: "用量受限"
+        case .budgetLimited: "预算受限"
+        case .complete: "已完成"
         }
     }
 

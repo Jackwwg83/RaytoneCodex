@@ -126,7 +126,15 @@ for pane, tokens in settings_runtime.items():
         require(f"settings pane {pane}", token)
 
 tool_panels = {
-    "launcher": ["EnvironmentInfoPanel", "private var launcher", "ActiveGoalDetailCard", "thread/goal/get", "refreshSelectedRuntimeGoal"],
+    "launcher": [
+        "EnvironmentInfoPanel",
+        "private var launcher",
+        "ActiveGoalDetailCard",
+        "environmentSourceFacts",
+        "title: \"目标\"",
+        "thread/goal/get",
+        "refreshSelectedRuntimeGoal",
+    ],
     "browser": [
         "BrowserPanelView",
         "WKWebView",

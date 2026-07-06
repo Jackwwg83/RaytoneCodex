@@ -5915,6 +5915,10 @@ enum SmokeTestRunner {
             }
             return nil
         }
+        let slashGoalSourceFact = store.environmentSourceFacts.first { $0.title == "目标" }
+        let slashGoalSourceFactActive = slashGoalSourceFact?.active ?? false
+        let slashGoalSourceFactSource = slashGoalSourceFact?.source ?? ""
+        let slashGoalSourceFactDetail = slashGoalSourceFact?.detail ?? ""
 
         store.prompt = "/goal-clear"
         await store.runPrompt()
@@ -5938,6 +5942,9 @@ enum SmokeTestRunner {
             slashGoalTitle == "RaytoneCodex slash goal smoke" &&
             slashSetNotices.contains("正在通过 thread/goal/set 设置目标…") &&
             slashStatusNotices.contains { $0.contains("当前目标：RaytoneCodex slash goal smoke · active") } &&
+            slashGoalSourceFactActive &&
+            slashGoalSourceFactSource == "thread/goal/get" &&
+            slashGoalSourceFactDetail.contains("RaytoneCodex slash goal smoke") &&
             slashAfterClear == nil
 
         return StoreGoalSmokeResult(
@@ -5968,6 +5975,9 @@ enum SmokeTestRunner {
             slashThreadIDAfterSet: slashThreadIDAfterSet,
             slashGoalStatus: slashGoalStatus,
             slashStatusNotice: slashStatusNotices.last { $0.contains("当前目标：") },
+            slashGoalSourceFactActive: slashGoalSourceFactActive,
+            slashGoalSourceFactSource: slashGoalSourceFactSource,
+            slashGoalSourceFactDetail: slashGoalSourceFactDetail,
             slashAfterClearObjective: slashAfterClear?.objective,
             slashClearStatus: slashClearStatus
         )
@@ -6001,6 +6011,9 @@ enum SmokeTestRunner {
         let slashThreadIDAfterSet: String
         let slashGoalStatus: String
         let slashStatusNotice: String?
+        let slashGoalSourceFactActive: Bool
+        let slashGoalSourceFactSource: String
+        let slashGoalSourceFactDetail: String
         let slashAfterClearObjective: String?
         let slashClearStatus: String
 
@@ -6032,6 +6045,11 @@ enum SmokeTestRunner {
                 "slashThreadIDAfterSet": slashThreadIDAfterSet,
                 "slashGoalStatus": slashGoalStatus,
                 "slashStatusNotice": slashStatusNotice ?? "",
+                "slashGoalSourceFact": [
+                    "active": slashGoalSourceFactActive,
+                    "source": slashGoalSourceFactSource,
+                    "detail": slashGoalSourceFactDetail
+                ],
                 "slashAfterClear": slashAfterClearObjective.map { ["objective": $0] } ?? NSNull(),
                 "slashClearStatus": slashClearStatus
             ]
