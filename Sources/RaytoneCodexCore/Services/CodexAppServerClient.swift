@@ -163,6 +163,7 @@ public struct CodexAppServerThread: Equatable, Sendable {
     public var approvalPolicy: String?
     public var approvalsReviewer: CodexApprovalsReviewer?
     public var sandboxSummary: String?
+    public var memoryMode: CodexThreadMemoryMode?
 
     public init(
         id: String,
@@ -171,7 +172,8 @@ public struct CodexAppServerThread: Equatable, Sendable {
         cliVersion: String? = nil,
         approvalPolicy: String? = nil,
         approvalsReviewer: CodexApprovalsReviewer? = nil,
-        sandboxSummary: String? = nil
+        sandboxSummary: String? = nil,
+        memoryMode: CodexThreadMemoryMode? = nil
     ) {
         self.id = id
         self.sessionID = sessionID
@@ -180,6 +182,7 @@ public struct CodexAppServerThread: Equatable, Sendable {
         self.approvalPolicy = approvalPolicy
         self.approvalsReviewer = approvalsReviewer
         self.sandboxSummary = sandboxSummary
+        self.memoryMode = memoryMode
     }
 }
 
@@ -1200,6 +1203,7 @@ public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
     public var gitBranch: String?
     public var gitSHA: String?
     public var gitOriginURL: String?
+    public var memoryMode: CodexThreadMemoryMode?
 
     public init(
         id: String,
@@ -1213,7 +1217,8 @@ public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
         archived: Bool,
         gitBranch: String?,
         gitSHA: String?,
-        gitOriginURL: String?
+        gitOriginURL: String?,
+        memoryMode: CodexThreadMemoryMode? = nil
     ) {
         self.id = id
         self.title = title
@@ -1227,6 +1232,7 @@ public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
         self.gitBranch = gitBranch
         self.gitSHA = gitSHA
         self.gitOriginURL = gitOriginURL
+        self.memoryMode = memoryMode
     }
 }
 
@@ -1752,7 +1758,8 @@ public actor CodexAppServerClient {
             cliVersion: thread["cliVersion"]?.stringValue,
             approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
             approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
-            sandboxSummary: Self.stringDescription(from: result["sandbox"])
+            sandboxSummary: Self.stringDescription(from: result["sandbox"]),
+            memoryMode: Self.threadMemoryMode(from: thread["memoryMode"] ?? thread["memory_mode"])
         )
     }
 
@@ -2313,7 +2320,8 @@ public actor CodexAppServerClient {
             cliVersion: thread["cliVersion"]?.stringValue,
             approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
             approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
-            sandboxSummary: Self.stringDescription(from: result["sandbox"])
+            sandboxSummary: Self.stringDescription(from: result["sandbox"]),
+            memoryMode: Self.threadMemoryMode(from: thread["memoryMode"] ?? thread["memory_mode"])
         )
     }
 
@@ -2327,6 +2335,13 @@ public actor CodexAppServerClient {
         _ = try await request(method: "thread/name/set", params: .object([
             "threadId": .string(threadID),
             "name": .string(name)
+        ]))
+    }
+
+    public func setThreadMemoryMode(threadID: String, mode: CodexThreadMemoryMode) async throws {
+        _ = try await request(method: "thread/memoryMode/set", params: .object([
+            "threadId": .string(threadID),
+            "mode": .string(mode.rawValue)
         ]))
     }
 
@@ -2414,7 +2429,8 @@ public actor CodexAppServerClient {
             cliVersion: result["model"]?.stringValue,
             approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
             approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
-            sandboxSummary: Self.stringDescription(from: result["sandbox"])
+            sandboxSummary: Self.stringDescription(from: result["sandbox"]),
+            memoryMode: Self.threadMemoryMode(from: thread["memoryMode"] ?? thread["memory_mode"])
         )
     }
 
@@ -3622,8 +3638,16 @@ public actor CodexAppServerClient {
             archived: value["archived"]?.boolValue ?? true,
             gitBranch: gitInfo?["branch"]?.stringValue,
             gitSHA: gitInfo?["sha"]?.stringValue,
-            gitOriginURL: gitInfo?["originUrl"]?.stringValue
+            gitOriginURL: gitInfo?["originUrl"]?.stringValue,
+            memoryMode: threadMemoryMode(from: value["memoryMode"] ?? value["memory_mode"])
         )
+    }
+
+    private static func threadMemoryMode(from value: JSONValue?) -> CodexThreadMemoryMode? {
+        guard let rawValue = value?.stringValue else {
+            return nil
+        }
+        return CodexThreadMemoryMode(rawValue: rawValue)
     }
 
     public static func runtimeGoal(from value: JSONValue?) -> CodexRuntimeGoal? {

@@ -102,6 +102,8 @@ enum SmokeTestRunner {
             runServiceTierSmoke()
         } else if CommandLine.arguments.contains("--memory-settings-smoke-test") {
             runMemorySettingsSmoke()
+        } else if CommandLine.arguments.contains("--thread-memory-mode-smoke-test") {
+            runThreadMemoryModeSmoke()
         } else if CommandLine.arguments.contains("--work-mode-smoke-test") {
             runWorkModeSmoke()
         } else if CommandLine.arguments.contains("--desktop-settings-smoke-test") {
@@ -2959,6 +2961,82 @@ enum SmokeTestRunner {
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspacePath,
                     "codexHome": codexHome.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runThreadMemoryModeSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadMemoryModeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let logURL = workspaceURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = workspaceURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeThreadMemoryModeAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-thread-memory-mode"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_THREAD_MEMORY_MODE_LOG": logURL.path
+                ]
+
+                await store.saveSelectedThreadMemoryMode(.disabled)
+                let disabledStatus = store.runtimeCatalogStatusText
+                let threadIDAfterFirstWrite = store.selectedThread.appServerThreadID ?? ""
+                let disabledMode = store.selectedThread.memoryMode?.rawValue ?? ""
+
+                await store.saveSelectedThreadMemoryMode(.enabled)
+                let enabledStatus = store.runtimeCatalogStatusText
+                let threadIDAfterSecondWrite = store.selectedThread.appServerThreadID ?? ""
+                let enabledMode = store.selectedThread.memoryMode?.rawValue ?? ""
+
+                await store.stopAppServerForTesting()
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let ok = threadIDAfterFirstWrite == "00000000-0000-0000-0000-000000000001" &&
+                    threadIDAfterSecondWrite == threadIDAfterFirstWrite &&
+                    disabledMode == CodexThreadMemoryMode.disabled.rawValue &&
+                    enabledMode == CodexThreadMemoryMode.enabled.rawValue &&
+                    disabledStatus.contains("thread/memoryMode/set") &&
+                    enabledStatus.contains("thread/memoryMode/set") &&
+                    logText.contains(#""method":"thread/start""#) &&
+                    logText.contains(#""method":"thread/memoryMode/set""#) &&
+                    logText.contains(#""threadId":"00000000-0000-0000-0000-000000000001""#) &&
+                    logText.contains(#""mode":"disabled""#) &&
+                    logText.contains(#""mode":"enabled""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "threadID": threadIDAfterSecondWrite,
+                    "disabledMode": disabledMode,
+                    "enabledMode": enabledMode,
+                    "disabledStatus": disabledStatus,
+                    "enabledStatus": enabledStatus,
+                    "requestLogPreview": String(logText.prefix(1400))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
                     "error": error.localizedDescription
                 ])
                 exit(1)
@@ -6669,6 +6747,83 @@ enum SmokeTestRunner {
                         enablement[key] = bool(value)
                         accepted[key] = bool(value)
                 send_result(request_id, {"enablement": accepted})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeThreadMemoryModeAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_THREAD_MEMORY_MODE_LOG")
+        thread_id = "00000000-0000-0000-0000-000000000001"
+        session_id = "session-thread-memory-mode-smoke"
+        memory_mode = "enabled"
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def thread_payload():
+            return {
+                "id": thread_id,
+                "sessionId": session_id,
+                "preview": "Raytone thread memory mode smoke",
+                "memoryMode": memory_mode,
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": params.get("approvalPolicy"),
+                    "approvalsReviewer": params.get("approvalsReviewer"),
+                    "sandbox": params.get("sandbox"),
+                })
+            elif method == "thread/resume":
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": params.get("approvalPolicy"),
+                    "approvalsReviewer": params.get("approvalsReviewer"),
+                    "sandbox": params.get("sandbox"),
+                })
+            elif method == "thread/memoryMode/set":
+                if params.get("threadId") != thread_id:
+                    send_error(request_id, f"unexpected threadId {params.get('threadId')}")
+                elif params.get("mode") not in ("enabled", "disabled"):
+                    send_error(request_id, f"unexpected mode {params.get('mode')}")
+                else:
+                    memory_mode = params["mode"]
+                    send_result(request_id, {})
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

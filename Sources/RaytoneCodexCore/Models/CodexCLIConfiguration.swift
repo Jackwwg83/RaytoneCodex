@@ -108,6 +108,20 @@ public enum CodexPersonality: String, CaseIterable, Equatable, Sendable {
     }
 }
 
+public enum CodexThreadMemoryMode: String, CaseIterable, Equatable, Sendable {
+    case enabled
+    case disabled
+
+    public var displayName: String {
+        switch self {
+        case .enabled:
+            "开启"
+        case .disabled:
+            "关闭"
+        }
+    }
+}
+
 public struct CodexCLIResult: Equatable, Sendable {
     public var exitCode: Int32
     public var stdout: String

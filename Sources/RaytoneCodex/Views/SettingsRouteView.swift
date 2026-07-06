@@ -1457,6 +1457,12 @@ struct SettingsRouteView: View {
                         .padding(.leading, 2)
                     }
                     SettingsToggleRow(title: "跳过工具辅助对话", description: "请勿从使用了 MCP 工具或网页搜索的对话中生成记忆", isOn: skipToolChatsBinding)
+                    SettingsValueRow(title: "当前对话记忆", description: "通过 Codex 运行时为当前线程覆盖记忆策略") {
+                        HStack(spacing: 8) {
+                            statusBadge(store.selectedThread.memoryMode?.displayName ?? "默认配置", ok: store.selectedThread.memoryMode != nil)
+                            currentThreadMemoryModeMenu
+                        }
+                    }
                     SettingsValueRow(title: "重置记忆", description: "删除所有 Codex 记忆") {
                         Button("重置") {
                             confirmResetMemory()
@@ -2472,6 +2478,25 @@ struct SettingsRouteView: View {
             }
         } label: {
             menuLabel(SessionStore.personalityName(store.personality))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private var currentThreadMemoryModeMenu: some View {
+        Menu {
+            ForEach(CodexThreadMemoryMode.allCases, id: \.self) { mode in
+                Button {
+                    Task { await store.saveSelectedThreadMemoryMode(mode) }
+                } label: {
+                    Label(
+                        mode.displayName,
+                        systemImage: store.selectedThread.memoryMode == mode ? "checkmark" : "circle"
+                    )
+                }
+            }
+        } label: {
+            menuLabel("设置")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

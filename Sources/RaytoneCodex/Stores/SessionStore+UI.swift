@@ -117,6 +117,7 @@ extension SessionStore {
             approval: selectedThread.approval,
             approvalsReviewer: selectedThread.approvalsReviewer,
             personality: selectedThread.personality,
+            memoryMode: selectedThread.memoryMode,
             activeGoal: nil,
             progressSteps: selectedThread.progressSteps,
             appServerThreadID: nil,

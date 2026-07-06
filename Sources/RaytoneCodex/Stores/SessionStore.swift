@@ -1547,6 +1547,22 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func saveSelectedThreadMemoryMode(_ mode: CodexThreadMemoryMode) async {
+        runtimeCatalogStatusText = "正在调用 thread/memoryMode/set…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
+            try await client.setThreadMemoryMode(threadID: threadID, mode: mode)
+            updateSelectedThread { thread in
+                thread.memoryMode = mode
+            }
+            runtimeCatalogStatusText = "thread/memoryMode/set：当前对话记忆已\(mode.displayName)"
+        } catch {
+            runtimeCatalogStatusText = "当前对话记忆写入失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     func saveRuntimeShowInMenuBar(_ enabled: Bool) async {
         desktopShowInMenuBar = enabled
         await saveRuntimeDesktopSetting(key: "show_in_menu_bar", value: .bool(enabled), statusName: "菜单栏显示")
@@ -3168,6 +3184,9 @@ final class SessionStore: ObservableObject {
             }
             threads[index].appServerThreadID = serverThread.id
             threads[index].appServerSessionID = serverThread.sessionID
+            if let memoryMode = serverThread.memoryMode {
+                threads[index].memoryMode = memoryMode
+            }
             threads[index].updatedAt = Date()
             runtimeCatalogStatusText = "thread/fork：已复制为 \(serverThread.id)"
         } catch {
@@ -3185,6 +3204,9 @@ final class SessionStore: ObservableObject {
             if let index = threads.firstIndex(where: { $0.appServerThreadID == summary.id }) {
                 threads[index].title = summary.title
                 threads[index].projectID = projectID
+                if let memoryMode = summary.memoryMode {
+                    threads[index].memoryMode = memoryMode
+                }
                 threads[index].updatedAt = updatedAt
             } else {
                 threads.append(ChatThread(
@@ -3196,6 +3218,7 @@ final class SessionStore: ObservableObject {
                     approval: approval,
                     approvalsReviewer: approvalsReviewer,
                     personality: personality,
+                    memoryMode: summary.memoryMode,
                     appServerThreadID: summary.id,
                     appServerSessionID: nil,
                     updatedAt: updatedAt
@@ -3228,6 +3251,11 @@ final class SessionStore: ObservableObject {
             threadValue["preview"]?.stringValue ??
             threads[index].title
         threads[index].appServerSessionID = threadValue["sessionId"]?.stringValue ?? threads[index].appServerSessionID
+        if let memoryMode = CodexThreadMemoryMode(
+            rawValue: threadValue["memoryMode"]?.stringValue ?? threadValue["memory_mode"]?.stringValue ?? ""
+        ) {
+            threads[index].memoryMode = memoryMode
+        }
         if let cwd = threadValue["cwd"]?.stringValue {
             threads[index].projectID = projectIDForRuntimeThread(cwd: cwd)
         }
@@ -5016,6 +5044,9 @@ final class SessionStore: ObservableObject {
             updateSelectedThread { thread in
                 thread.appServerThreadID = serverThread.id
                 thread.appServerSessionID = serverThread.sessionID
+                if let memoryMode = serverThread.memoryMode {
+                    thread.memoryMode = memoryMode
+                }
             }
             threadID = serverThread.id
         } else if selectedThread.appServerSessionID == nil, let existingThreadID = threadID {
@@ -5023,6 +5054,9 @@ final class SessionStore: ObservableObject {
             updateSelectedThread { thread in
                 thread.appServerThreadID = serverThread.id
                 thread.appServerSessionID = serverThread.sessionID
+                if let memoryMode = serverThread.memoryMode {
+                    thread.memoryMode = memoryMode
+                }
             }
             threadID = serverThread.id
         }
