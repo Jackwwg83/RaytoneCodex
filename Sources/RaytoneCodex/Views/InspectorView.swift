@@ -172,7 +172,7 @@ private struct FilesToolPanel: View {
                 .buttonStyle(GhostIconButtonStyle())
                 .help("刷新")
                 Button {
-                    store.openSelectedFileInDefaultTarget()
+                    Task { await store.openSelectedFileInDefaultTarget() }
                 } label: {
                     Image(systemName: "arrow.up.forward.app")
                         .font(.system(size: 13, weight: .medium))

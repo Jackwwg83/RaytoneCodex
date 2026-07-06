@@ -2739,10 +2739,23 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    func openSelectedFileInDefaultTarget(performExternalOpen: Bool = true) -> FileOpenTargetRequest? {
+    func openSelectedFileInDefaultTarget(performExternalOpen: Bool = true) async -> FileOpenTargetRequest? {
         let path = filePreview?.path ?? fileEntries.first?.path ?? workspacePath
-        guard let request = fileOpenTargetRequest(for: path) else {
-            filePanelStatusText = "无法打开：\(Project.abbreviate(path))"
+        filePanelStatusText = "正在检查打开目标…"
+
+        let request: FileOpenTargetRequest
+        do {
+            guard let targetRequest = try await fileOpenTargetRequest(for: path) else {
+                filePanelStatusText = "无法打开：\(Project.abbreviate(path))"
+                return nil
+            }
+            request = targetRequest
+        } catch {
+            guard !Self.isCancellation(error) else {
+                filePanelStatusText = "打开已取消"
+                return nil
+            }
+            filePanelStatusText = "打开失败：\(error.localizedDescription)"
             return nil
         }
 
@@ -2766,14 +2779,17 @@ final class SessionStore: ObservableObject {
         return request
     }
 
-    private func fileOpenTargetRequest(for path: String) -> FileOpenTargetRequest? {
+    private func fileOpenTargetRequest(for path: String) async throws -> FileOpenTargetRequest? {
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: normalizedPath, isDirectory: &isDirectory) else {
+        let client = try await ensureAppServerClient(useProviderConfiguration: false)
+        let metadata = try await client.getMetadata(path: normalizedPath)
+        filePanelLastOperationSource = "fs/getMetadata + openTarget"
+
+        guard metadata.isDirectory || metadata.isFile else {
             return nil
         }
 
-        let launchPath = isDirectory.boolValue
+        let launchPath = metadata.isDirectory
             ? normalizedPath
             : URL(fileURLWithPath: normalizedPath).deletingLastPathComponent().path
 

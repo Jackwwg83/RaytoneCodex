@@ -5102,11 +5102,14 @@ enum SmokeTestRunner {
                 store.filePreview = FilePreview(path: targetURL.path, text: "Raytone open target smoke", isTruncated: false)
 
                 await store.saveRuntimeOpenTarget("Finder")
-                let finder = store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                let finder = await store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                let finderSource = store.filePanelLastOperationSource
                 await store.saveRuntimeOpenTarget("Terminal")
-                let terminal = store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                let terminal = await store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                let terminalSource = store.filePanelLastOperationSource
                 await store.saveRuntimeOpenTarget("iTerm2")
-                let iTerm = store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                let iTerm = await store.openSelectedFileInDefaultTarget(performExternalOpen: false)
+                let iTermSource = store.filePanelLastOperationSource
 
                 let configURL = codexHome.appendingPathComponent("config.toml")
                 let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
@@ -5123,6 +5126,9 @@ enum SmokeTestRunner {
                     iTerm?.selectedPath == targetURL.path &&
                     iTerm?.launchPath == smokeRoot.path &&
                     iTerm?.applicationBundleIdentifier == "com.googlecode.iterm2" &&
+                    finderSource == "fs/getMetadata + openTarget" &&
+                    terminalSource == "fs/getMetadata + openTarget" &&
+                    iTermSource == "fs/getMetadata + openTarget" &&
                     configText.contains("open_target = \"iTerm2\"")
 
                 emitJSON([
@@ -5138,6 +5144,11 @@ enum SmokeTestRunner {
                     "finder": openTargetPayload(finder),
                     "terminal": openTargetPayload(terminal),
                     "iTerm2": openTargetPayload(iTerm),
+                    "sources": [
+                        "finder": finderSource,
+                        "terminal": terminalSource,
+                        "iTerm2": iTermSource
+                    ],
                     "filePanelStatus": store.filePanelStatusText
                 ])
                 exit(ok ? 0 : 1)
