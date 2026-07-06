@@ -6440,6 +6440,12 @@ final class SessionStore: ObservableObject {
             if let item = params?["item"] {
                 upsertAppServerItem(item)
             }
+        case "item/autoApprovalReview/started":
+            handleGuardianApprovalReview(params, completed: false)
+        case "item/autoApprovalReview/completed":
+            handleGuardianApprovalReview(params, completed: true)
+        case "rawResponseItem/completed":
+            handleRawResponseItemCompleted(params)
         case "serverRequest/resolved":
             if let requestID = params?["requestId"]?.stringValue {
                 clearResolvedApproval(requestID)
@@ -6527,16 +6533,31 @@ final class SessionStore: ObservableObject {
             handleProcessExited(params)
         case "item/agentMessage/delta":
             appendAgentDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
+        case "item/plan/delta":
+            appendPlanDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
             appendReasoningDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
+        case "item/reasoning/summaryPartAdded":
+            handleReasoningSummaryPartAdded(params)
         case "item/commandExecution/outputDelta":
             appendCommandOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/commandExecution/terminalInteraction":
             appendTerminalInteraction(params)
+        case "item/mcpToolCall/progress":
+            appendMcpToolCallProgress(params)
         case "item/fileChange/outputDelta":
             appendFileChangeOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/fileChange/patchUpdated":
             upsertFileChangePatch(itemID: params?["itemId"]?.stringValue, changes: params?["changes"]?.arrayValue ?? [])
+        case "fuzzyFileSearch/sessionUpdated":
+            handleFuzzyFileSearchSessionUpdated(params)
+        case "fuzzyFileSearch/sessionCompleted":
+            handleFuzzyFileSearchSessionCompleted(params)
+        case "thread/realtime/started", "thread/realtime/itemAdded",
+             "thread/realtime/transcript/delta", "thread/realtime/transcript/done",
+             "thread/realtime/outputAudio/delta", "thread/realtime/sdp",
+             "thread/realtime/error", "thread/realtime/closed":
+            handleRealtimeNotification(method: method, params: params)
         case "warning", "guardianWarning", "deprecationNotice", "configWarning",
              "model/rerouted", "model/verification", "turn/moderationMetadata",
              "windows/worldWritableWarning", "windowsSandbox/setupCompleted":
@@ -7348,6 +7369,142 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func handleGuardianApprovalReview(_ params: JSONValue?, completed: Bool) {
+        guard let reviewID = params?["reviewId"]?.stringValue else { return }
+
+        let review = params?["review"]
+        let action = params?["action"]
+        let status = review?["status"]?.stringValue ?? (completed ? "completed" : "inProgress")
+        let statusName = Self.guardianReviewStatusName(status)
+        let actionSummary = Self.guardianActionSummary(action)
+        var details = [
+            "状态：\(statusName)",
+            "对象：\(actionSummary)"
+        ]
+        if let riskLevel = review?["riskLevel"]?.stringValue {
+            details.append("风险：\(Self.guardianRiskName(riskLevel))")
+        }
+        if let rationale = review?["rationale"]?.stringValue,
+           !rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            details.append("理由：\(rationale)")
+        }
+        if let decisionSource = params?["decisionSource"]?.stringValue {
+            details.append("来源：\(decisionSource)")
+        }
+        if let targetItemID = params?["targetItemId"]?.stringValue {
+            details.append("关联项：\(targetItemID)")
+        }
+
+        upsertTranscriptItem(
+            serverItemID: "guardian-review:\(reviewID)",
+            kind: .reasoning(ReasoningBlock(
+                title: completed ? "自动审批审查：\(statusName)" : "自动审批审查中",
+                detail: details.joined(separator: "\n")
+            ))
+        )
+
+        updateSelectedThread { thread in
+            let title = "自动审批审查：\(actionSummary)"
+            let state: ProgressStep.State = completed
+                ? (status == "approved" ? .done : .pending)
+                : .running
+            if let index = thread.progressSteps.firstIndex(where: { $0.title.hasPrefix("自动审批审查：") }) {
+                thread.progressSteps[index].title = title
+                thread.progressSteps[index].state = state
+            } else {
+                thread.progressSteps.append(ProgressStep(title: title, state: state))
+            }
+        }
+
+        runtimeCatalogStatusText = completed
+            ? "item/autoApprovalReview/completed：\(statusName)"
+            : "item/autoApprovalReview/started：\(actionSummary)"
+        runtimeCatalogErrors = []
+    }
+
+    private func handleRawResponseItemCompleted(_ params: JSONValue?) {
+        guard let item = params?["item"],
+              let type = item["type"]?.stringValue else {
+            return
+        }
+        let stableID = item["id"]?.stringValue ??
+            item["call_id"]?.stringValue ??
+            "\(type):\(params?["turnId"]?.stringValue ?? activeAppServerTurnID ?? "turn")"
+
+        switch type {
+        case "message":
+            let text = Self.textFromRuntimeContent(item["content"])
+            let role = item["role"]?.stringValue ?? "assistant"
+            guard !text.isEmpty else { break }
+            if role == "user" {
+                upsertTranscriptItem(serverItemID: "raw-response:\(stableID)", kind: .userMessage(text))
+            } else {
+                upsertTranscriptItem(serverItemID: "raw-response:\(stableID)", kind: .agentMessage(text))
+            }
+        case "agent_message":
+            let recipient = item["recipient"]?.stringValue
+            let text = Self.textFromRuntimeContent(item["content"])
+            if !text.isEmpty {
+                upsertTranscriptItem(
+                    serverItemID: "raw-response:\(stableID)",
+                    kind: .agentMessage(recipient.map { "@\($0)\n\(text)" } ?? text)
+                )
+            }
+        case "reasoning":
+            let summary = Self.textFromRuntimeContent(item["summary"])
+            let content = Self.textFromRuntimeContent(item["content"])
+            let detail = [summary, content].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            if !detail.isEmpty {
+                upsertTranscriptItem(
+                    serverItemID: "raw-response:\(stableID)",
+                    kind: .reasoning(ReasoningBlock(title: "思考", detail: detail))
+                )
+            }
+        case "local_shell_call":
+            let action = item["action"]
+            let command = Self.localShellCommand(from: action)
+            upsertTranscriptItem(
+                serverItemID: "raw-response:\(stableID)",
+                kind: .command(CommandRun(
+                    command: command.isEmpty ? "本地 shell 调用" : command,
+                    directory: action?["working_directory"]?.stringValue.map(Project.abbreviate),
+                    status: Self.runStatus(from: item["status"]?.stringValue)
+                ))
+            )
+        case "function_call", "tool_search_call", "custom_tool_call":
+            let name = item["name"]?.stringValue ?? item["execution"]?.stringValue ?? "tool"
+            let arguments = item["arguments"] ?? item["input"] ?? .object([:])
+            upsertTranscriptItem(
+                serverItemID: "raw-response:\(stableID)",
+                kind: .command(CommandRun(
+                    command: "响应工具 \(name)",
+                    output: Self.rawArgumentText(arguments),
+                    status: Self.runStatus(from: item["status"]?.stringValue)
+                ))
+            )
+        case "function_call_output", "custom_tool_call_output":
+            let output = Self.textFromRuntimeContent(item["output"])
+            upsertTranscriptItem(
+                serverItemID: "raw-response:\(stableID)",
+                kind: .command(CommandRun(
+                    command: "响应工具输出 \(item["call_id"]?.stringValue ?? "")",
+                    output: output.isEmpty ? item.prettyJSONString : output,
+                    status: .succeeded
+                ))
+            )
+        default:
+            upsertTranscriptItem(
+                serverItemID: "raw-response:\(stableID)",
+                kind: .reasoning(ReasoningBlock(
+                    title: "原始响应项：\(type)",
+                    detail: item.prettyJSONString
+                ))
+            )
+        }
+
+        runtimeCatalogStatusText = "rawResponseItem/completed：\(type)"
+    }
+
     private func upsertAppServerItem(_ item: JSONValue) {
         guard let object = item.objectValue,
               let type = object["type"]?.stringValue,
@@ -7391,8 +7548,30 @@ final class SessionStore: ObservableObject {
                 kind: .command(CommandRun(
                     command: command,
                     directory: object["cwd"]?.stringValue.map(Project.abbreviate),
-                    output: object["aggregatedOutput"]?.stringValue ?? "",
+                    output: commandOutput(
+                        for: serverItemID,
+                        proposed: object["aggregatedOutput"]?.stringValue,
+                        in: selectedThread
+                    ),
                     exitCode: object["exitCode"]?.intValue.map(Int32.init),
+                    status: status
+                ))
+            )
+        case "mcpToolCall":
+            let server = object["server"]?.stringValue ?? "MCP"
+            let tool = object["tool"]?.stringValue ?? "tool"
+            let status = Self.mcpToolRunStatus(object["status"]?.stringValue)
+            let finalOutput = Self.mcpToolCallOutputText(object)
+            let progressOutput = existingCommandOutput(for: serverItemID, in: selectedThread) ?? ""
+            let output = progressOutput.isEmpty || finalOutput.contains(progressOutput)
+                ? finalOutput
+                : [progressOutput, finalOutput].filter { !$0.isEmpty }.joined(separator: "\n")
+            upsertTranscriptItem(
+                serverItemID: serverItemID,
+                kind: .command(CommandRun(
+                    command: "MCP \(server)/\(tool)",
+                    output: output,
+                    exitCode: status == .failed ? 1 : nil,
                     status: status
                 ))
             )
@@ -7465,6 +7644,32 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func appendPlanDelta(itemID: String?, delta: String?) {
+        guard let itemID, let delta, !delta.isEmpty else { return }
+        let transcriptID = transcriptUUID(for: itemID)
+        updateSelectedThread { thread in
+            if let index = thread.items.firstIndex(where: { $0.id == transcriptID }),
+               case var .reasoning(block) = thread.items[index].kind {
+                block.detail += delta
+                thread.items[index].kind = .reasoning(block)
+            } else {
+                thread.items.append(TranscriptItem(
+                    id: transcriptID,
+                    kind: .reasoning(ReasoningBlock(title: "计划", detail: delta))
+                ))
+            }
+
+            let stepTitle = "接收 Codex 计划：\(delta.trimmingCharacters(in: .whitespacesAndNewlines))"
+            if let index = thread.progressSteps.firstIndex(where: { $0.title.hasPrefix("接收 Codex 计划：") }) {
+                thread.progressSteps[index].title = stepTitle
+                thread.progressSteps[index].state = .running
+            } else {
+                thread.progressSteps.append(ProgressStep(title: stepTitle, state: .running))
+            }
+        }
+        runtimeCatalogStatusText = "item/plan/delta：\(itemID)"
+    }
+
     private func appendReasoningDelta(itemID: String?, delta: String?) {
         guard let itemID, let delta, !delta.isEmpty else { return }
         let transcriptID = transcriptUUID(for: itemID)
@@ -7482,6 +7687,30 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func handleReasoningSummaryPartAdded(_ params: JSONValue?) {
+        guard let itemID = params?["itemId"]?.stringValue else { return }
+        let summaryIndex = params?["summaryIndex"]?.intValue ?? 0
+        let transcriptID = transcriptUUID(for: itemID)
+        updateSelectedThread { thread in
+            let marker = "摘要片段 \(summaryIndex + 1) 已开始\n"
+            if let index = thread.items.firstIndex(where: { $0.id == transcriptID }),
+               case var .reasoning(block) = thread.items[index].kind {
+                if !block.detail.contains(marker) {
+                    block.detail = [block.detail, marker]
+                        .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                        .joined(separator: "\n")
+                    thread.items[index].kind = .reasoning(block)
+                }
+            } else {
+                thread.items.append(TranscriptItem(
+                    id: transcriptID,
+                    kind: .reasoning(ReasoningBlock(title: "思考", detail: marker))
+                ))
+            }
+        }
+        runtimeCatalogStatusText = "item/reasoning/summaryPartAdded：\(summaryIndex + 1)"
+    }
+
     private func appendCommandOutputDelta(itemID: String?, delta: String?) {
         guard let itemID, let delta, !delta.isEmpty else { return }
         let transcriptID = transcriptUUID(for: itemID)
@@ -7497,6 +7726,32 @@ final class SessionStore: ObservableObject {
                 ))
             }
         }
+    }
+
+    private func appendMcpToolCallProgress(_ params: JSONValue?) {
+        guard let itemID = params?["itemId"]?.stringValue else { return }
+        let message = params?["message"]?.stringValue ?? "MCP 工具正在运行"
+        let transcriptID = transcriptUUID(for: itemID)
+        let line = "[进度] \(message)\n"
+        updateSelectedThread { thread in
+            if let index = thread.items.firstIndex(where: { $0.id == transcriptID }),
+               case var .command(run) = thread.items[index].kind {
+                run.output += line
+                run.status = .running
+                thread.items[index].kind = .command(run)
+            } else {
+                thread.items.append(TranscriptItem(
+                    id: transcriptID,
+                    kind: .command(CommandRun(
+                        command: "MCP 工具调用",
+                        output: line,
+                        status: .running
+                    ))
+                ))
+            }
+        }
+        mcpToolCallStatusText = "item/mcpToolCall/progress：\(message)"
+        runtimeCatalogStatusText = mcpToolCallStatusText
     }
 
     private func appendTerminalInteraction(_ params: JSONValue?) {
@@ -7518,6 +7773,128 @@ final class SessionStore: ObservableObject {
                         output: interactionText.trimmingCharacters(in: .newlines),
                         status: .running
                     ))
+                ))
+            }
+        }
+    }
+
+    private func handleFuzzyFileSearchSessionUpdated(_ params: JSONValue?) {
+        guard let sessionID = params?["sessionId"]?.stringValue else { return }
+        let query = params?["query"]?.stringValue ?? fileSearchQuery
+        let files = params?["files"]?.arrayValue ?? []
+        if !query.isEmpty {
+            fileSearchQuery = query
+        }
+        fileSearchResults = files.map { file in
+            let path = file["path"]?.stringValue ?? file["file_name"]?.stringValue ?? ""
+            return WorkspaceFileEntry(
+                name: file["file_name"]?.stringValue ?? (path as NSString).lastPathComponent,
+                path: path,
+                isDirectory: false,
+                isFile: true
+            )
+        }
+        fileSearchIsRunning = true
+        fileSearchStatusText = "fuzzyFileSearch/sessionUpdated：\(fileSearchResults.count) 个匹配"
+        runtimeCatalogStatusText = "\(fileSearchStatusText) · \(sessionID)"
+    }
+
+    private func handleFuzzyFileSearchSessionCompleted(_ params: JSONValue?) {
+        let sessionID = params?["sessionId"]?.stringValue ?? "session"
+        fileSearchIsRunning = false
+        fileSearchStatusText = fileSearchResults.isEmpty
+            ? "fuzzyFileSearch/sessionCompleted：未找到匹配文件"
+            : "fuzzyFileSearch/sessionCompleted：\(fileSearchResults.count) 个匹配"
+        runtimeCatalogStatusText = "\(fileSearchStatusText) · \(sessionID)"
+    }
+
+    private func handleRealtimeNotification(method: String, params: JSONValue?) {
+        let threadID = params?["threadId"]?.stringValue ?? selectedThread.appServerThreadID ?? "thread"
+
+        switch method {
+        case "thread/realtime/started":
+            let version = params?["version"]?.stringValue ?? "unknown"
+            let sessionID = params?["realtimeSessionId"]?.stringValue
+            voiceInputStatusText = sessionID.map { "Codex realtime 已启动：\(version) · \($0)" } ?? "Codex realtime 已启动：\(version)"
+        case "thread/realtime/transcript/delta":
+            let role = params?["role"]?.stringValue ?? "assistant"
+            let delta = params?["delta"]?.stringValue ?? ""
+            appendRealtimeTranscript(threadID: threadID, role: role, text: delta, replace: false)
+            voiceInputStatusText = "Codex realtime transcript：\(Self.realtimeRoleName(role))"
+        case "thread/realtime/transcript/done":
+            let role = params?["role"]?.stringValue ?? "assistant"
+            let text = params?["text"]?.stringValue ?? ""
+            appendRealtimeTranscript(threadID: threadID, role: role, text: text, replace: true)
+            voiceInputStatusText = "Codex realtime transcript 完成：\(Self.realtimeRoleName(role))"
+        case "thread/realtime/outputAudio/delta":
+            let audio = params?["audio"]
+            let itemID = audio?["itemId"]?.stringValue ?? "audio"
+            let sampleRate = audio?["sampleRate"]?.intValue ?? 0
+            let channels = audio?["numChannels"]?.intValue ?? 0
+            let samples = audio?["samplesPerChannel"]?.intValue ?? 0
+            upsertTranscriptItem(
+                serverItemID: "realtime-audio:\(threadID):\(itemID)",
+                kind: .reasoning(ReasoningBlock(
+                    title: "实时语音输出",
+                    detail: "\(sampleRate) Hz · \(channels) 声道 · \(samples) samples/channel"
+                ))
+            )
+            voiceInputStatusText = "Codex realtime 音频输出：\(sampleRate) Hz"
+        case "thread/realtime/sdp":
+            let sdp = params?["sdp"]?.stringValue ?? ""
+            upsertTranscriptItem(
+                serverItemID: "realtime-sdp:\(threadID)",
+                kind: .reasoning(ReasoningBlock(
+                    title: "实时连接 SDP",
+                    detail: String(sdp.prefix(2000))
+                ))
+            )
+            voiceInputStatusText = "Codex realtime 已收到 SDP"
+        case "thread/realtime/error":
+            let message = params?["message"]?.stringValue ?? "realtime error"
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(level: .error, text: "Codex realtime 错误：\(message)"))))
+            }
+            voiceInputStatusText = "Codex realtime 错误：\(message)"
+            runtimeCatalogErrors = [message]
+        case "thread/realtime/closed":
+            let reason = params?["reason"]?.stringValue ?? "已关闭"
+            voiceInputStatusText = "Codex realtime 已关闭：\(reason)"
+        case "thread/realtime/itemAdded":
+            let item = params?["item"] ?? .object([:])
+            upsertTranscriptItem(
+                serverItemID: "realtime-item:\(threadID):\(UUID().uuidString)",
+                kind: .reasoning(ReasoningBlock(
+                    title: "实时事件",
+                    detail: item.prettyJSONString
+                ))
+            )
+            voiceInputStatusText = "Codex realtime 收到事件"
+        default:
+            break
+        }
+
+        runtimeCatalogStatusText = "\(method)：\(voiceInputStatusText)"
+    }
+
+    private func appendRealtimeTranscript(threadID: String, role: String, text: String, replace: Bool) {
+        guard !text.isEmpty else { return }
+        let serverItemID = "realtime-transcript:\(threadID):\(role)"
+        let transcriptID = transcriptUUID(for: serverItemID)
+        let isUser = role == "user"
+        updateSelectedThread { thread in
+            if let index = thread.items.firstIndex(where: { $0.id == transcriptID }) {
+                if isUser, case let .userMessage(existing) = thread.items[index].kind {
+                    thread.items[index].kind = .userMessage(replace ? text : existing + text)
+                } else if case let .agentMessage(existing) = thread.items[index].kind {
+                    thread.items[index].kind = .agentMessage(replace ? text : existing + text)
+                } else {
+                    thread.items[index].kind = isUser ? .userMessage(text) : .agentMessage(text)
+                }
+            } else {
+                thread.items.append(TranscriptItem(
+                    id: transcriptID,
+                    kind: isUser ? .userMessage(text) : .agentMessage(text)
                 ))
             }
         }
@@ -7816,6 +8193,137 @@ final class SessionStore: ObservableObject {
             return contentText.isEmpty ? "成功：\(success)" : "成功：\(success)\n\(contentText)"
         }
         return contentText
+    }
+
+    private static func guardianReviewStatusName(_ status: String) -> String {
+        switch status {
+        case "inProgress": "审查中"
+        case "approved": "已通过"
+        case "denied": "已拒绝"
+        case "timedOut": "已超时"
+        case "aborted": "已中止"
+        default: status
+        }
+    }
+
+    private static func guardianRiskName(_ risk: String) -> String {
+        switch risk {
+        case "low": "低"
+        case "medium": "中"
+        case "high": "高"
+        case "critical": "严重"
+        default: risk
+        }
+    }
+
+    private static func guardianActionSummary(_ action: JSONValue?) -> String {
+        guard let type = action?["type"]?.stringValue else {
+            return "未知操作"
+        }
+        switch type {
+        case "command":
+            return action?["command"]?.stringValue ?? "命令"
+        case "execve":
+            let program = action?["program"]?.stringValue ?? "execve"
+            let argv = action?["argv"]?.arrayValue?.compactMap(\.stringValue).joined(separator: " ") ?? ""
+            return [program, argv].filter { !$0.isEmpty }.joined(separator: " ")
+        case "applyPatch":
+            let files = action?["files"]?.arrayValue?.compactMap(\.stringValue).map(Project.abbreviate) ?? []
+            return files.isEmpty ? "修改文件" : "修改 \(files.joined(separator: "、"))"
+        case "networkAccess":
+            let protocolName = action?["protocol"]?.stringValue ?? "network"
+            let host = action?["host"]?.stringValue ?? action?["target"]?.stringValue ?? "host"
+            if let port = action?["port"]?.intValue {
+                return "\(protocolName) \(host):\(port)"
+            }
+            return "\(protocolName) \(host)"
+        case "mcpToolCall":
+            let server = action?["server"]?.stringValue ?? "MCP"
+            let tool = action?["toolTitle"]?.stringValue ?? action?["toolName"]?.stringValue ?? "tool"
+            return "MCP \(server)/\(tool)"
+        case "requestPermissions":
+            if let reason = action?["reason"]?.stringValue, !reason.isEmpty {
+                return "请求权限：\(reason)"
+            }
+            return "请求权限"
+        default:
+            return type
+        }
+    }
+
+    private static func localShellCommand(from action: JSONValue?) -> String {
+        guard let action else { return "" }
+        if let command = action["command"]?.arrayValue?.compactMap(\.stringValue),
+           !command.isEmpty {
+            return command.joined(separator: " ")
+        }
+        return action["command"]?.stringValue ?? ""
+    }
+
+    private static func rawArgumentText(_ value: JSONValue) -> String {
+        if let string = value.stringValue {
+            return string
+        }
+        return value.prettyJSONString
+    }
+
+    private func commandOutput(for serverItemID: String, proposed: String?, in thread: ChatThread) -> String {
+        let proposedOutput = proposed ?? ""
+        if !proposedOutput.isEmpty {
+            return proposedOutput
+        }
+        return existingCommandOutput(for: serverItemID, in: thread) ?? proposedOutput
+    }
+
+    private func existingCommandOutput(for serverItemID: String, in thread: ChatThread) -> String? {
+        guard let transcriptID = appServerItemIDs[serverItemID],
+              let item = thread.items.first(where: { $0.id == transcriptID }),
+              case let .command(existing) = item.kind else {
+            return nil
+        }
+        return existing.output
+    }
+
+    private static func mcpToolRunStatus(_ status: String?) -> RunStatus {
+        switch status {
+        case "completed": .succeeded
+        case "failed": .failed
+        default: .running
+        }
+    }
+
+    private static func mcpToolCallOutputText(_ object: [String: JSONValue]) -> String {
+        var sections = ["参数：\n\(object["arguments"]?.prettyJSONString ?? "{}")"]
+        if let result = object["result"] {
+            let contentText = textFromRuntimeContent(result["content"])
+            if !contentText.isEmpty {
+                sections.append("结果：\n\(contentText)")
+            }
+            if let structured = result["structuredContent"] {
+                sections.append("结构化内容：\n\(structured.prettyJSONString)")
+            }
+            if let meta = result["_meta"] {
+                sections.append("元数据：\n\(meta.prettyJSONString)")
+            }
+        }
+        if let error = object["error"]?["message"]?.stringValue {
+            sections.append("错误：\(error)")
+        }
+        if let resourceURI = object["mcpAppResourceUri"]?.stringValue {
+            sections.append("资源：\(resourceURI)")
+        }
+        if let durationMs = object["durationMs"]?.intValue {
+            sections.append("耗时：\(durationMs) ms")
+        }
+        return sections.joined(separator: "\n\n")
+    }
+
+    private static func realtimeRoleName(_ role: String) -> String {
+        switch role {
+        case "user": "用户"
+        case "assistant", "agent": "Codex"
+        default: role
+        }
     }
 
     private func rejectAppServerRequest(requestID: CodexAppServerRequestID, message: String) async {

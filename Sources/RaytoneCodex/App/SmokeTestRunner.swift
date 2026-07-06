@@ -89,6 +89,8 @@ enum SmokeTestRunner {
             runRuntimeDiagnosticsSmoke()
         } else if CommandLine.arguments.contains("--process-stream-smoke-test") {
             runProcessStreamSmoke()
+        } else if CommandLine.arguments.contains("--app-server-notification-smoke-test") {
+            runAppServerNotificationSmoke()
         } else if CommandLine.arguments.contains("--hook-controls-smoke-test") {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
@@ -7413,6 +7415,151 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runAppServerNotificationSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexNotificationSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# Notification smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeAppServerNotificationScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-notification-stream"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_NOTIFICATION_SMOKE_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "NotificationSmoke"
+                }
+
+                store.prompt = "触发 app-server 通知覆盖"
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline,
+                      !store.voiceInputStatusText.contains("已关闭") {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let items = store.selectedThread.items
+                let reasoningText = items.compactMap { item -> String? in
+                    if case let .reasoning(block) = item.kind {
+                        return "\(block.title)\n\(block.detail)"
+                    }
+                    return nil
+                }.joined(separator: "\n\n")
+                let agentText = items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind {
+                        return text
+                    }
+                    return nil
+                }.joined(separator: "\n")
+                let notices = items.compactMap { item -> String? in
+                    if case let .notice(notice) = item.kind {
+                        return notice.text
+                    }
+                    return nil
+                }
+                let commands = commandRuns(in: items)
+                let mcpCommand = commands.first { $0.command == "MCP demo/progress_tool" }
+                let fileSearchStatus = store.fileSearchStatusText
+                let fileSearchCount = store.fileSearchResults.count
+                let voiceStatus = store.voiceInputStatusText
+                let runtimeStatus = store.runtimeCatalogStatusText
+                let runtimeErrors = store.runtimeCatalogErrors
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let expectedMethods = [
+                    "item/autoApprovalReview/started",
+                    "item/autoApprovalReview/completed",
+                    "rawResponseItem/completed",
+                    "item/plan/delta",
+                    "item/mcpToolCall/progress",
+                    "item/reasoning/summaryPartAdded",
+                    "fuzzyFileSearch/sessionUpdated",
+                    "fuzzyFileSearch/sessionCompleted",
+                    "thread/realtime/started",
+                    "thread/realtime/itemAdded",
+                    "thread/realtime/transcript/delta",
+                    "thread/realtime/transcript/done",
+                    "thread/realtime/outputAudio/delta",
+                    "thread/realtime/sdp",
+                    "thread/realtime/error",
+                    "thread/realtime/closed"
+                ]
+                let logHasAllMethods = expectedMethods.allSatisfy { method in
+                    logText.contains(#""method":"\#(method)""#)
+                }
+                let ok = !store.isRunning &&
+                    reasoningText.contains("自动审批审查：已通过") &&
+                    reasoningText.contains("检查真实 app-server 通知") &&
+                    reasoningText.contains("摘要片段 1 已开始") &&
+                    agentText.contains("raw response visible") &&
+                    agentText.contains("实时响应完成") &&
+                    mcpCommand?.output.contains("正在执行 MCP") == true &&
+                    mcpCommand?.output.contains("tool result visible") == true &&
+                    mcpCommand?.status == .succeeded &&
+                    fileSearchCount == 1 &&
+                    fileSearchStatus.contains("sessionCompleted") &&
+                    voiceStatus.contains("已关闭") &&
+                    notices.contains(where: { $0.contains("realtime 错误") }) &&
+                    runtimeErrors.contains("realtime smoke error") &&
+                    runtimeStatus.contains("thread/realtime/closed") &&
+                    logHasAllMethods
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "reasoningText": reasoningText,
+                    "agentText": agentText,
+                    "mcpCommandOutput": mcpCommand?.output ?? "",
+                    "mcpCommandStatus": mcpCommand.map { runStatusName($0.status) } ?? "",
+                    "fileSearchStatus": fileSearchStatus,
+                    "fileSearchCount": fileSearchCount,
+                    "voiceStatus": voiceStatus,
+                    "runtimeCatalogStatus": runtimeStatus,
+                    "runtimeCatalogErrors": runtimeErrors,
+                    "noticeText": notices.joined(separator: "\n"),
+                    "logHasAllMethods": logHasAllMethods,
+                    "requestLogPreview": String(logText.prefix(3200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAccountAuthSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
@@ -9886,6 +10033,241 @@ enum SmokeTestRunner {
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-process-stream", "status": "completed"}
                 })
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeAppServerNotificationScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_NOTIFICATION_SMOKE_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        def thread_payload():
+            return {
+                "id": "thread-notification-smoke",
+                "sessionId": "session-notification-smoke",
+                "name": "通知覆盖线程",
+                "preview": "Notification smoke",
+                "cwd": cwd,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000001,
+                "status": {"type": "active", "activeFlags": []},
+            }
+
+        def review_payload(status):
+            return {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "reviewId": "review-notification-smoke",
+                "startedAtMs": 1700000000000,
+                "completedAtMs": 1700000000500,
+                "decisionSource": "agent",
+                "targetItemId": "command-review-target",
+                "action": {
+                    "type": "command",
+                    "source": "agent",
+                    "command": "ls -la",
+                    "cwd": cwd,
+                },
+                "review": {
+                    "status": status,
+                    "riskLevel": "low",
+                    "userAuthorization": None,
+                    "rationale": "通知 smoke 自动审查理由",
+                },
+            }
+
+        def emit_notification_sequence():
+            send_notification("turn/started", {
+                "turn": {
+                    "id": "turn-notification-smoke",
+                    "status": "inProgress",
+                    "startedAt": 1700000000,
+                }
+            })
+            started = review_payload("inProgress")
+            started.pop("completedAtMs", None)
+            started.pop("decisionSource", None)
+            send_notification("item/autoApprovalReview/started", started)
+            send_notification("item/autoApprovalReview/completed", review_payload("approved"))
+            send_notification("rawResponseItem/completed", {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "item": {
+                    "id": "raw-message-smoke",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "raw response visible",
+                    }],
+                },
+            })
+            send_notification("item/plan/delta", {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "itemId": "plan-notification-smoke",
+                "delta": "检查真实 app-server 通知",
+            })
+            send_notification("item/reasoning/summaryPartAdded", {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "itemId": "reasoning-notification-smoke",
+                "summaryIndex": 0,
+            })
+            send_notification("item/reasoning/summaryTextDelta", {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "itemId": "reasoning-notification-smoke",
+                "delta": "summary delta visible",
+            })
+            send_notification("item/mcpToolCall/progress", {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "itemId": "mcp-notification-smoke",
+                "message": "正在执行 MCP",
+            })
+            send_notification("item/completed", {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "item": {
+                    "id": "mcp-notification-smoke",
+                    "type": "mcpToolCall",
+                    "server": "demo",
+                    "tool": "progress_tool",
+                    "status": "completed",
+                    "arguments": {"message": "hello"},
+                    "pluginId": None,
+                    "mcpAppResourceUri": None,
+                    "durationMs": 42,
+                    "result": {
+                        "content": [{
+                            "type": "text",
+                            "text": "tool result visible",
+                        }],
+                        "structuredContent": {"ok": True},
+                        "_meta": {"source": "notification-smoke"},
+                    },
+                    "error": None,
+                },
+            })
+            send_notification("fuzzyFileSearch/sessionUpdated", {
+                "sessionId": "fuzzy-notification-smoke",
+                "query": "README",
+                "files": [{
+                    "file_name": "README.md",
+                    "path": cwd + "/README.md",
+                    "root": cwd,
+                    "match_type": "fileName",
+                    "score": 99,
+                    "indices": [0, 1, 2],
+                }],
+            })
+            send_notification("fuzzyFileSearch/sessionCompleted", {
+                "sessionId": "fuzzy-notification-smoke",
+            })
+            send_notification("thread/realtime/started", {
+                "threadId": "thread-notification-smoke",
+                "realtimeSessionId": "rt-notification-smoke",
+                "version": "v2",
+            })
+            send_notification("thread/realtime/itemAdded", {
+                "threadId": "thread-notification-smoke",
+                "item": {"type": "response.item", "id": "rt-item-smoke"},
+            })
+            send_notification("thread/realtime/transcript/delta", {
+                "threadId": "thread-notification-smoke",
+                "role": "assistant",
+                "delta": "实时响应",
+            })
+            send_notification("thread/realtime/transcript/done", {
+                "threadId": "thread-notification-smoke",
+                "role": "assistant",
+                "text": "实时响应完成",
+            })
+            send_notification("thread/realtime/outputAudio/delta", {
+                "threadId": "thread-notification-smoke",
+                "audio": {
+                    "itemId": "rt-audio-smoke",
+                    "data": "AAAA",
+                    "numChannels": 1,
+                    "sampleRate": 24000,
+                    "samplesPerChannel": 2,
+                },
+            })
+            send_notification("thread/realtime/sdp", {
+                "threadId": "thread-notification-smoke",
+                "sdp": "v=0\\no=- 0 0 IN IP4 127.0.0.1",
+            })
+            send_notification("thread/realtime/error", {
+                "threadId": "thread-notification-smoke",
+                "message": "realtime smoke error",
+            })
+            send_notification("thread/realtime/closed", {
+                "threadId": "thread-notification-smoke",
+                "reason": "smoke complete",
+            })
+            send_notification("turn/completed", {
+                "turn": {"id": "turn-notification-smoke", "status": "completed"}
+            })
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "workspace-write",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-notification-smoke", "status": "inProgress"}
+                })
+                emit_notification_sequence()
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
