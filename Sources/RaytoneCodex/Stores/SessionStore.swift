@@ -9804,15 +9804,18 @@ final class SessionStore: ObservableObject {
             return (false, "路径必须位于当前工作区内：\(rawPath)")
         }
 
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: targetPath, isDirectory: &isDirectory), isDirectory.boolValue {
-            return (false, "目标路径是目录，请改用 list_workspace_files：\(Self.dynamicToolRelativeWorkspacePath(targetPath, workspacePath: workspacePath))")
-        }
-
         let rawLimit = arguments["maxBytes"]?.intValue ?? 32_768
         let maxBytes = min(max(rawLimit, 1), 200_000)
 
         do {
+            let metadata = try await client.getMetadata(path: targetPath)
+            if metadata.isDirectory {
+                return (false, "fs/getMetadata：目标路径是目录，请改用 list_workspace_files：\(Self.dynamicToolRelativeWorkspacePath(targetPath, workspacePath: workspacePath))")
+            }
+            guard metadata.isFile else {
+                return (false, "fs/getMetadata：目标路径不是可读取文件：\(Self.dynamicToolRelativeWorkspacePath(targetPath, workspacePath: workspacePath))")
+            }
+
             let data = try await client.readFile(path: targetPath)
             let limitedData = Data(data.prefix(maxBytes))
             let truncated = data.count > limitedData.count
@@ -9828,11 +9831,12 @@ final class SessionStore: ObservableObject {
                 "returnedBytes": .number(Double(limitedData.count)),
                 "truncated": .bool(truncated),
                 "encoding": .string(looksBinary ? "binary" : "utf-8"),
+                "source": .string("fs/getMetadata + fs/readFile"),
                 "content": .string(content)
             ])
             return (true, payload.prettyJSONString)
         } catch {
-            return (false, "fs/readFile 失败：\(error.localizedDescription)")
+            return (false, "fs/getMetadata 或 fs/readFile 失败：\(error.localizedDescription)")
         }
     }
 

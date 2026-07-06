@@ -1948,6 +1948,8 @@ enum SmokeTestRunner {
                     logText.contains(#""method": "command/exec""#)
                 let readFileRequestObserved = logText.contains(#""method":"fs/readFile""#) ||
                     logText.contains(#""method": "fs/readFile""#)
+                let getMetadataRequestObserved = logText.contains(#""method":"fs/getMetadata""#) ||
+                    logText.contains(#""method": "fs/getMetadata""#)
                 let mcpToolCallObserved = logText.contains(#""method":"mcpServer/tool/call""#) &&
                     logText.contains(#""server":"raytone-smoke-mcp""#) &&
                     logText.contains(#""tool":"echo_context""#) &&
@@ -1985,6 +1987,7 @@ enum SmokeTestRunner {
                     requestObserved &&
                     responseObserved &&
                     commandExecObserved &&
+                    getMetadataRequestObserved &&
                     readFileRequestObserved &&
                     mcpToolCallObserved &&
                     mcpResourceReadObserved &&
@@ -2016,6 +2019,7 @@ enum SmokeTestRunner {
                     "requestObserved": requestObserved,
                     "responseObserved": responseObserved,
                     "commandExecObserved": commandExecObserved,
+                    "getMetadataRequestObserved": getMetadataRequestObserved,
                     "readFileRequestObserved": readFileRequestObserved,
                     "mcpToolCallObserved": mcpToolCallObserved,
                     "mcpResourceReadObserved": mcpResourceReadObserved,
@@ -14136,6 +14140,21 @@ enum SmokeTestRunner {
                         })
                     result = {"entries": entries}
                     log({"readDirectoryResponse": result})
+                    send_result(request_id, result)
+                except Exception as exc:
+                    send_error(request_id, str(exc))
+            elif method == "fs/getMetadata":
+                params = request.get("params") or {}
+                path = params.get("path") or os.getcwd()
+                try:
+                    result = {
+                        "isDirectory": os.path.isdir(path),
+                        "isFile": os.path.isfile(path),
+                        "isSymlink": os.path.islink(path),
+                        "createdAtMs": int(os.path.getctime(path) * 1000) if os.path.exists(path) else 0,
+                        "modifiedAtMs": int(os.path.getmtime(path) * 1000) if os.path.exists(path) else 0
+                    }
+                    log({"getMetadataResponse": {"path": path, **result}})
                     send_result(request_id, result)
                 except Exception as exc:
                     send_error(request_id, str(exc))
