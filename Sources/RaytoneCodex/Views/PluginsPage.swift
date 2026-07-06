@@ -214,10 +214,10 @@ struct PluginsPage: View {
                 }
                 Divider()
                 Button("打开插件目录") {
-                    store.revealCodexHomeSubfolder("plugins")
+                    Task { await store.revealCodexHomeSubfolder("plugins") }
                 }
                 Button("打开技能目录") {
-                    store.revealCodexHomeSubfolder("skills")
+                    Task { await store.revealCodexHomeSubfolder("skills") }
                 }
             } label: {
                 HStack(spacing: 5) {

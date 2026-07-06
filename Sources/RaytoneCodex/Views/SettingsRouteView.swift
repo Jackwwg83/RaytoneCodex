@@ -1357,7 +1357,7 @@ struct SettingsRouteView: View {
                         projectMenuValue
                         Spacer(minLength: 0)
                         Button("打开 config.toml ↗") {
-                            store.openCodexConfigFile()
+                            Task { await store.openCodexConfigFile() }
                         }
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.info)
@@ -1462,7 +1462,7 @@ struct SettingsRouteView: View {
                     }
                     SettingsValueRow(title: "Codex 数据目录", description: "打开当前运行时使用的 CODEX_HOME，插件、技能和配置都从这里读取") {
                         Button("打开 .codex") {
-                            store.revealCodexHomeSubfolder("")
+                            Task { await store.revealCodexHomeSubfolder("") }
                         }
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.danger)

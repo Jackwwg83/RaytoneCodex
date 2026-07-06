@@ -3226,34 +3226,50 @@ enum SmokeTestRunner {
                     "CODEX_HOME": codexHomeURL.path
                 ]
 
-                let pluginsURL = store.ensureCodexHomeSubfolder("plugins")
-                let skillsURL = store.ensureCodexHomeSubfolder("skills")
-                let trimmedURL = store.ensureCodexHomeSubfolder("/plugins/")
-                let homeURL = store.ensureCodexHomeSubfolder("")
+                await store.refreshRuntime()
+                let configURL = await store.prepareCodexConfigFileForOpening()
+                let configStatus = store.runtimeCatalogStatusText
+                let pluginsURL = await store.ensureCodexHomeSubfolder("plugins")
+                let skillsURL = await store.ensureCodexHomeSubfolder("skills")
+                let trimmedURL = await store.ensureCodexHomeSubfolder("/plugins/")
+                let homeURL = await store.ensureCodexHomeSubfolder("")
+                let directoryStatus = store.runtimeCatalogStatusText
 
-                let pluginExists = fileManager.fileExists(atPath: pluginsURL.path)
-                let skillsExists = fileManager.fileExists(atPath: skillsURL.path)
-                let homeExists = fileManager.fileExists(atPath: homeURL.path)
-                let ok = pluginExists &&
+                let configExists = configURL.map { fileManager.fileExists(atPath: $0.path) } ?? false
+                let pluginExists = pluginsURL.map { fileManager.fileExists(atPath: $0.path) } ?? false
+                let skillsExists = skillsURL.map { fileManager.fileExists(atPath: $0.path) } ?? false
+                let homeExists = homeURL.map { fileManager.fileExists(atPath: $0.path) } ?? false
+                let configSourceObserved = configStatus.contains("fs/createDirectory + fs/getMetadata")
+                let directorySourceObserved = directoryStatus.contains("fs/createDirectory + fs/getMetadata")
+                let ok = configExists &&
+                    pluginExists &&
                     skillsExists &&
                     homeExists &&
-                    homeURL.path == codexHomeURL.path &&
-                    pluginsURL.path == codexHomeURL.appendingPathComponent("plugins").path &&
-                    skillsURL.path == codexHomeURL.appendingPathComponent("skills").path &&
-                    trimmedURL.path == pluginsURL.path &&
-                    store.runtimeCatalogStatusText.contains(codexHomeURL.lastPathComponent)
+                    configSourceObserved &&
+                    directorySourceObserved &&
+                    homeURL?.path == codexHomeURL.path &&
+                    pluginsURL?.path == codexHomeURL.appendingPathComponent("plugins").path &&
+                    skillsURL?.path == codexHomeURL.appendingPathComponent("skills").path &&
+                    trimmedURL?.path == pluginsURL?.path &&
+                    directoryStatus.contains(codexHomeURL.lastPathComponent)
 
+                await store.stopAppServerForTesting()
                 emitJSON([
                     "ok": ok,
                     "codexHome": codexHomeURL.path,
-                    "homeURL": homeURL.path,
-                    "pluginsURL": pluginsURL.path,
-                    "skillsURL": skillsURL.path,
-                    "trimmedURL": trimmedURL.path,
+                    "configURL": configURL?.path ?? "",
+                    "homeURL": homeURL?.path ?? "",
+                    "pluginsURL": pluginsURL?.path ?? "",
+                    "skillsURL": skillsURL?.path ?? "",
+                    "trimmedURL": trimmedURL?.path ?? "",
+                    "configExists": configExists,
                     "homeExists": homeExists,
                     "pluginExists": pluginExists,
                     "skillsExists": skillsExists,
-                    "status": store.runtimeCatalogStatusText
+                    "configSourceObserved": configSourceObserved,
+                    "directorySourceObserved": directorySourceObserved,
+                    "configStatus": configStatus,
+                    "directoryStatus": directoryStatus
                 ])
                 try? fileManager.removeItem(at: codexHomeURL)
                 exit(ok ? 0 : 1)

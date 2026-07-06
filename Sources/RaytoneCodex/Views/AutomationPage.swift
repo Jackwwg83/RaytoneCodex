@@ -85,7 +85,7 @@ struct AutomationPage: View {
                 }
                 Divider()
                 Button("打开 Codex 配置") {
-                    store.openCodexConfigFile()
+                    Task { await store.openCodexConfigFile() }
                 }
             } label: {
                 HStack(spacing: 5) {
@@ -183,7 +183,7 @@ struct AutomationPage: View {
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("打开 Codex 配置") {
-                        store.openCodexConfigFile()
+                        Task { await store.openCodexConfigFile() }
                     }
                     .buttonStyle(ChipButtonStyle(prominent: true))
                 }
@@ -248,7 +248,7 @@ struct AutomationPage: View {
                 }
                 .buttonStyle(ChipButtonStyle())
                 Button("打开目录") {
-                    store.revealCodexHomeSubfolder("")
+                    Task { await store.revealCodexHomeSubfolder("") }
                 }
                 .buttonStyle(ChipButtonStyle())
             }

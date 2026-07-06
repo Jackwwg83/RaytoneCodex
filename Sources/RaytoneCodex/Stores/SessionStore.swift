@@ -6381,25 +6381,6 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func openCodexConfigFile() {
-        let configURL = (try? ensureCodexConfigFile()) ?? Self.defaultCodexConfigURL()
-        NSWorkspace.shared.open(configURL)
-    }
-
-    private func ensureCodexConfigFile() throws -> URL {
-        let configURL = Self.defaultCodexConfigURL(
-            overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
-        )
-        try FileManager.default.createDirectory(
-            at: configURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if !FileManager.default.fileExists(atPath: configURL.path) {
-            FileManager.default.createFile(atPath: configURL.path, contents: Data())
-        }
-        return configURL
-    }
-
     private func ensureCodexConfigFile(using client: CodexAppServerClient) async throws -> URL {
         let configURL = Self.defaultCodexConfigURL(
             overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
@@ -6421,25 +6402,77 @@ final class SessionStore: ObservableObject {
         return configURL
     }
 
-    func revealCodexHomeSubfolder(_ subfolder: String) {
-        let url = ensureCodexHomeSubfolder(subfolder)
+    @discardableResult
+    func prepareCodexConfigFileForOpening() async -> URL? {
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let configURL = try await ensureCodexConfigFile(using: client)
+            runtimeCatalogStatusText = "fs/createDirectory + fs/getMetadata (+ fs/writeFile if missing)：已准备 config.toml · \(Project.abbreviate(configURL.path))"
+            return configURL
+        } catch {
+            runtimeCatalogStatusText = "打开 config.toml 前准备失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            return nil
+        }
+    }
+
+    func openCodexConfigFile() async {
+        guard let configURL = await prepareCodexConfigFileForOpening() else {
+            return
+        }
+        NSWorkspace.shared.open(configURL)
+    }
+
+    func revealCodexHomeSubfolder(_ subfolder: String) async {
+        guard let url = await ensureCodexHomeSubfolder(subfolder) else {
+            return
+        }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+        let label = Self.codexHomeSubfolderLabel(subfolder)
+        runtimeCatalogStatusText = "fs/createDirectory + fs/getMetadata + Finder：已打开 Codex \(label) 目录 · \(Project.abbreviate(url.path))"
     }
 
     @discardableResult
-    func ensureCodexHomeSubfolder(_ subfolder: String) -> URL {
-        let trimmedSubfolder = subfolder.trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
-        let codexHomeURL = Self.defaultCodexConfigURL(
+    func ensureCodexHomeSubfolder(_ subfolder: String) async -> URL? {
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            return try await ensureCodexHomeSubfolder(subfolder, using: client)
+        } catch {
+            runtimeCatalogStatusText = "Codex 目录准备失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            return nil
+        }
+    }
+
+    private func ensureCodexHomeSubfolder(_ subfolder: String, using client: CodexAppServerClient) async throws -> URL {
+        let url = Self.codexHomeSubfolderURL(
+            subfolder,
             overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
         )
+        try await client.createDirectory(path: url.path)
+        let metadata = try await client.getMetadata(path: url.path)
+        guard metadata.isDirectory else {
+            throw CodexAppServerError.invalidResponse("Codex directory path is not a directory: \(url.path)")
+        }
+        let label = Self.codexHomeSubfolderLabel(subfolder)
+        runtimeCatalogStatusText = "fs/createDirectory + fs/getMetadata：已准备 Codex \(label) 目录 · \(Project.abbreviate(url.path))"
+        return url
+    }
+
+    private static func codexHomeSubfolderURL(_ subfolder: String, overrideCodexHome: String?) -> URL {
+        let trimmedSubfolder = subfolder.trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
+        let codexHomeURL = Self.defaultCodexConfigURL(
+            overrideCodexHome: overrideCodexHome
+        )
         .deletingLastPathComponent()
-        let url = trimmedSubfolder.isEmpty
+        return trimmedSubfolder.isEmpty
             ? codexHomeURL
             : codexHomeURL.appendingPathComponent(trimmedSubfolder, isDirectory: true)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        let label = trimmedSubfolder.isEmpty ? "home" : trimmedSubfolder
-        runtimeCatalogStatusText = "已准备 Codex \(label) 目录：\(Project.abbreviate(url.path))"
-        return url
+    }
+
+    private static func codexHomeSubfolderLabel(_ subfolder: String) -> String {
+        let trimmedSubfolder = subfolder.trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
+        return trimmedSubfolder.isEmpty ? "home" : trimmedSubfolder
     }
 
     func diagnoseWorkspaceRuntime() async {
