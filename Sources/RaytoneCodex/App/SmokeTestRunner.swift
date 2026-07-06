@@ -9850,6 +9850,12 @@ enum SmokeTestRunner {
                 store.runtimeApps = [app]
                 let composerOK = await store.useRuntimeAppInComposer(app)
 
+                fputs("app-mention-config-smoke: useRuntimeAppSnapshotPromptInComposer\n", stderr)
+                store.runtimeApps = [app]
+                let snapshotPromptOK = await store.useRuntimeAppSnapshotPromptInComposer(app, prompt: app.screenshotPrompts[0])
+                let snapshotPrompt = store.prompt
+                let snapshotMentionPath = store.lastMentionInputPreview.first?["path"] ?? ""
+
                 fputs("app-mention-config-smoke: setRuntimeAppEnabled\n", stderr)
                 let configWriteOK = await store.setRuntimeAppEnabled(app, enabled: false)
                 let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
@@ -9858,6 +9864,9 @@ enum SmokeTestRunner {
                 let ok = store.runtimeSnapshot.executable != nil &&
                     mentionOK &&
                     composerOK &&
+                    snapshotPromptOK &&
+                    snapshotPrompt == "$\(app.inputSlug) \(app.screenshotPrompts[0])" &&
+                    snapshotMentionPath == app.mentionPath &&
                     configWriteOK &&
                     configArtifactOK
 
@@ -9874,6 +9883,9 @@ enum SmokeTestRunner {
                     "appSlug": app.inputSlug,
                     "mentionOK": mentionOK,
                     "composerOK": composerOK,
+                    "snapshotPromptOK": snapshotPromptOK,
+                    "snapshotPrompt": snapshotPrompt,
+                    "snapshotMentionPath": snapshotMentionPath,
                     "configWriteOK": configWriteOK,
                     "configArtifactOK": configArtifactOK,
                     "mentions": mentions.map { ["name": $0.name, "path": $0.path] },

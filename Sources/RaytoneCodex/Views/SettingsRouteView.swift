@@ -2068,6 +2068,26 @@ struct SettingsRouteView: View {
                                 }
                                 metricRow("快照提示", "\(app.screenshotPrompts.count) 条")
                                 metricRow("插件", app.pluginDisplayNames.isEmpty ? "未关联" : app.pluginDisplayNames.joined(separator: "、"))
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(Array(app.screenshotPrompts.prefix(3).enumerated()), id: \.offset) { _, prompt in
+                                        HStack(alignment: .top, spacing: 8) {
+                                            Image(systemName: "rectangle.on.rectangle")
+                                                .font(.system(size: 11, weight: .medium))
+                                                .foregroundStyle(Theme.textTertiary)
+                                                .frame(width: 16, height: 18)
+                                            Text(prompt)
+                                                .font(.system(size: 11.5))
+                                                .foregroundStyle(Theme.textSecondary)
+                                                .lineLimit(2)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            Button("放入输入框") {
+                                                Task { await store.useRuntimeAppSnapshotPromptInComposer(app, prompt: prompt) }
+                                            }
+                                            .buttonStyle(ChipButtonStyle(prominent: false))
+                                            .disabled(!app.isAccessible || !app.isEnabled)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

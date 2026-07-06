@@ -4832,6 +4832,32 @@ final class SessionStore: ObservableObject {
         return lastMentionInputPreview.contains { $0["path"] == app.mentionPath }
     }
 
+    @discardableResult
+    func useRuntimeAppSnapshotPromptInComposer(_ app: CodexRuntimeAppInfo, prompt screenshotPrompt: String) async -> Bool {
+        guard app.isAccessible else {
+            runtimeCatalogStatusText = "app/list.screenshots：\(app.name) 尚未连接，无法使用快照提示"
+            return false
+        }
+        guard app.isEnabled else {
+            runtimeCatalogStatusText = "app/list.screenshots：\(app.name) 已停用，先启用后才能使用快照提示"
+            return false
+        }
+        let trimmedPrompt = screenshotPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else {
+            runtimeCatalogStatusText = "app/list.screenshots：\(app.name) 的快照提示为空"
+            return false
+        }
+
+        let slug = app.inputSlug.isEmpty ? CodexRuntimeAppInfo.slug(for: app.id) : app.inputSlug
+        let nextPrompt = "$\(slug) \(trimmedPrompt)"
+        prompt = nextPrompt
+        route = .thread
+        toolPanel = .launcher
+        _ = await previewInputMentions(for: nextPrompt)
+        runtimeCatalogStatusText = "app/list.screenshots：已把 \(app.name) 快照提示放入输入框"
+        return lastMentionInputPreview.contains { $0["path"] == app.mentionPath }
+    }
+
     func refreshNewThreadHeroRuntime() async {
         homeConnectionStatusText = "正在读取新对话连接状态…"
 
