@@ -1190,6 +1190,16 @@ public struct CodexRuntimeThreadCatalog: Equatable, Sendable {
     }
 }
 
+public struct CodexRuntimeLoadedThreadCatalog: Equatable, Sendable {
+    public var threadIDs: [String]
+    public var nextCursor: String?
+
+    public init(threadIDs: [String], nextCursor: String?) {
+        self.threadIDs = threadIDs
+        self.nextCursor = nextCursor
+    }
+}
+
 public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
     public var id: String
     public var title: String
@@ -2278,6 +2288,19 @@ public actor CodexAppServerClient {
 
         let result = try await request(method: "thread/list", params: .object(params))
         return Self.threadCatalog(from: result)
+    }
+
+    public func listLoadedThreads(limit: Int? = 100, cursor: String? = nil) async throws -> CodexRuntimeLoadedThreadCatalog {
+        var params: [String: JSONValue] = [:]
+        if let limit {
+            params["limit"] = .number(Double(limit))
+        }
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/loaded/list", params: .object(params))
+        return Self.loadedThreadCatalog(from: result)
     }
 
     public func readThread(id threadID: String, includeTurns: Bool = true) async throws -> JSONValue {
@@ -3617,6 +3640,13 @@ public actor CodexAppServerClient {
             threads: result["data"]?.arrayValue?.compactMap(threadSummary(from:)) ?? [],
             nextCursor: result["nextCursor"]?.stringValue,
             backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func loadedThreadCatalog(from result: JSONValue) -> CodexRuntimeLoadedThreadCatalog {
+        CodexRuntimeLoadedThreadCatalog(
+            threadIDs: result["data"]?.arrayValue?.compactMap(\.stringValue) ?? [],
+            nextCursor: result["nextCursor"]?.stringValue
         )
     }
 

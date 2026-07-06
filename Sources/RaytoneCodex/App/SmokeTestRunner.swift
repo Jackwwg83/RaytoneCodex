@@ -132,6 +132,8 @@ enum SmokeTestRunner {
             runThreadManagementSmoke()
         } else if CommandLine.arguments.contains("--history-smoke-test") {
             runHistorySmoke()
+        } else if CommandLine.arguments.contains("--loaded-threads-smoke-test") {
+            runLoadedThreadsSmoke()
         } else if CommandLine.arguments.contains("--side-chat-smoke-test") {
             runSideChatSmoke()
         } else if CommandLine.arguments.contains("--environment-smoke-test") {
@@ -4499,6 +4501,123 @@ enum SmokeTestRunner {
                 "loadedAgentMessages": loadedAgentMessages
             ])
             exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runLoadedThreadsSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexLoadedThreadsSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexLoadedThreadsCodexHome-\(UUID().uuidString)", isDirectory: true)
+            let marker = "Raytone loaded threads smoke OK \(UUID().uuidString.prefix(8))"
+            let prompt = "Reply exactly: \(marker)"
+            var mockServer: MockResponsesServer?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "loaded-threads-smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+                mockServer = try startMockResponsesServer(message: marker)
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "LoadedThreadsSmoke"
+                }
+
+                await store.refreshRuntime()
+                store.prompt = prompt
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+
+                let appServerThreadID = store.selectedThread.appServerThreadID ?? ""
+                await store.refreshLoadedRuntimeThreads()
+                let loadedIDs = store.loadedRuntimeThreadIDs
+                let loadedStatus = store.runtimeLoadedThreadsStatusText
+                let selectedThreadLoaded = !appServerThreadID.isEmpty && loadedIDs.contains(appServerThreadID)
+                let sourceFacts = store.environmentSourceFacts.map { fact in
+                    [
+                        "title": fact.title,
+                        "source": fact.source,
+                        "detail": fact.detail,
+                        "active": fact.active
+                    ] as [String: Any]
+                }
+                let threadSourceFactActive = store.environmentSourceFacts.contains { fact in
+                    fact.source == "thread/loaded/list" && fact.active
+                }
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let commands = store.selectedThread.items.compactMap { item -> CommandRun? in
+                    if case let .command(run) = item.kind { return run }
+                    return nil
+                }
+                let usedExecFallback = commands.contains { run in
+                    run.command.contains(" codex exec ") || run.command.contains("/codex exec ")
+                }
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
+
+                await store.stopAppServerForTesting()
+                mockServer?.stop()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    !store.isRunning &&
+                    !usedExecFallback &&
+                    agentMessages.contains(marker) &&
+                    selectedThreadLoaded &&
+                    loadedStatus.hasPrefix("thread/loaded/list：") &&
+                    threadSourceFactActive &&
+                    requestLog.contains("/v1/responses")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "appServerThreadID": appServerThreadID,
+                    "loadedRuntimeThreadIDs": loadedIDs,
+                    "selectedThreadLoaded": selectedThreadLoaded,
+                    "loadedStatus": loadedStatus,
+                    "threadSourceFactActive": threadSourceFactActive,
+                    "environmentSourceFacts": sourceFacts,
+                    "usedExecFallback": usedExecFallback,
+                    "agentMessages": agentMessages,
+                    "mockRequestLogPreview": String(requestLog.prefix(1200)),
+                    "source": "thread/loaded/list"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()

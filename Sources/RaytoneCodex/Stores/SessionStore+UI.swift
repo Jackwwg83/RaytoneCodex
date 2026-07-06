@@ -268,7 +268,20 @@ extension SessionStore {
             terminalDetail = "未运行终端命令"
         }
 
+        let selectedRuntimeThreadID = selectedThread.appServerThreadID ?? ""
+        let selectedThreadLoaded = !selectedRuntimeThreadID.isEmpty && loadedRuntimeThreadIDs.contains(selectedRuntimeThreadID)
+        let loadedThreadDetail = loadedRuntimeThreadIDs.isEmpty
+            ? runtimeLoadedThreadsStatusText
+            : "\(loadedRuntimeThreadIDs.count) 个 · \(selectedThreadLoaded ? "当前线程已加载" : "当前线程未加载")"
+
         return [
+            EnvironmentSourceFact(
+                symbol: "bubble.left.and.text.bubble.right",
+                title: "线程",
+                detail: loadedThreadDetail,
+                source: "thread/loaded/list",
+                active: selectedThreadLoaded || !loadedRuntimeThreadIDs.isEmpty
+            ),
             EnvironmentSourceFact(
                 symbol: "command",
                 title: "命令",

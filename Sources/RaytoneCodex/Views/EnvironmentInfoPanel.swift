@@ -24,6 +24,7 @@ struct EnvironmentInfoPanel: View {
             await store.refreshWorkspaceGitDiff()
             await store.refreshWorkspacePullRequestStatus()
             await store.refreshWorkspaceWorktrees()
+            await store.refreshLoadedRuntimeThreads()
         }
         .frame(width: Theme.Layout.inspectorWidth)
         .frame(maxHeight: .infinity)
@@ -106,6 +107,16 @@ struct EnvironmentInfoPanel: View {
                 .buttonStyle(ChipButtonStyle(prominent: true))
             }
             EnvironmentInfoRow(symbol: "cpu", title: store.modelDisplayName, trailing: nil)
+            EnvironmentInfoActionRow(symbol: "bubble.left.and.text.bubble.right", title: "已加载线程", detail: loadedThreadText) {
+                Button {
+                    Task { await store.refreshLoadedRuntimeThreads() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help("刷新已加载线程")
+            }
             EnvironmentInfoRow(symbol: "shippingbox", title: "Sidecar", trailing: store.sidecarStatusText)
             EnvironmentInfoRow(symbol: "rectangle.split.3x1", title: "工作树", trailing: worktreeText)
             EnvironmentInfoActionRow(symbol: "chevron.left.forwardslash.chevron.right", title: "PR 状态", detail: pullRequestStatusText, secondary: true) {
@@ -212,6 +223,16 @@ struct EnvironmentInfoPanel: View {
             return "未检测到"
         }
         return "\(store.workspaceWorktrees.count) 个"
+    }
+
+    private var loadedThreadText: String {
+        if store.runtimeLoadedThreadsStatusText != "未读取" {
+            return store.runtimeLoadedThreadsStatusText
+        }
+        if store.loadedRuntimeThreadIDs.isEmpty {
+            return "未读取"
+        }
+        return "\(store.loadedRuntimeThreadIDs.count) 个"
     }
 
     private var pullRequestStatusText: String {

@@ -109,6 +109,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimePermissionProfiles: [CodexRuntimePermissionProfile] = []
     @Published var lastOpenedRuntimeAppInstallURL = ""
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
+    @Published var loadedRuntimeThreadIDs: [String] = []
+    @Published var runtimeLoadedThreadsStatusText = "未读取"
     @Published var runtimeThreadSyncStatusText = "未同步"
     @Published var workspaceGitDiff: CodexRuntimeGitDiff?
     @Published var workspaceGitStatusText = ""
@@ -3133,6 +3135,24 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func refreshLoadedRuntimeThreads(limit: Int = 100) async {
+        runtimeLoadedThreadsStatusText = "正在读取 thread/loaded/list…"
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let catalog = try await client.listLoadedThreads(limit: limit)
+            loadedRuntimeThreadIDs = catalog.threadIDs
+            let selectedThreadID = selectedThread.appServerThreadID ?? ""
+            let selectedLoaded = !selectedThreadID.isEmpty && catalog.threadIDs.contains(selectedThreadID)
+            runtimeLoadedThreadsStatusText = selectedLoaded
+                ? "thread/loaded/list：\(catalog.threadIDs.count) 个 · 当前线程已加载"
+                : "thread/loaded/list：\(catalog.threadIDs.count) 个"
+        } catch {
+            loadedRuntimeThreadIDs = []
+            runtimeLoadedThreadsStatusText = "已加载线程读取失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     func loadRuntimeThreadTranscript(localThreadID: UUID? = nil) async {
         let targetID = localThreadID ?? selectedThreadID
         guard let localIndex = threads.firstIndex(where: { $0.id == targetID }),
@@ -3506,6 +3526,7 @@ final class SessionStore: ObservableObject {
         await refreshWorkspaceGitDiff()
         await refreshWorkspacePullRequestStatus()
         await refreshWorkspaceWorktrees()
+        await refreshLoadedRuntimeThreads()
 
         let diff = workspaceGitDiff.map { Self.diffSummary($0.diff) }
         let statusCount = workspaceGitStatusText
@@ -3520,7 +3541,7 @@ final class SessionStore: ObservableObject {
         } else {
             changeText = "无变更"
         }
-        runtimeCatalogStatusText = "环境已刷新：\(workspaceBranches.count) 个分支 · \(changeText) · \(workspaceWorktrees.count) 个工作树"
+        runtimeCatalogStatusText = "环境已刷新：\(workspaceBranches.count) 个分支 · \(changeText) · \(workspaceWorktrees.count) 个工作树 · \(loadedRuntimeThreadIDs.count) 个已加载线程"
         runtimeCatalogIsRefreshing = false
     }
 
