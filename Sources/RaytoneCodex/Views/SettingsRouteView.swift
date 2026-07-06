@@ -167,6 +167,8 @@ struct SettingsRouteView: View {
                 await store.refreshWorkspaceWorktrees()
             case .configuration:
                 await store.refreshRuntimeConfiguration()
+            case .experimentalFeatures:
+                await store.refreshRuntimeExperimentalFeatures()
             case .personalization:
                 await store.refreshRuntimeCatalog()
                 await store.refreshRealtimeVoicesForVoiceInput()
@@ -297,6 +299,8 @@ struct SettingsRouteView: View {
             appearancePane
         case .configuration:
             configurationPane
+        case .experimentalFeatures:
+            experimentalFeaturesPane
         case .personalization:
             personalizationPane
         case .usageBilling:
@@ -1239,6 +1243,115 @@ struct SettingsRouteView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+    }
+
+    private var experimentalFeaturesPane: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            paneTitle("实验功能", subtitle: "来自 app-server 的 experimentalFeature/list 与 experimentalFeature/enablement/set")
+
+            SettingsCard {
+                SettingsValueRow(title: "功能目录", description: store.runtimeExperimentalFeaturesStatusText) {
+                    HStack(spacing: 8) {
+                        statusBadge(store.runtimeExperimentalFeatures.isEmpty ? "未返回" : "\(store.runtimeExperimentalFeatures.count) 个", ok: !store.runtimeExperimentalFeatures.isEmpty)
+                        Button("刷新") {
+                            Task { await store.refreshRuntimeExperimentalFeatures() }
+                        }
+                        .buttonStyle(ChipButtonStyle())
+                        .disabled(store.runtimeCatalogIsRefreshing)
+                    }
+                }
+                configMetric("来源", "experimentalFeature/list")
+                configMetric("线程上下文", store.selectedThread.appServerThreadID ?? "默认配置")
+                configMetric("下一页", store.runtimeExperimentalFeaturesNextCursor ?? "无")
+            }
+
+            SettingsSection(title: "运行时功能开关", description: "这里修改的是当前 app-server 进程内 feature enablement；上游会忽略不支持的 key，并且不会覆盖用户 config.toml 中更高优先级的设置。") {
+                if store.runtimeExperimentalFeatures.isEmpty {
+                    emptySettingsState(symbol: "testtube.2", title: "没有返回实验功能", detail: "experimentalFeature/list 尚未返回功能目录，或当前 app-server 不支持该协议。")
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(store.runtimeExperimentalFeatures) { feature in
+                            experimentalFeatureRow(feature)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func experimentalFeatureRow(_ feature: CodexExperimentalFeature) -> some View {
+        SettingsCard {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text(experimentalFeatureTitle(feature))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        statusBadge(experimentalFeatureStageName(feature.stage), ok: experimentalFeatureStageIsStableEnough(feature.stage))
+                        statusBadge(feature.enabled ? "开启" : "关闭", ok: feature.enabled)
+                    }
+                    Text(feature.name)
+                        .font(Theme.mono(11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                    Text(feature.description?.isEmpty == false ? feature.description! : "上游未提供说明；显示真实 feature key 和当前 enablement 状态。")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let announcement = feature.announcement, !announcement.isEmpty {
+                        Text(announcement)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.top, 2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("默认：\(feature.defaultEnabled ? "开启" : "关闭")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 12)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { feature.enabled },
+                        set: { enabled in
+                            Task { await store.setRuntimeExperimentalFeature(feature, enabled: enabled) }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(store.runtimeCatalogIsRefreshing)
+            }
+        }
+    }
+
+    private func experimentalFeatureTitle(_ feature: CodexExperimentalFeature) -> String {
+        if let displayName = feature.displayName, !displayName.isEmpty {
+            return displayName
+        }
+        return feature.name
+    }
+
+    private func experimentalFeatureStageName(_ stage: CodexExperimentalFeatureStage) -> String {
+        switch stage {
+        case .beta: "Beta"
+        case .underDevelopment: "开发中"
+        case .stable: "稳定"
+        case .deprecated: "已弃用"
+        case .removed: "已移除"
+        case .unknown: "未知"
+        }
+    }
+
+    private func experimentalFeatureStageIsStableEnough(_ stage: CodexExperimentalFeatureStage) -> Bool {
+        switch stage {
+        case .beta, .stable:
+            true
+        case .underDevelopment, .deprecated, .removed, .unknown:
+            false
+        }
     }
 
     private var personalizationPane: some View {

@@ -1105,6 +1105,54 @@ public enum CodexAddCreditsNudgeEmailStatus: String, Equatable, Sendable {
     case unknown
 }
 
+public enum CodexExperimentalFeatureStage: String, Equatable, Sendable {
+    case beta
+    case underDevelopment
+    case stable
+    case deprecated
+    case removed
+    case unknown
+}
+
+public struct CodexExperimentalFeature: Equatable, Sendable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var stage: CodexExperimentalFeatureStage
+    public var enabled: Bool
+    public var defaultEnabled: Bool
+    public var displayName: String?
+    public var description: String?
+    public var announcement: String?
+
+    public init(
+        name: String,
+        stage: CodexExperimentalFeatureStage,
+        enabled: Bool,
+        defaultEnabled: Bool,
+        displayName: String?,
+        description: String?,
+        announcement: String?
+    ) {
+        self.name = name
+        self.stage = stage
+        self.enabled = enabled
+        self.defaultEnabled = defaultEnabled
+        self.displayName = displayName
+        self.description = description
+        self.announcement = announcement
+    }
+}
+
+public struct CodexExperimentalFeatureCatalog: Equatable, Sendable {
+    public var features: [CodexExperimentalFeature]
+    public var nextCursor: String?
+
+    public init(features: [CodexExperimentalFeature], nextCursor: String?) {
+        self.features = features
+        self.nextCursor = nextCursor
+    }
+}
+
 public struct CodexRuntimeThreadCatalog: Equatable, Sendable {
     public var threads: [CodexRuntimeThreadSummary]
     public var nextCursor: String?
@@ -1791,6 +1839,31 @@ public actor CodexAppServerClient {
                 isDefault: object["isDefault"]?.boolValue ?? false
             )
         } ?? []
+    }
+
+    public func listExperimentalFeatures(
+        threadID: String? = nil,
+        limit: Int = 200,
+        cursor: String? = nil
+    ) async throws -> CodexExperimentalFeatureCatalog {
+        var params: [String: JSONValue] = [
+            "limit": .number(Double(limit))
+        ]
+        if let threadID {
+            params["threadId"] = .string(threadID)
+        }
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+        let result = try await request(method: "experimentalFeature/list", params: .object(params))
+        return Self.experimentalFeatureCatalog(from: result)
+    }
+
+    public func setExperimentalFeatureEnablement(_ enablement: [String: Bool]) async throws -> [String: Bool] {
+        let result = try await request(method: "experimentalFeature/enablement/set", params: .object([
+            "enablement": .object(enablement.mapValues(JSONValue.bool))
+        ]))
+        return result["enablement"]?.objectValue?.compactMapValues(\.boolValue) ?? [:]
     }
 
     public func listPluginCatalog(cwds: [String]? = nil) async throws -> CodexRuntimePluginCatalog {
@@ -2762,6 +2835,28 @@ public actor CodexAppServerClient {
                 return object.keys.sorted().joined(separator: ",")
             }
         }
+    }
+
+    private static func experimentalFeatureCatalog(from result: JSONValue) -> CodexExperimentalFeatureCatalog {
+        let features = result["data"]?.arrayValue?.compactMap { value -> CodexExperimentalFeature? in
+            guard let name = value["name"]?.stringValue else {
+                return nil
+            }
+            let stage = CodexExperimentalFeatureStage(rawValue: value["stage"]?.stringValue ?? "") ?? .unknown
+            return CodexExperimentalFeature(
+                name: name,
+                stage: stage,
+                enabled: value["enabled"]?.boolValue ?? false,
+                defaultEnabled: value["defaultEnabled"]?.boolValue ?? false,
+                displayName: value["displayName"]?.stringValue,
+                description: value["description"]?.stringValue,
+                announcement: value["announcement"]?.stringValue
+            )
+        } ?? []
+        return CodexExperimentalFeatureCatalog(
+            features: features,
+            nextCursor: result["nextCursor"]?.stringValue
+        )
     }
 
     private static func pluginCatalog(from result: JSONValue) -> CodexRuntimePluginCatalog {

@@ -61,6 +61,9 @@ final class SessionStore: ObservableObject {
     @Published var runtimePluginDetailStatusText = "未读取"
     @Published var runtimeSharedPluginCount = 0
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
+    @Published var runtimeExperimentalFeatures: [CodexExperimentalFeature] = []
+    @Published var runtimeExperimentalFeaturesNextCursor: String?
+    @Published var runtimeExperimentalFeaturesStatusText = "未读取"
     @Published var runtimeHooks: [CodexRuntimeHook] = []
     @Published var automationEventLogText = ""
     @Published var automationEventLogStatusText = "未读取"
@@ -2381,6 +2384,54 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "config/read 失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func refreshRuntimeExperimentalFeatures() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeExperimentalFeaturesStatusText = "正在读取 experimentalFeature/list…"
+        runtimeCatalogStatusText = runtimeExperimentalFeaturesStatusText
+        runtimeCatalogErrors = []
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let catalog = try await client.listExperimentalFeatures(threadID: selectedThread.appServerThreadID)
+            runtimeExperimentalFeatures = catalog.features
+            runtimeExperimentalFeaturesNextCursor = catalog.nextCursor
+            runtimeExperimentalFeaturesStatusText = "experimentalFeature/list：\(catalog.features.count) 个功能"
+            runtimeCatalogStatusText = runtimeExperimentalFeaturesStatusText
+        } catch {
+            runtimeExperimentalFeaturesStatusText = "实验功能读取失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimeExperimentalFeaturesStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+        runtimeCatalogIsRefreshing = false
+    }
+
+    func setRuntimeExperimentalFeature(_ feature: CodexExperimentalFeature, enabled: Bool) async {
+        runtimeCatalogIsRefreshing = true
+        runtimeExperimentalFeaturesStatusText = "正在调用 experimentalFeature/enablement/set…"
+        runtimeCatalogStatusText = runtimeExperimentalFeaturesStatusText
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let updated = try await client.setExperimentalFeatureEnablement([feature.name: enabled])
+            let acceptedValue = updated[feature.name]
+            let catalog = try await client.listExperimentalFeatures(threadID: selectedThread.appServerThreadID)
+            runtimeExperimentalFeatures = catalog.features
+            runtimeExperimentalFeaturesNextCursor = catalog.nextCursor
+            if acceptedValue == enabled {
+                runtimeExperimentalFeaturesStatusText = "experimentalFeature/enablement/set：\(feature.name) \(enabled ? "已开启" : "已关闭")"
+            } else {
+                runtimeExperimentalFeaturesStatusText = "experimentalFeature/enablement/set：app-server 未接受 \(feature.name)"
+            }
+            runtimeCatalogStatusText = runtimeExperimentalFeaturesStatusText
+        } catch {
+            runtimeExperimentalFeaturesStatusText = "实验功能写入失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = runtimeExperimentalFeaturesStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
         runtimeCatalogIsRefreshing = false
     }
 

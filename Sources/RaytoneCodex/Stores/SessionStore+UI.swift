@@ -647,6 +647,9 @@ extension SessionStore {
             sandbox = .readOnly
             approvalsReviewer = .user
             accessMode = .ask
+        case "settings-experimental", "settings-experimental-features":
+            route = .settings
+            settingsPane = .experimentalFeatures
         case "settings-personalization":
             route = .settings
             settingsPane = .personalization

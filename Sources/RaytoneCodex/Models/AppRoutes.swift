@@ -76,6 +76,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case profile
     case appearance
     case configuration
+    case experimentalFeatures
     case personalization
     case keyboardShortcuts
     case usageBilling
@@ -99,6 +100,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .profile: "个人资料"
         case .appearance: "外观"
         case .configuration: "配置"
+        case .experimentalFeatures: "实验功能"
         case .personalization: "个性化"
         case .keyboardShortcuts: "键盘快捷键"
         case .usageBilling: "使用情况和计费"
@@ -122,6 +124,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .profile: "person.circle"
         case .appearance: "sun.max"
         case .configuration: "slider.horizontal.3"
+        case .experimentalFeatures: "testtube.2"
         case .personalization: "face.smiling"
         case .keyboardShortcuts: "keyboard"
         case .usageBilling: "chart.pie"
@@ -146,7 +149,7 @@ struct SettingsGroup: Identifiable {
 
     static let all: [SettingsGroup] = [
         SettingsGroup(title: "个人", panes: [
-            .general, .modelsProviders, .profile, .appearance, .configuration, .personalization,
+            .general, .modelsProviders, .profile, .appearance, .configuration, .experimentalFeatures, .personalization,
             .keyboardShortcuts, .usageBilling
         ]),
         SettingsGroup(title: "集成", panes: [
