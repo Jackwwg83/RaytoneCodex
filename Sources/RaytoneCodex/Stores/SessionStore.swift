@@ -6117,13 +6117,14 @@ final class SessionStore: ObservableObject {
 
             let command = Self.raytoneAutomationHookCommand(title: title)
             let configURL = try ensureCodexConfigFile()
-            let existingConfig = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+            let existingConfigData = try await client.readFile(path: configURL.path)
+            let existingConfig = String(data: existingConfigData, encoding: .utf8) ?? ""
             let updatedConfig = Self.installRaytoneAutomationHookBlock(
                 into: existingConfig,
                 title: title,
                 command: command
             )
-            try updatedConfig.write(to: configURL, atomically: true, encoding: .utf8)
+            try await client.writeFile(path: configURL.path, data: Self.utf8Data(updatedConfig))
             await refreshRuntimeHooks()
 
             if let hook = runtimeHooks.first(where: Self.isRaytoneAutomationHook),
@@ -6144,7 +6145,7 @@ final class SessionStore: ObservableObject {
 
             let raytoneHook = runtimeHooks.first(where: Self.isRaytoneAutomationHook)
             let trustSuffix = raytoneHook.map(Self.isTrustedHook) == true ? " · 已信任" : ""
-            runtimeCatalogStatusText = "已安装 \(title)：hooks/list 返回 \(runtimeHooks.count) 个钩子\(trustSuffix)"
+            runtimeCatalogStatusText = "fs/writeFile + hooks/list：已安装 \(title)，返回 \(runtimeHooks.count) 个钩子\(trustSuffix)"
             if !templatePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 prompt = templatePrompt
             }
@@ -6191,8 +6192,10 @@ final class SessionStore: ObservableObject {
         runtimeCatalogErrors = []
 
         do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
             let configURL = try ensureCodexConfigFile()
-            let existingConfig = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+            let existingConfigData = try await client.readFile(path: configURL.path)
+            let existingConfig = String(data: existingConfigData, encoding: .utf8) ?? ""
             let updatedConfig = Self.removeRaytoneAutomationHookBlock(from: existingConfig)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard updatedConfig != existingConfig.trimmingCharacters(in: .whitespacesAndNewlines) else {
@@ -6201,9 +6204,9 @@ final class SessionStore: ObservableObject {
                 return
             }
 
-            try (updatedConfig + "\n").write(to: configURL, atomically: true, encoding: .utf8)
+            try await client.writeFile(path: configURL.path, data: Self.utf8Data(updatedConfig + "\n"))
             await refreshRuntimeHooks()
-            runtimeCatalogStatusText = "已移除 Raytone 自动化 hook：hooks/list 返回 \(runtimeHooks.count) 个钩子"
+            runtimeCatalogStatusText = "fs/writeFile + hooks/list：已移除 Raytone 自动化 hook，返回 \(runtimeHooks.count) 个钩子"
         } catch {
             runtimeCatalogStatusText = "移除自动化 hook 失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]

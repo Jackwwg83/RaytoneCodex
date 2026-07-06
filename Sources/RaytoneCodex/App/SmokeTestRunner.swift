@@ -8181,6 +8181,8 @@ enum SmokeTestRunner {
                     title: "项目监控",
                     prompt: "Raytone automation hook smoke prompt"
                 )
+                let installStatus = store.runtimeCatalogStatusText
+                let installErrors = store.runtimeCatalogErrors
 
                 store.prompt = "触发 Raytone 自动化 hook，并回复 Raytone automation hook smoke OK"
                 await store.runPrompt()
@@ -8227,6 +8229,8 @@ enum SmokeTestRunner {
                     eventText.contains("\"source\":\"RaytoneCodex\"") &&
                     eventText.contains("\"template\":\"项目监控\"") &&
                     eventText.contains("\"event\":\"UserPromptSubmit\"") &&
+                    installStatus.contains("fs/writeFile + hooks/list") &&
+                    installErrors.isEmpty &&
                     requestLog.contains("/v1/responses") &&
                     agentMessages.contains("Raytone automation hook smoke OK") &&
                     raytoneHooksAfterRemoval.isEmpty &&
@@ -8251,6 +8255,8 @@ enum SmokeTestRunner {
                     "eventLogStatus": eventLogStatus,
                     "eventLogLineCount": eventLogLineCount,
                     "eventLogText": eventLogText,
+                    "installStatus": installStatus,
+                    "installErrors": installErrors,
                     "hookCount": hooks.count,
                     "raytoneHookCount": raytoneHooks.count,
                     "raytoneHookTrusted": hookTrusted,
