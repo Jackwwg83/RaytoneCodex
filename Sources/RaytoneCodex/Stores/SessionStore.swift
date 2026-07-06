@@ -3667,9 +3667,21 @@ final class SessionStore: ObservableObject {
             return
         }
 
-        runtimeThreadSyncStatusText = "正在读取 thread/read…"
+        runtimeThreadSyncStatusText = "正在读取 thread/turns/list…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            do {
+                let turns = try await loadRuntimeThreadTurns(
+                    client: client,
+                    threadID: serverThreadID
+                )
+                applyRuntimeThreadTurns(turns, threadID: serverThreadID, to: targetID)
+                runtimeThreadSyncStatusText = "thread/turns/list：已加载 \(turns.count) 轮历史 transcript"
+                return
+            } catch {
+                runtimeThreadSyncStatusText = "thread/turns/list 不可用，降级 thread/read…"
+            }
+
             let result = try await client.readThread(id: serverThreadID, includeTurns: true)
             applyRuntimeThreadRead(result, to: targetID)
             runtimeThreadSyncStatusText = "thread/read：已加载历史 transcript"
@@ -3677,6 +3689,31 @@ final class SessionStore: ObservableObject {
             runtimeThreadSyncStatusText = "历史 transcript 读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    private func loadRuntimeThreadTurns(
+        client: CodexAppServerClient,
+        threadID: String,
+        pageLimit: Int = 100,
+        maxPages: Int = 20
+    ) async throws -> [JSONValue] {
+        var cursor: String?
+        var turns: [JSONValue] = []
+        for _ in 0..<maxPages {
+            let page = try await client.listThreadTurns(
+                id: threadID,
+                limit: pageLimit,
+                cursor: cursor,
+                sortDirection: "asc",
+                itemsView: "full"
+            )
+            turns.append(contentsOf: page.turns)
+            guard let nextCursor = page.nextCursor, !nextCursor.isEmpty else {
+                break
+            }
+            cursor = nextCursor
+        }
+        return turns
     }
 
     func unarchiveRuntimeThread(_ thread: CodexRuntimeThreadSummary) async {
@@ -3939,6 +3976,23 @@ final class SessionStore: ObservableObject {
             threads[index].updatedAt = updatedAt
         } else {
             threads[index].updatedAt = Date()
+        }
+    }
+
+    private func applyRuntimeThreadTurns(
+        _ turns: [JSONValue],
+        threadID: String,
+        to localThreadID: UUID
+    ) {
+        guard let index = threads.firstIndex(where: { $0.id == localThreadID }) else {
+            return
+        }
+        threads[index].items = transcriptItems(from: turns, threadID: threadID)
+        if let lastTimestamp = turns.reversed().compactMap({ turn in
+            Self.dateFromRuntimeSeconds(turn["completedAt"]) ??
+                Self.dateFromRuntimeSeconds(turn["startedAt"])
+        }).first {
+            threads[index].updatedAt = lastTimestamp
         }
     }
 

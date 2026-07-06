@@ -1357,6 +1357,18 @@ public struct CodexRuntimeThreadSearchResult: Equatable, Sendable, Identifiable 
     }
 }
 
+public struct CodexRuntimeThreadTurnsPage: Equatable, Sendable {
+    public var turns: [JSONValue]
+    public var nextCursor: String?
+    public var backwardsCursor: String?
+
+    public init(turns: [JSONValue], nextCursor: String?, backwardsCursor: String?) {
+        self.turns = turns
+        self.nextCursor = nextCursor
+        self.backwardsCursor = backwardsCursor
+    }
+}
+
 public struct CodexRuntimeLoadedThreadCatalog: Equatable, Sendable {
     public var threadIDs: [String]
     public var nextCursor: String?
@@ -2740,6 +2752,27 @@ public actor CodexAppServerClient {
             "threadId": .string(threadID),
             "includeTurns": .bool(includeTurns)
         ]))
+    }
+
+    public func listThreadTurns(
+        id threadID: String,
+        limit: Int = 100,
+        cursor: String? = nil,
+        sortDirection: String = "asc",
+        itemsView: String = "full"
+    ) async throws -> CodexRuntimeThreadTurnsPage {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "limit": .number(Double(limit)),
+            "sortDirection": .string(sortDirection),
+            "itemsView": .string(itemsView)
+        ]
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/turns/list", params: .object(params))
+        return Self.threadTurnsPage(from: result)
     }
 
     public func updateThreadGitMetadata(
@@ -4339,6 +4372,14 @@ public actor CodexAppServerClient {
         CodexRuntimeLoadedThreadCatalog(
             threadIDs: result["data"]?.arrayValue?.compactMap(\.stringValue) ?? [],
             nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    private static func threadTurnsPage(from result: JSONValue) -> CodexRuntimeThreadTurnsPage {
+        CodexRuntimeThreadTurnsPage(
+            turns: result["data"]?.arrayValue ?? [],
+            nextCursor: result["nextCursor"]?.stringValue,
+            backwardsCursor: result["backwardsCursor"]?.stringValue
         )
     }
 

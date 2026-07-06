@@ -6221,6 +6221,7 @@ enum SmokeTestRunner {
                 reloaded.selectThread(historyThread)
                 await reloaded.loadRuntimeThreadTranscript(localThreadID: historyThread.id)
             }
+            let historyTranscriptStatus = reloaded.runtimeThreadSyncStatusText
 
             let loadedItems = historyThread == nil ? [] : reloaded.selectedThread.items
             let loadedUserMessages = loadedItems.compactMap { item -> String? in
@@ -6238,6 +6239,7 @@ enum SmokeTestRunner {
                 initialAgentMessages == [marker] &&
                 historySearchStatus.hasPrefix("thread/search") &&
                 historySearchSnippet.localizedCaseInsensitiveContains(marker) &&
+                historyTranscriptStatus.hasPrefix("thread/turns/list") &&
                 historyThread != nil &&
                 loadedUserMessages.contains(prompt) &&
                 loadedAgentMessages == [marker]
@@ -6252,6 +6254,7 @@ enum SmokeTestRunner {
                 "createdThreadID": createdThreadID,
                 "usedExecFallback": usedExecFallback,
                 "historySyncStatus": historySearchStatus,
+                "historyTranscriptStatus": historyTranscriptStatus,
                 "historySearchSnippet": historySearchSnippet,
                 "historyThreadFound": historyThread != nil,
                 "loadedTranscriptItemCount": loadedItems.count,
