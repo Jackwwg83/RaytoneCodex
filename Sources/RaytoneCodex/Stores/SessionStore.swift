@@ -10288,6 +10288,8 @@ final class SessionStore: ObservableObject {
 
     private func workspaceSnapshotText(arguments: JSONValue) -> String {
         let includeDiffStats = arguments["includeDiffStats"]?.boolValue ?? true
+        let currentGoal = selectedThread.activeGoal
+        let diffSummary = Self.diffSummary(workspaceGitDiff?.diff ?? "")
         var snapshot: [String: JSONValue] = [
             "workspacePath": .string(workspacePath),
             "projectName": .string(selectedProject.name),
@@ -10303,13 +10305,43 @@ final class SessionStore: ObservableObject {
             "pendingDeletions": .number(Double(pendingDeletions))
         ]
         snapshot["browser"] = browserStateJSON(includeSnapshotPath: true)
+        snapshot["activeGoal"] = currentGoal.map { goal in
+            .object([
+                "title": .string(goal.title),
+                "startedAt": .number(goal.startedAt.timeIntervalSince1970),
+                "elapsedSeconds": .number(Date().timeIntervalSince(goal.startedAt)),
+                "runtimeBacked": .bool(goal.runtimeBacked)
+            ])
+        } ?? .null
+        snapshot["progressSteps"] = .array(selectedThread.progressSteps.map { step in
+            .object([
+                "title": .string(step.title),
+                "state": .string(Self.progressStepStateName(step.state))
+            ])
+        })
+        snapshot["environment"] = .object([
+            "source": .string("EnvironmentInfoPanel + Codex app-server runtime state"),
+            "workspacePath": .string(workspacePath),
+            "changes": .object([
+                "files": .number(Double(diffSummary.files)),
+                "additions": .number(Double(diffSummary.additions)),
+                "deletions": .number(Double(diffSummary.deletions)),
+                "status": .string(workspaceGitStatusText)
+            ]),
+            "pullRequestStatus": .string(workspacePullRequestStatusText),
+            "threadGitMetadataStatus": .string(runtimeThreadMetadataStatusText),
+            "loadedThreadStatus": .string(runtimeLoadedThreadsStatusText),
+            "loadedThreadIDs": .array(loadedRuntimeThreadIDs.map(JSONValue.string)),
+            "sidecarStatus": .string(sidecarStatusText),
+            "worktrees": .array(workspaceWorktrees.map(JSONValue.string)),
+            "model": .string(modelDisplayName)
+        ])
 
         if includeDiffStats {
-            let summary = Self.diffSummary(workspaceGitDiff?.diff ?? "")
             snapshot["gitDiff"] = .object([
-                "files": .number(Double(summary.files)),
-                "additions": .number(Double(summary.additions)),
-                "deletions": .number(Double(summary.deletions)),
+                "files": .number(Double(diffSummary.files)),
+                "additions": .number(Double(diffSummary.additions)),
+                "deletions": .number(Double(diffSummary.deletions)),
                 "status": .string(workspaceGitStatusText)
             ])
             snapshot["changedFiles"] = .array(pendingChanges.prefix(20).map { .string($0.path) })
@@ -10358,6 +10390,17 @@ final class SessionStore: ObservableObject {
             return "terminal"
         case .sideChat:
             return "sideChat"
+        }
+    }
+
+    private nonisolated static func progressStepStateName(_ state: ProgressStep.State) -> String {
+        switch state {
+        case .done:
+            return "done"
+        case .running:
+            return "running"
+        case .pending:
+            return "pending"
         }
     }
 

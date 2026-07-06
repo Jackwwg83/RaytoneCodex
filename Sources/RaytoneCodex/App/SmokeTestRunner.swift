@@ -1904,6 +1904,24 @@ enum SmokeTestRunner {
                 store.browserAttachedSnapshotPath = browserSnapshotURL.path
                 store.browserScreenshotStatusText = "网页截图：\(Project.abbreviate(browserSnapshotURL.path)) · 已加入下次对话图片"
                 store.browserDataStatusText = "浏览器数据保持"
+                store.runtimeThreadMetadataStatusText = "thread/metadata/update：main · abc1234"
+                store.runtimeLoadedThreadsStatusText = "thread/loaded/list：1 个 · 当前线程已加载"
+                store.loadedRuntimeThreadIDs = ["thread-dynamic-loaded"]
+                store.workspacePullRequestStatusText = "PR #7 打开 · 待审查 · main→codex/dynamic-tool"
+                store.workspaceWorktrees = [workspaceURL.path]
+                store.sidecarStatusText = "sidecar 已连接 · raytone-smoke-provider"
+                if let index = store.threads.firstIndex(where: { $0.id == store.selectedThreadID }) {
+                    store.threads[index].activeGoal = ActiveGoal(
+                        title: "动态工具读取环境信息",
+                        startedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                        runtimeBacked: true
+                    )
+                    store.threads[index].progressSteps = [
+                        ProgressStep(title: "读取环境面板状态", state: .done),
+                        ProgressStep(title: "回传给 Codex 动态工具", state: .running),
+                        ProgressStep(title: "等待 app-server 完成当前轮", state: .pending)
+                    ]
+                }
                 store.prompt = "触发 Raytone 动态工具"
 
                 await store.runPrompt()
@@ -1991,6 +2009,23 @@ enum SmokeTestRunner {
                     output.contains(#""files" : 1"#) &&
                     output.contains(#""additions" : 1"#) &&
                     output.contains(#"M README.md"#)
+                let environmentSnapshotObserved = output.contains(#""environment""#) &&
+                    output.contains(#""source" : "EnvironmentInfoPanel + Codex app-server runtime state""#) &&
+                    output.contains(#""loadedThreadIDs""#) &&
+                    output.contains("thread-dynamic-loaded") &&
+                    output.contains("PR #7 打开") &&
+                    normalizedOutput.contains("thread/metadata/update") &&
+                    output.contains(#""sidecarStatus""#)
+                let activeGoalObserved = output.contains(#""activeGoal""#) &&
+                    output.contains("触发 Raytone 动态工具") &&
+                    output.contains(#""runtimeBacked" : false"#)
+                let progressStepsObserved = output.contains(#""progressSteps""#) &&
+                    output.contains("读取环境面板状态") &&
+                    output.contains(#""state" : "done""#) &&
+                    output.contains("回传给 Codex 动态工具") &&
+                    output.contains(#""state" : "running""#) &&
+                    output.contains("等待 app-server 完成当前轮") &&
+                    output.contains(#""state" : "pending""#)
                 let fileListObserved = filesOutput.contains(#""entries""#) &&
                     filesOutput.contains(#""entryCount""#) &&
                     normalizedFilesOutput.contains("README.md") &&
@@ -2022,6 +2057,9 @@ enum SmokeTestRunner {
                     mcpToolCallObserved &&
                     mcpResourceReadObserved &&
                     freshDiffObserved &&
+                    environmentSnapshotObserved &&
+                    activeGoalObserved &&
+                    progressStepsObserved &&
                     fileListObserved &&
                     fileReadObserved &&
                     mcpToolObserved &&
@@ -2054,6 +2092,9 @@ enum SmokeTestRunner {
                     "mcpToolCallObserved": mcpToolCallObserved,
                     "mcpResourceReadObserved": mcpResourceReadObserved,
                     "freshDiffObserved": freshDiffObserved,
+                    "environmentSnapshotObserved": environmentSnapshotObserved,
+                    "activeGoalObserved": activeGoalObserved,
+                    "progressStepsObserved": progressStepsObserved,
                     "fileListObserved": fileListObserved,
                     "fileReadObserved": fileReadObserved,
                     "mcpToolObserved": mcpToolObserved,
