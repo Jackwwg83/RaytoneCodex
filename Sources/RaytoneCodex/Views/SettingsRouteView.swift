@@ -366,7 +366,7 @@ struct SettingsRouteView: View {
 
         didRequestSettingsBrowserSnapshotSmoke = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            store.openBrowserSampleAndCapture()
+            Task { await store.openBrowserSampleAndCapture() }
         }
     }
 
@@ -2184,12 +2184,14 @@ struct SettingsRouteView: View {
                 paneTitle("浏览器", subtitle: "内置 WKWebView + Codex Browser/Chrome 插件状态")
                 Spacer(minLength: 0)
                 Button("打开示例") {
-                    store.openBrowserSample()
-                    store.route = .thread
+                    Task {
+                        await store.openBrowserSample()
+                        store.route = .thread
+                    }
                 }
                 .buttonStyle(ChipButtonStyle())
                 Button("打开并截图") {
-                    store.openBrowserSampleAndCapture()
+                    Task { await store.openBrowserSampleAndCapture() }
                 }
                 .buttonStyle(ChipButtonStyle(prominent: true))
             }

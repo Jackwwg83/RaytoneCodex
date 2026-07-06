@@ -536,11 +536,11 @@ run_ui_smoke() {
   local app_pid="" window_info window_id window_width window_height screenshot_size cli_version runtime_path settle_seconds
 
   cleanup_ui_smoke() {
-    if [[ -n "$app_pid" ]]; then
+    if [[ -n "${app_pid:-}" ]]; then
       kill "$app_pid" >/dev/null 2>&1 || true
       wait "$app_pid" >/dev/null 2>&1 || true
     fi
-    if [[ -n "$UI_SCREEN" ]]; then
+    if [[ -n "${UI_SCREEN:-}" ]]; then
       /bin/launchctl unsetenv RAYTONE_CODEX_UI_SCREEN >/dev/null 2>&1 || true
       /bin/launchctl unsetenv RAYTONE_CODEX_WORKSPACE >/dev/null 2>&1 || true
       /bin/launchctl unsetenv RAYTONE_PROXY >/dev/null 2>&1 || true

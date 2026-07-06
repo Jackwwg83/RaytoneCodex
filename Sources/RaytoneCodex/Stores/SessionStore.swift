@@ -3133,6 +3133,35 @@ final class SessionStore: ObservableObject {
         openToolPanel(.browser)
     }
 
+    func prepareBrowserSampleFileForOpening() async -> URL? {
+        let sampleURL = URL(fileURLWithPath: workspacePath)
+            .appendingPathComponent("docs/browser-sample.html")
+            .standardizedFileURL
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let metadata = try await client.getMetadata(path: sampleURL.path)
+            guard metadata.isFile else {
+                browserDataStatusText = "fs/getMetadata：本地示例不是可读取文件 · \(Project.abbreviate(sampleURL.path))"
+                return nil
+            }
+
+            let data = try await client.readFile(path: sampleURL.path)
+            guard let html = String(data: data, encoding: .utf8),
+                  html.localizedCaseInsensitiveContains("<html") ||
+                  html.localizedCaseInsensitiveContains("<!doctype html") else {
+                browserDataStatusText = "fs/getMetadata + fs/readFile：本地示例不是 HTML · \(Project.abbreviate(sampleURL.path))"
+                return nil
+            }
+
+            browserDataStatusText = "fs/getMetadata + fs/readFile：已读取本地示例 \(data.count) bytes · \(Project.abbreviate(sampleURL.path))"
+            return sampleURL
+        } catch {
+            browserDataStatusText = "fs/getMetadata 或 fs/readFile 读取本地示例失败：\(error.localizedDescription)"
+            return nil
+        }
+    }
+
     func openBrowserExternally() {
         guard let url = browserURL else { return }
         NSWorkspace.shared.open(url)

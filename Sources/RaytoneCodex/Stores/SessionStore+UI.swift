@@ -836,7 +836,7 @@ extension SessionStore {
             selectActiveDemoThreadForSmoke()
             route = .thread
             showInspector = true
-            openBrowserSample()
+            Task { await openBrowserSample() }
         case "files", "file-panel":
             selectActiveDemoThreadForSmoke()
             route = .thread
@@ -932,9 +932,11 @@ extension SessionStore {
         }
     }
 
-    func openBrowserSample() {
-        let sampleURL = URL(fileURLWithPath: workspacePath)
-            .appendingPathComponent("docs/browser-sample.html")
+    func openBrowserSample() async {
+        guard let sampleURL = await prepareBrowserSampleFileForOpening() else {
+            openToolPanel(.browser)
+            return
+        }
         browserURL = sampleURL
         browserTitle = "RaytoneCodex 本地示例"
         browserCanGoBack = false
@@ -943,8 +945,11 @@ extension SessionStore {
         openToolPanel(.browser)
     }
 
-    func openBrowserSampleAndCapture() {
-        openBrowserSample()
+    func openBrowserSampleAndCapture() async {
+        await openBrowserSample()
+        guard browserURL != nil else {
+            return
+        }
         route = .thread
         browserScreenshotStatusText = "准备截取本地示例…"
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in

@@ -5519,13 +5519,15 @@ enum SmokeTestRunner {
         Task { @MainActor in
             let store = SessionStore()
             store.workspacePath = workspacePath
-            store.openBrowserSample()
+            await store.openBrowserSample()
             store.captureBrowserPanelScreenshot()
             let request = store.browserSnapshotRequest
             let ok = store.browserURL != nil &&
                 request != nil &&
                 request?.outputURL.path.contains("/screenshots/raytonecodex-browser-") == true &&
-                store.browserScreenshotStatusText == "正在截取网页…"
+                store.browserScreenshotStatusText == "正在截取网页…" &&
+                store.browserDataStatusText.contains("fs/getMetadata + fs/readFile") &&
+                store.browserDataStatusText.contains("browser-sample.html")
 
             emitJSON([
                 "ok": ok,
@@ -5533,6 +5535,7 @@ enum SmokeTestRunner {
                 "workspacePath": workspacePath,
                 "browserURL": store.browserURL?.path ?? "",
                 "status": store.browserScreenshotStatusText,
+                "browserDataStatusText": store.browserDataStatusText,
                 "snapshotRequestID": request?.id.uuidString ?? "",
                 "snapshotOutput": request?.outputURL.path ?? "",
                 "snapshotFileExists": request.map { FileManager.default.fileExists(atPath: $0.outputURL.path) } ?? false
@@ -5582,7 +5585,7 @@ enum SmokeTestRunner {
 
                 fputs("browser-snapshot-input-smoke: refreshRuntime\n", stderr)
                 await store.refreshRuntime()
-                store.openBrowserSample()
+                await store.openBrowserSample()
                 store.captureBrowserPanelScreenshot()
                 guard let request = store.browserSnapshotRequest else {
                     throw NSError(

@@ -178,8 +178,10 @@ struct BrowserPanelView: View {
     private var moreMenu: some View {
         Menu {
             Button("打开本地示例") {
-                store.openBrowserSample()
-                addressDraft = addressText
+                Task {
+                    await store.openBrowserSample()
+                    addressDraft = addressText
+                }
             }
             Button("截取当前网页") {
                 store.captureBrowserPanelScreenshot()
