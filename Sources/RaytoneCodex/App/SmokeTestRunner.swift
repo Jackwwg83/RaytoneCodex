@@ -719,6 +719,9 @@ enum SmokeTestRunner {
             await store.openFileEntry(targetResult)
         }
         let originalPreview = store.filePreview
+        await store.addPreviewedFileReferenceToPrompt()
+        let promptAfterPreviewReference = store.prompt
+        let statusAfterPreviewReference = store.filePanelStatusText
 
         await store.duplicatePreviewedFileSystemItem()
         let duplicateURL = sourceDirectory.appendingPathComponent("NeedleRuntimeFile 副本.swift")
@@ -756,6 +759,9 @@ enum SmokeTestRunner {
             originalPreview?.text.contains("fuzzy-file-search-runtime-proof") == true &&
             originalPreview?.byteCount == targetText.utf8.count &&
             originalPreview?.modifiedAt != nil &&
+            promptAfterPreviewReference.contains("请参考以下文件") &&
+            promptAfterPreviewReference.contains("Sources/Nested/NeedleRuntimeFile.swift") &&
+            statusAfterPreviewReference.contains("已加入下次对话") &&
             duplicateWasCreated &&
             duplicateWasRemoved &&
             createdFileExists &&
@@ -822,6 +828,11 @@ enum SmokeTestRunner {
             "resultCount": store.fileSearchResults.count,
             "results": resultsPayload,
             "originalPreview": originalPreviewPayload,
+            "previewReference": [
+                "prompt": promptAfterPreviewReference,
+                "status": statusAfterPreviewReference,
+                "source": "file panel preview + fs/readFile + addFileReferencesToPrompt"
+            ],
             "fileMutations": mutationsPayload,
             "openedPreview": previewPayload
         ]

@@ -279,6 +279,14 @@ private struct FilesToolPanel: View {
                                 .font(.system(size: 12.5, weight: .semibold))
                                 .lineLimit(1)
                             Spacer(minLength: 0)
+                            Button {
+                                Task { await store.addPreviewedFileReferenceToPrompt() }
+                            } label: {
+                                Label("引用", systemImage: "text.badge.plus")
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .buttonStyle(ChipButtonStyle())
+                            .help("把当前文件加入下次对话")
                             if preview.isTruncated {
                                 Text("已截断")
                                     .font(.system(size: 10.5, weight: .medium))

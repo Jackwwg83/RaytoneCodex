@@ -2245,6 +2245,16 @@ final class SessionStore: ObservableObject {
         await openFilePathInPanel(normalizedPaths[0])
     }
 
+    func addPreviewedFileReferenceToPrompt() async {
+        guard let preview = filePreview else {
+            filePanelStatusText = "没有可引用的文件"
+            return
+        }
+
+        await addFileReferencesToPrompt(paths: [preview.path])
+        filePanelStatusText = "已加入下次对话：\(Project.abbreviate(preview.path))"
+    }
+
     func addImageReferencesToPrompt(paths: [String]) async {
         let normalizedPaths = paths
             .map { URL(fileURLWithPath: $0).standardizedFileURL.path }
