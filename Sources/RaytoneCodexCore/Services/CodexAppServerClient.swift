@@ -594,6 +594,54 @@ public struct CodexRuntimePluginInstallResult: Equatable, Sendable {
     }
 }
 
+public struct CodexMarketplaceAddResult: Equatable, Sendable {
+    public var marketplaceName: String
+    public var installedRoot: String
+    public var alreadyAdded: Bool
+
+    public init(marketplaceName: String, installedRoot: String, alreadyAdded: Bool) {
+        self.marketplaceName = marketplaceName
+        self.installedRoot = installedRoot
+        self.alreadyAdded = alreadyAdded
+    }
+}
+
+public struct CodexMarketplaceRemoveResult: Equatable, Sendable {
+    public var marketplaceName: String
+    public var installedRoot: String?
+
+    public init(marketplaceName: String, installedRoot: String?) {
+        self.marketplaceName = marketplaceName
+        self.installedRoot = installedRoot
+    }
+}
+
+public struct CodexMarketplaceUpgradeError: Equatable, Sendable {
+    public var marketplaceName: String
+    public var message: String
+
+    public init(marketplaceName: String, message: String) {
+        self.marketplaceName = marketplaceName
+        self.message = message
+    }
+}
+
+public struct CodexMarketplaceUpgradeResult: Equatable, Sendable {
+    public var selectedMarketplaces: [String]
+    public var upgradedRoots: [String]
+    public var errors: [CodexMarketplaceUpgradeError]
+
+    public init(
+        selectedMarketplaces: [String],
+        upgradedRoots: [String],
+        errors: [CodexMarketplaceUpgradeError]
+    ) {
+        self.selectedMarketplaces = selectedMarketplaces
+        self.upgradedRoots = upgradedRoots
+        self.errors = errors
+    }
+}
+
 public struct CodexAppServerMention: Equatable, Sendable {
     public var name: String
     public var path: String
@@ -1994,6 +2042,44 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func addPluginMarketplace(
+        source: String,
+        refName: String? = nil,
+        sparsePaths: [String]? = nil
+    ) async throws -> CodexMarketplaceAddResult {
+        var params: [String: JSONValue] = [
+            "source": .string(source)
+        ]
+        if let refName, !refName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            params["refName"] = .string(refName)
+        }
+        if let sparsePaths, !sparsePaths.isEmpty {
+            params["sparsePaths"] = .array(sparsePaths.map(JSONValue.string))
+        }
+
+        let result = try await request(method: "marketplace/add", params: .object(params))
+        return try Self.marketplaceAddResult(from: result)
+    }
+
+    public func removePluginMarketplace(name: String) async throws -> CodexMarketplaceRemoveResult {
+        let result = try await request(method: "marketplace/remove", params: .object([
+            "marketplaceName": .string(name)
+        ]))
+        return try Self.marketplaceRemoveResult(from: result)
+    }
+
+    public func upgradePluginMarketplaces(
+        marketplaceName: String? = nil
+    ) async throws -> CodexMarketplaceUpgradeResult {
+        var params: [String: JSONValue] = [:]
+        if let marketplaceName, !marketplaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            params["marketplaceName"] = .string(marketplaceName)
+        }
+
+        let result = try await request(method: "marketplace/upgrade", params: .object(params))
+        return try Self.marketplaceUpgradeResult(from: result)
+    }
+
     public func readPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginDetail {
         var params: [String: JSONValue] = [
             "pluginName": .string(plugin.name)
@@ -3252,6 +3338,56 @@ public actor CodexAppServerClient {
                     ?? result["apps_needing_auth"]?.arrayValue
                     ?? []
             ).compactMap(pluginApp(from:))
+        )
+    }
+
+    public static func marketplaceAddResult(from result: JSONValue) throws -> CodexMarketplaceAddResult {
+        guard let marketplaceName = result["marketplaceName"]?.stringValue,
+              let installedRoot = result["installedRoot"]?.pathString,
+              let alreadyAdded = result["alreadyAdded"]?.boolValue else {
+            throw CodexAppServerError.invalidResponse("Missing marketplace/add response fields.")
+        }
+
+        return CodexMarketplaceAddResult(
+            marketplaceName: marketplaceName,
+            installedRoot: installedRoot,
+            alreadyAdded: alreadyAdded
+        )
+    }
+
+    public static func marketplaceRemoveResult(from result: JSONValue) throws -> CodexMarketplaceRemoveResult {
+        guard let marketplaceName = result["marketplaceName"]?.stringValue else {
+            throw CodexAppServerError.invalidResponse("Missing marketplace/remove response marketplaceName.")
+        }
+
+        return CodexMarketplaceRemoveResult(
+            marketplaceName: marketplaceName,
+            installedRoot: result["installedRoot"]?.pathString
+        )
+    }
+
+    public static func marketplaceUpgradeResult(from result: JSONValue) throws -> CodexMarketplaceUpgradeResult {
+        guard let selectedMarketplaces = result["selectedMarketplaces"]?.stringList,
+              let upgradedRoots = result["upgradedRoots"]?.arrayValue else {
+            throw CodexAppServerError.invalidResponse("Missing marketplace/upgrade response fields.")
+        }
+
+        let errors = result["errors"]?.arrayValue?.compactMap { value -> CodexMarketplaceUpgradeError? in
+            guard let object = value.objectValue,
+                  let marketplaceName = object["marketplaceName"]?.stringValue,
+                  let message = object["message"]?.stringValue else {
+                return nil
+            }
+            return CodexMarketplaceUpgradeError(
+                marketplaceName: marketplaceName,
+                message: message
+            )
+        } ?? []
+
+        return CodexMarketplaceUpgradeResult(
+            selectedMarketplaces: selectedMarketplaces,
+            upgradedRoots: upgradedRoots.compactMap(\.pathString),
+            errors: errors
         )
     }
 

@@ -187,6 +187,16 @@ struct PluginsPage: View {
                     Task { await store.createLocalSkillTemplate() }
                 }
                 Divider()
+                Button("添加插件市场源…") {
+                    store.promptAddPluginMarketplace()
+                }
+                Button("升级插件市场源") {
+                    Task { await store.upgradePluginMarketplaces() }
+                }
+                Button("移除插件市场源…") {
+                    store.promptRemovePluginMarketplace()
+                }
+                Divider()
                 Button("打开插件目录") {
                     store.revealCodexHomeSubfolder("plugins")
                 }

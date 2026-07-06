@@ -32,6 +32,8 @@ enum SmokeTestRunner {
             runPluginScaffoldSmoke()
         } else if CommandLine.arguments.contains("--plugin-install-response-smoke-test") {
             runPluginInstallResponseSmoke()
+        } else if CommandLine.arguments.contains("--marketplace-upgrade-smoke-test") {
+            runMarketplaceUpgradeSmoke()
         } else if CommandLine.arguments.contains("--codex-home-directory-smoke-test") {
             runCodexHomeDirectorySmoke()
         } else if CommandLine.arguments.contains("--account-auth-smoke-test") {
@@ -1745,6 +1747,114 @@ enum SmokeTestRunner {
                 emitJSON([
                     "ok": false,
                     "schema": "PluginInstallResponse",
+                    "parseOK": parseOK,
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runMarketplaceUpgradeSmoke() {
+        Task { @MainActor in
+            let addFixture = JSONValue.object([
+                "marketplaceName": .string("raytone-market"),
+                "installedRoot": .string("/tmp/raytone-market"),
+                "alreadyAdded": .bool(false)
+            ])
+            let removeFixture = JSONValue.object([
+                "marketplaceName": .string("raytone-market"),
+                "installedRoot": .string("/tmp/raytone-market")
+            ])
+            let upgradeFixture = JSONValue.object([
+                "selectedMarketplaces": .array([.string("raytone-market")]),
+                "upgradedRoots": .array([.string("/tmp/raytone-market")]),
+                "errors": .array([
+                    .object([
+                        "marketplaceName": .string("broken-market"),
+                        "message": .string("network unavailable")
+                    ])
+                ])
+            ])
+            let parsedAdd = try? CodexAppServerClient.marketplaceAddResult(from: addFixture)
+            let parsedRemove = try? CodexAppServerClient.marketplaceRemoveResult(from: removeFixture)
+            let parsedUpgrade = try? CodexAppServerClient.marketplaceUpgradeResult(from: upgradeFixture)
+            let parseOK = parsedAdd?.marketplaceName == "raytone-market" &&
+                parsedAdd?.alreadyAdded == false &&
+                parsedRemove?.installedRoot == "/tmp/raytone-market" &&
+                parsedUpgrade?.selectedMarketplaces == ["raytone-market"] &&
+                parsedUpgrade?.upgradedRoots == ["/tmp/raytone-market"] &&
+                parsedUpgrade?.errors.first?.marketplaceName == "broken-market"
+
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexMarketplaceSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("marketplace-upgrade-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("marketplace-upgrade-smoke: marketplace/upgrade\n", stderr)
+                let result = await store.upgradePluginMarketplaces()
+                let sourceFacts = store.environmentSourceFacts
+                let marketplaceFact = sourceFacts.first { $0.title == "插件市场" }
+                let summary = result.map { SessionStore.marketplaceUpgradeSummary($0) } ?? ""
+                let integrationOK = store.runtimeSnapshot.executable != nil &&
+                    result != nil &&
+                    store.runtimeCatalogStatusText.hasPrefix("marketplace/upgrade") &&
+                    marketplaceFact?.source == "marketplace/upgrade" &&
+                    marketplaceFact?.active == true &&
+                    store.runtimeCatalogErrors == (result?.errors.map { "\($0.marketplaceName)：\($0.message)" } ?? [])
+                let ok = parseOK && integrationOK
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "schema": "MarketplaceAdd/Remove/Upgrade",
+                    "parseOK": parseOK,
+                    "integrationOK": integrationOK,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "status": store.runtimeCatalogStatusText,
+                    "summary": summary,
+                    "selectedMarketplaces": result?.selectedMarketplaces ?? [],
+                    "upgradedRoots": result?.upgradedRoots ?? [],
+                    "responseErrors": result?.errors.map { error in
+                        [
+                            "marketplaceName": error.marketplaceName,
+                            "message": error.message
+                        ]
+                    } ?? [],
+                    "storeErrors": store.runtimeCatalogErrors,
+                    "marketplaceFact": [
+                        "title": marketplaceFact?.title ?? "",
+                        "source": marketplaceFact?.source ?? "",
+                        "detail": marketplaceFact?.detail ?? "",
+                        "active": marketplaceFact?.active ?? false
+                    ]
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "schema": "MarketplaceAdd/Remove/Upgrade",
                     "parseOK": parseOK,
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,

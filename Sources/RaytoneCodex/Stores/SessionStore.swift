@@ -4204,6 +4204,195 @@ final class SessionStore: ObservableObject {
         return "plugin/install：已安装 \(pluginDisplayName) · \(auth) · 需要授权 \(result.appsNeedingAuth.count) 个 app\(extra)：\(appNames)"
     }
 
+    func promptAddPluginMarketplace() {
+        let alert = NSAlert()
+        alert.messageText = "添加插件市场源"
+        alert.informativeText = "输入 Git 仓库来源。Codex app-server 会通过 marketplace/add 安装到当前 CODEX_HOME。"
+        alert.addButton(withTitle: "添加")
+        alert.addButton(withTitle: "取消")
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+
+        let sourceField = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        sourceField.placeholderString = "owner/repo 或 https://github.com/owner/repo"
+        let refField = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        refField.placeholderString = "可选：分支、标签或提交"
+        let sparseField = NSTextField(frame: NSRect(x: 0, y: 0, width: 360, height: 24))
+        sparseField.placeholderString = "可选：稀疏路径，用逗号分隔"
+
+        stack.addArrangedSubview(NSTextField(labelWithString: "来源"))
+        stack.addArrangedSubview(sourceField)
+        stack.addArrangedSubview(NSTextField(labelWithString: "版本引用"))
+        stack.addArrangedSubview(refField)
+        stack.addArrangedSubview(NSTextField(labelWithString: "稀疏路径"))
+        stack.addArrangedSubview(sparseField)
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let source = sourceField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else {
+            runtimeCatalogStatusText = "marketplace/add：缺少 source"
+            return
+        }
+        let refName = refField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sparsePaths = Self.marketplaceSparsePaths(from: sparseField.stringValue)
+        Task {
+            await addPluginMarketplace(
+                source: source,
+                refName: refName.isEmpty ? nil : refName,
+                sparsePaths: sparsePaths.isEmpty ? nil : sparsePaths
+            )
+        }
+    }
+
+    func promptRemovePluginMarketplace() {
+        let alert = NSAlert()
+        alert.messageText = "移除插件市场源"
+        alert.informativeText = "输入 marketplace 名称。Codex app-server 会通过 marketplace/remove 从当前 CODEX_HOME 移除。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "移除")
+        alert.addButton(withTitle: "取消")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "市场源名称"
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            runtimeCatalogStatusText = "marketplace/remove：缺少 marketplaceName"
+            return
+        }
+        Task { await removePluginMarketplace(name: name) }
+    }
+
+    @discardableResult
+    func addPluginMarketplace(
+        source: String,
+        refName: String? = nil,
+        sparsePaths: [String]? = nil
+    ) async -> CodexMarketplaceAddResult? {
+        let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSource.isEmpty else {
+            runtimeCatalogStatusText = "marketplace/add：缺少 source"
+            return nil
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 marketplace/add 添加插件市场源…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.addPluginMarketplace(
+                source: trimmedSource,
+                refName: refName,
+                sparsePaths: sparsePaths
+            )
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+            let finalStatus = Self.marketplaceAddSummary(result)
+            runtimeCatalogStatusText = finalStatus
+            runtimePluginDetailStatusText = finalStatus
+            runtimeCatalogIsRefreshing = false
+            return result
+        } catch {
+            runtimeCatalogStatusText = "marketplace/add 失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return nil
+        }
+    }
+
+    @discardableResult
+    func removePluginMarketplace(name: String) async -> CodexMarketplaceRemoveResult? {
+        let marketplaceName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !marketplaceName.isEmpty else {
+            runtimeCatalogStatusText = "marketplace/remove：缺少 marketplaceName"
+            return nil
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 marketplace/remove 移除插件市场源…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.removePluginMarketplace(name: marketplaceName)
+            runtimePluginDetail = nil
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+            let finalStatus = Self.marketplaceRemoveSummary(result)
+            runtimeCatalogStatusText = finalStatus
+            runtimePluginDetailStatusText = finalStatus
+            runtimeCatalogIsRefreshing = false
+            return result
+        } catch {
+            runtimeCatalogStatusText = "marketplace/remove 失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return nil
+        }
+    }
+
+    @discardableResult
+    func upgradePluginMarketplaces(marketplaceName: String? = nil) async -> CodexMarketplaceUpgradeResult? {
+        let trimmedName = marketplaceName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在通过 marketplace/upgrade 升级插件市场源…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let result = try await client.upgradePluginMarketplaces(marketplaceName: trimmedName?.isEmpty == false ? trimmedName : nil)
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+            let finalStatus = Self.marketplaceUpgradeSummary(result, target: trimmedName)
+            runtimeCatalogStatusText = finalStatus
+            runtimePluginDetailStatusText = finalStatus
+            runtimeCatalogErrors = result.errors.map { "\($0.marketplaceName)：\($0.message)" }
+            runtimeCatalogIsRefreshing = false
+            return result
+        } catch {
+            runtimeCatalogStatusText = "marketplace/upgrade 失败：\(error.localizedDescription)"
+            runtimePluginDetailStatusText = runtimeCatalogStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return nil
+        }
+    }
+
+    nonisolated static func marketplaceAddSummary(_ result: CodexMarketplaceAddResult) -> String {
+        let action = result.alreadyAdded ? "已存在" : "已添加"
+        return "marketplace/add：\(action) \(result.marketplaceName) · \(Project.abbreviate(result.installedRoot))"
+    }
+
+    nonisolated static func marketplaceRemoveSummary(_ result: CodexMarketplaceRemoveResult) -> String {
+        guard let installedRoot = result.installedRoot, !installedRoot.isEmpty else {
+            return "marketplace/remove：已移除 \(result.marketplaceName)"
+        }
+        return "marketplace/remove：已移除 \(result.marketplaceName) · \(Project.abbreviate(installedRoot))"
+    }
+
+    nonisolated static func marketplaceUpgradeSummary(
+        _ result: CodexMarketplaceUpgradeResult,
+        target: String? = nil
+    ) -> String {
+        let targetName = target?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetText = targetName?.isEmpty == false ? targetName! : "全部插件市场源"
+        let selectedText = result.selectedMarketplaces.isEmpty ? "0 个源" : "\(result.selectedMarketplaces.count) 个源"
+        let errorText = result.errors.isEmpty ? "无错误" : "\(result.errors.count) 个错误"
+        return "marketplace/upgrade：\(targetText) · 选择 \(selectedText) · 更新 \(result.upgradedRoots.count) 个目录 · \(errorText)"
+    }
+
+    nonisolated private static func marketplaceSparsePaths(from text: String) -> [String] {
+        text.components(separatedBy: CharacterSet(charactersIn: ",\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     func checkoutSharedPlugin(_ plugin: CodexRuntimePlugin) async {
         guard let remotePluginID = plugin.shareContext?.remotePluginID else {
             runtimeCatalogStatusText = "plugin/share/checkout：缺少 remotePluginId"

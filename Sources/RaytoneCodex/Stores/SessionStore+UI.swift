@@ -280,6 +280,17 @@ extension SessionStore {
             sideChatStatusText.hasPrefix("正在通过 turn/") ||
             sideChatStatusText.hasPrefix("已追加") ||
             sideChatStatusText == "Codex 已回复"
+        let marketplaceRuntimeActive = runtimeCatalogStatusText.hasPrefix("marketplace/")
+        let marketplaceSource: String
+        if runtimeCatalogStatusText.hasPrefix("marketplace/add") {
+            marketplaceSource = "marketplace/add"
+        } else if runtimeCatalogStatusText.hasPrefix("marketplace/remove") {
+            marketplaceSource = "marketplace/remove"
+        } else if runtimeCatalogStatusText.hasPrefix("marketplace/upgrade") {
+            marketplaceSource = "marketplace/upgrade"
+        } else {
+            marketplaceSource = "plugin/list"
+        }
 
         return [
             EnvironmentSourceFact(
@@ -310,6 +321,13 @@ extension SessionStore {
                 source: sideChatStatusText.hasPrefix("thread/inject_items") ||
                     sideChatStatusText.hasPrefix("正在通过 thread/inject_items") ? "thread/inject_items" : "turn/start|turn/steer",
                 active: sideChatRuntimeActive
+            ),
+            EnvironmentSourceFact(
+                symbol: "puzzlepiece.extension",
+                title: "插件市场",
+                detail: runtimeCatalogStatusText,
+                source: marketplaceSource,
+                active: marketplaceRuntimeActive || !runtimePlugins.isEmpty
             ),
             EnvironmentSourceFact(
                 symbol: "command",
