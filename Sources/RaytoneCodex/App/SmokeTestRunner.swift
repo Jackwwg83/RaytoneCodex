@@ -6950,8 +6950,7 @@ enum SmokeTestRunner {
                 } &&
                 environmentSourceFacts.contains {
                     $0.title == "变更" &&
-                        ($0.source.contains("gitDiffToRemote") ||
-                         $0.source.contains("command/exec") ||
+                        ($0.source.contains("command/exec") ||
                          $0.source.contains("turn/diff/updated")) &&
                         !$0.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 } &&

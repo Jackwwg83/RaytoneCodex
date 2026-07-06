@@ -269,7 +269,7 @@ extension SessionStore {
         let changeSource: String
         if diffSummary.files > 0 {
             changeDetail = "\(diffSummary.files) 个文件 · +\(diffSummary.additions) −\(diffSummary.deletions)"
-            changeSource = "gitDiffToRemote"
+            changeSource = "command/exec git diff"
         } else if statusChangeCount > 0 {
             changeDetail = "Git 状态 \(statusChangeCount) 项"
             changeSource = "command/exec git status"
@@ -278,7 +278,7 @@ extension SessionStore {
             changeSource = "turn/diff/updated"
         } else {
             changeDetail = "无变更"
-            changeSource = "gitDiffToRemote"
+            changeSource = "command/exec git"
         }
 
         let lastTerminalRun = terminalRuns.last

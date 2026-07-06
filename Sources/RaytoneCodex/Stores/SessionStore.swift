@@ -4016,34 +4016,92 @@ final class SessionStore: ObservableObject {
 
     func refreshWorkspaceGitDiff() async {
         runtimeCatalogIsRefreshing = true
-        runtimeCatalogStatusText = "正在读取 gitDiffToRemote…"
+        runtimeCatalogStatusText = "正在通过 command/exec 读取 Git 状态…"
         runtimeCatalogErrors = []
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            workspaceGitDiff = try await client.gitDiffToRemote(cwd: workspacePath)
-            workspaceGitStatusText = ""
+            let result = try await client.execCommand(
+                ["/bin/zsh", "-lc", Self.workspaceGitSnapshotCommand],
+                cwd: URL(fileURLWithPath: workspacePath),
+                sandbox: .readOnly,
+                timeoutMs: 20_000
+            )
+            let snapshot = Self.parseWorkspaceGitSnapshot(stdout: result.stdout, stderr: result.stderr)
+            workspaceGitDiff = snapshot.isGitRepository
+                ? CodexRuntimeGitDiff(sha: snapshot.sha, diff: snapshot.diff)
+                : nil
+            workspaceGitStatusText = snapshot.status
             let parsed = Self.parseUnifiedDiff(workspaceGitDiff?.diff ?? "")
-            runtimeCatalogStatusText = "gitDiffToRemote：+\(parsed.additions) −\(parsed.deletions)"
+            let statusCount = workspaceGitStatusText
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .filter { !$0.hasPrefix("##") }
+                .count
+            let statusSuffix = statusCount > 0 ? " · Git 状态 \(statusCount) 项" : ""
+            runtimeCatalogStatusText = "command/exec git：+\(parsed.additions) −\(parsed.deletions)\(statusSuffix)"
         } catch {
-            let diffError = error.localizedDescription
-            do {
-                let client = try await ensureAppServerClient(useProviderConfiguration: false)
-                let result = try await client.execCommand(
-                    ["/bin/zsh", "-lc", "git status --short --branch && git rev-parse --short HEAD 2>/dev/null || true"],
-                    cwd: URL(fileURLWithPath: workspacePath),
-                    sandbox: .readOnly,
-                    timeoutMs: 10_000
-                )
-                workspaceGitDiff = nil
-                workspaceGitStatusText = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-                runtimeCatalogStatusText = "gitDiffToRemote 不可用，已用 command/exec 读取本地 Git 状态"
-                runtimeCatalogErrors = ["gitDiffToRemote：\(diffError)"]
-            } catch {
-                runtimeCatalogStatusText = "Git 差异读取失败：\(diffError)"
-                runtimeCatalogErrors = ["gitDiffToRemote：\(diffError)", "command/exec：\(error.localizedDescription)"]
-            }
+            runtimeCatalogStatusText = "Git 状态读取失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = ["command/exec git：\(error.localizedDescription)"]
         }
         runtimeCatalogIsRefreshing = false
+    }
+
+    private static let workspaceGitSnapshotCommand = """
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+          echo "__RAYTONE_GIT_STATUS__"
+          echo "不是 Git 工作区"
+          exit 0
+        fi
+        echo "__RAYTONE_GIT_SHA__"
+        git rev-parse HEAD 2>/dev/null || true
+        echo "__RAYTONE_GIT_STATUS__"
+        git status --short --branch 2>&1 || true
+        echo "__RAYTONE_GIT_DIFF__"
+        git diff -- . 2>&1 || true
+        """
+
+    private static func parseWorkspaceGitSnapshot(
+        stdout: String,
+        stderr: String
+    ) -> (isGitRepository: Bool, sha: String?, status: String, diff: String) {
+        var sections: [String: [String]] = [:]
+        var currentSection: String?
+
+        for line in stdout.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            switch line {
+            case "__RAYTONE_GIT_SHA__":
+                currentSection = "sha"
+            case "__RAYTONE_GIT_STATUS__":
+                currentSection = "status"
+            case "__RAYTONE_GIT_DIFF__":
+                currentSection = "diff"
+            default:
+                guard let currentSection else { continue }
+                sections[currentSection, default: []].append(line)
+            }
+        }
+
+        let sha = sections["sha"]?
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var status = sections["status"]?
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let diff = sections["diff"]?
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let stderrText = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stderrText.isEmpty {
+            status = [status, "stderr:\n\(stderrText)"]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+        }
+
+        return (
+            isGitRepository: status != "不是 Git 工作区",
+            sha: sha,
+            status: status,
+            diff: diff
+        )
     }
 
     func refreshWorkspacePullRequestStatus() async {

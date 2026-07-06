@@ -2902,16 +2902,6 @@ public actor CodexAppServerClient {
         return Self.threadSummary(from: thread)
     }
 
-    public func gitDiffToRemote(cwd: String) async throws -> CodexRuntimeGitDiff {
-        let result = try await request(method: "gitDiffToRemote", params: .object([
-            "cwd": .string(cwd)
-        ]))
-        return CodexRuntimeGitDiff(
-            sha: result["sha"]?.stringValue ?? result["sha"]?["hash"]?.stringValue,
-            diff: result["diff"]?.stringValue ?? ""
-        )
-    }
-
     public func readConfigRequirements() async throws -> CodexRuntimeConfigRequirements {
         let result = try await request(method: "configRequirements/read", params: nil)
         return Self.configRequirements(from: result)

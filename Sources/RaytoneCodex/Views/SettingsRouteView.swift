@@ -1831,7 +1831,7 @@ struct SettingsRouteView: View {
     private var gitPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                paneTitle("Git", subtitle: "来自 app-server 的 gitDiffToRemote 与 command/exec")
+                paneTitle("Git", subtitle: "来自 app-server 的 command/exec Git 状态")
                 Spacer(minLength: 0)
                 Button("刷新") {
                     Task {
@@ -1852,7 +1852,7 @@ struct SettingsRouteView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     metricRow("工作区", Project.abbreviate(store.workspacePath))
                     metricRow("当前分支", store.selectedProject.branch ?? "未检测到")
-                    metricRow("远端基准 SHA", store.workspaceGitDiff?.sha?.prefix(12).description ?? "未返回")
+                    metricRow("HEAD SHA", store.workspaceGitDiff?.sha?.prefix(12).description ?? "未返回")
                     let parsed = SessionStore.diffSummary(store.workspaceGitDiff?.diff ?? "")
                     metricRow("差异", "\(parsed.files) 个文件 · +\(parsed.additions) −\(parsed.deletions)")
                     metricRow("PR 状态", store.workspacePullRequestStatusText)
@@ -1862,7 +1862,7 @@ struct SettingsRouteView: View {
                 }
             }
 
-            SettingsSection(title: "远端差异预览") {
+            SettingsSection(title: "工作区差异预览") {
                 if let diff = store.workspaceGitDiff?.diff, !diff.isEmpty {
                     SettingsCard {
                         ScrollView(.horizontal) {
@@ -1884,7 +1884,7 @@ struct SettingsRouteView: View {
                         }
                     }
                 } else {
-                    emptySettingsState(symbol: "arrow.triangle.branch", title: "没有远端差异", detail: "gitDiffToRemote 返回空 diff，或当前工作区没有可比较的远端分支。")
+                    emptySettingsState(symbol: "arrow.triangle.branch", title: "没有工作区差异", detail: "command/exec 已读取 Git 状态；当前工作区没有未提交 diff。")
                 }
             }
         }
