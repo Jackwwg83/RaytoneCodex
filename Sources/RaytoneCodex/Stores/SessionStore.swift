@@ -1676,6 +1676,46 @@ final class SessionStore: ObservableObject {
             thread.sandbox = sandbox
             thread.approvalsReviewer = approvalsReviewer
         }
+
+        let selectedApproval = approval
+        let selectedSandbox = sandbox
+        let selectedApprovalsReviewer = approvalsReviewer
+        Task { @MainActor [weak self] in
+            await self?.syncSelectedThreadExecutionSettings(
+                approvalPolicy: selectedApproval,
+                approvalsReviewer: selectedApprovalsReviewer,
+                sandbox: selectedSandbox,
+                statusName: mode.shortTitle
+            )
+        }
+    }
+
+    private func syncSelectedThreadExecutionSettings(
+        model: String? = nil,
+        approvalPolicy: CodexApprovalPolicy? = nil,
+        approvalsReviewer: CodexApprovalsReviewer? = nil,
+        sandbox: CodexSandboxMode? = nil,
+        statusName: String
+    ) async {
+        guard model != nil || approvalPolicy != nil || approvalsReviewer != nil || sandbox != nil,
+              let threadID = selectedThread.appServerThreadID,
+              let client = appServerClient else {
+            return
+        }
+
+        do {
+            try await client.updateThreadExecutionSettings(
+                threadID: threadID,
+                model: model,
+                approvalPolicy: approvalPolicy,
+                approvalsReviewer: approvalsReviewer,
+                sandbox: sandbox
+            )
+            runtimeCatalogStatusText = "thread/settings/update：\(statusName)"
+        } catch {
+            runtimeCatalogStatusText = "thread/settings/update 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
     }
 
     var runtimeDefaultPermissionsProfile: String {
@@ -1723,6 +1763,11 @@ final class SessionStore: ObservableObject {
             thread.approval = policy
         }
 
+        await syncSelectedThreadExecutionSettings(
+            approvalPolicy: policy,
+            statusName: "批准策略 \(Self.approvalName(policy))"
+        )
+
         runtimeCatalogStatusText = "正在写入 approval_policy…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
@@ -1745,6 +1790,11 @@ final class SessionStore: ObservableObject {
             thread.sandbox = mode
         }
 
+        await syncSelectedThreadExecutionSettings(
+            sandbox: mode,
+            statusName: "沙箱 \(Self.sandboxName(mode))"
+        )
+
         runtimeCatalogStatusText = "正在写入 sandbox_mode…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
@@ -1766,6 +1816,11 @@ final class SessionStore: ObservableObject {
         updateSelectedThread { thread in
             thread.approvalsReviewer = reviewer
         }
+
+        await syncSelectedThreadExecutionSettings(
+            approvalsReviewer: reviewer,
+            statusName: "审批路由 \(Self.approvalsReviewerName(reviewer))"
+        )
 
         runtimeCatalogStatusText = "正在写入 approvals_reviewer…"
         do {
@@ -6309,6 +6364,11 @@ final class SessionStore: ObservableObject {
             return
         }
 
+        await syncSelectedThreadExecutionSettings(
+            model: selectedModel,
+            statusName: "模型 \(selectedModel)"
+        )
+
         await resetAppServerForProviderChange()
 
         guard provider.usesSidecar == false else {
@@ -7948,6 +8008,69 @@ final class SessionStore: ObservableObject {
         guard let threadID = params?["threadId"]?.stringValue,
               let settings = params?["threadSettings"] else {
             return
+        }
+
+        var updatedModel: String?
+        var updatedApproval: CodexApprovalPolicy?
+        var updatedApprovalsReviewer: CodexApprovalsReviewer?
+        var updatedSandbox: CodexSandboxMode?
+        var updatedParts: [String] = []
+
+        if let rawModel = settings["model"]?.stringValue,
+           !rawModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updatedModel = rawModel
+            updatedParts.append("模型 \(rawModel)")
+        }
+
+        if let rawApproval = settings["approvalPolicy"]?.stringValue,
+           let policy = CodexApprovalPolicy(rawValue: rawApproval) {
+            updatedApproval = policy
+            updatedParts.append("批准策略 \(Self.approvalName(policy))")
+        }
+
+        if let rawReviewer = settings["approvalsReviewer"]?.stringValue,
+           let reviewer = Self.approvalsReviewer(fromAppServerValue: rawReviewer) {
+            updatedApprovalsReviewer = reviewer
+            updatedParts.append("审批路由 \(Self.approvalsReviewerName(reviewer))")
+        }
+
+        if let sandboxMode = Self.sandboxMode(fromAppServerSandboxPolicy: settings["sandboxPolicy"] ?? settings["sandbox_policy"]) {
+            updatedSandbox = sandboxMode
+            updatedParts.append("沙箱 \(Self.sandboxName(sandboxMode))")
+        }
+
+        if selectedThread.appServerThreadID == threadID {
+            if let updatedModel {
+                model = updatedModel
+            }
+            if let updatedApproval {
+                approval = updatedApproval
+            }
+            if let updatedApprovalsReviewer {
+                approvalsReviewer = updatedApprovalsReviewer
+            }
+            if let updatedSandbox {
+                sandbox = updatedSandbox
+            }
+            accessMode = Self.accessMode(for: approval, sandbox: sandbox, approvalsReviewer: approvalsReviewer)
+        }
+
+        if updatedModel != nil || updatedApproval != nil || updatedApprovalsReviewer != nil || updatedSandbox != nil {
+            updateThread(appServerThreadID: threadID) { thread in
+                if let updatedModel {
+                    thread.model = updatedModel
+                }
+                if let updatedApproval {
+                    thread.approval = updatedApproval
+                }
+                if let updatedApprovalsReviewer {
+                    thread.approvalsReviewer = updatedApprovalsReviewer
+                }
+                if let updatedSandbox {
+                    thread.sandbox = updatedSandbox
+                }
+            }
+            runtimeCatalogStatusText = "thread/settings/updated：\(updatedParts.joined(separator: " · "))"
         }
 
         if let mode = settings["collaborationMode"]?["mode"]?.stringValue ??
@@ -10537,6 +10660,40 @@ final class SessionStore: ObservableObject {
         switch reviewer {
         case .user: "用户"
         case .autoReview: "自动审查"
+        }
+    }
+
+    static func sandboxName(_ mode: CodexSandboxMode) -> String {
+        switch mode {
+        case .readOnly: "只读"
+        case .workspaceWrite: "工作区写入"
+        case .dangerFullAccess: "完全访问"
+        }
+    }
+
+    private static func approvalsReviewer(fromAppServerValue rawValue: String) -> CodexApprovalsReviewer? {
+        if rawValue == "guardian_subagent" {
+            return .autoReview
+        }
+        return CodexApprovalsReviewer(rawValue: rawValue)
+    }
+
+    private static func sandboxMode(fromAppServerSandboxPolicy value: JSONValue?) -> CodexSandboxMode? {
+        if let rawValue = value?.stringValue {
+            return CodexSandboxMode(rawValue: rawValue)
+        }
+        guard let type = value?["type"]?.stringValue else {
+            return nil
+        }
+        switch type {
+        case "readOnly":
+            return .readOnly
+        case "workspaceWrite":
+            return .workspaceWrite
+        case "dangerFullAccess":
+            return .dangerFullAccess
+        default:
+            return nil
         }
     }
 

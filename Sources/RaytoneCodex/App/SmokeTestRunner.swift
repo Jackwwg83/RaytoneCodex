@@ -5592,6 +5592,44 @@ enum SmokeTestRunner {
                     approvalsReviewer: .autoReview
                 )
                 let serverThread = try await client.startThread(options: options)
+                let eventTask = Task { () -> [String: String] in
+                    for await event in client.events {
+                        guard case let .notification(method, params) = event,
+                              method == "thread/settings/updated",
+                              params?["threadId"]?.stringValue == serverThread.id else {
+                            continue
+                        }
+                        let settings = params?["threadSettings"]
+                        return [
+                            "method": method,
+                            "threadId": params?["threadId"]?.stringValue ?? "",
+                            "model": settings?["model"]?.stringValue ?? "",
+                            "approvalPolicy": settings?["approvalPolicy"]?.stringValue ?? "",
+                            "approvalsReviewer": settings?["approvalsReviewer"]?.stringValue ?? "",
+                            "sandboxType": settings?["sandboxPolicy"]?["type"]?.stringValue ?? ""
+                        ]
+                    }
+                    return [:]
+                }
+                let updatedModel = "gpt-5.1-codex"
+                try await client.updateThreadExecutionSettings(
+                    threadID: serverThread.id,
+                    model: updatedModel,
+                    approvalPolicy: .never,
+                    approvalsReviewer: .user,
+                    sandbox: .dangerFullAccess
+                )
+                let settingsNotification = await withTaskGroup(of: [String: String].self) { group in
+                    group.addTask { await eventTask.value }
+                    group.addTask {
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        return [:]
+                    }
+                    let first = await group.next() ?? [:]
+                    group.cancelAll()
+                    return first
+                }
+                eventTask.cancel()
                 try await client.writeConfigValue(
                     keyPath: "approval_policy",
                     value: .string(CodexApprovalPolicy.onFailure.appServerValue)
@@ -5617,7 +5655,11 @@ enum SmokeTestRunner {
                     config.approvalPolicy == "on-failure" &&
                     config.approvalsReviewer == "auto_review" &&
                     config.sandboxMode == "workspace-write" &&
-                    configText.contains("approvals_reviewer")
+                    configText.contains("approvals_reviewer") &&
+                    settingsNotification["model"] == updatedModel &&
+                    settingsNotification["approvalPolicy"] == "never" &&
+                    settingsNotification["approvalsReviewer"] == "user" &&
+                    settingsNotification["sandboxType"] == "dangerFullAccess"
 
                 emitJSON([
                     "ok": ok,
@@ -5632,6 +5674,7 @@ enum SmokeTestRunner {
                     "threadApprovalPolicy": serverThread.approvalPolicy ?? "",
                     "threadApprovalsReviewer": serverThread.approvalsReviewer?.rawValue ?? "",
                     "threadSandbox": serverThread.sandboxSummary ?? "",
+                    "threadSettingsUpdateNotification": settingsNotification,
                     "configApprovalPolicy": config.approvalPolicy ?? "",
                     "configApprovalsReviewer": config.approvalsReviewer ?? "",
                     "configSandboxMode": config.sandboxMode ?? "",

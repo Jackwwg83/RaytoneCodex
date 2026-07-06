@@ -3026,6 +3026,34 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func updateThreadExecutionSettings(
+        threadID: String,
+        model: String? = nil,
+        approvalPolicy: CodexApprovalPolicy? = nil,
+        approvalsReviewer: CodexApprovalsReviewer? = nil,
+        sandbox: CodexSandboxMode? = nil
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID)
+        ]
+
+        if let model = model?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !model.isEmpty {
+            params["model"] = .string(model)
+        }
+        if let approvalPolicy {
+            params["approvalPolicy"] = .string(approvalPolicy.appServerValue)
+        }
+        if let approvalsReviewer {
+            params["approvalsReviewer"] = .string(approvalsReviewer.rawValue)
+        }
+        if let sandbox {
+            params["sandboxPolicy"] = sandbox.appServerSandboxPolicy
+        }
+
+        _ = try await request(method: "thread/settings/update", params: .object(params))
+    }
+
     public func listCollaborationModes() async throws -> [CodexCollaborationModePreset] {
         let result = try await request(method: "collaborationMode/list", params: .object([:]))
         let items = result["data"]?.arrayValue ?? result.arrayValue ?? []
