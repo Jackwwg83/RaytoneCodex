@@ -60,6 +60,8 @@ enum SmokeTestRunner {
             runWorkspaceSwitchSmoke()
         } else if CommandLine.arguments.contains("--remote-control-smoke-test") {
             runRemoteControlSmoke()
+        } else if CommandLine.arguments.contains("--remote-control-revoke-smoke-test") {
+            runRemoteControlRevokeSmoke()
         } else if CommandLine.arguments.contains("--realtime-voices-smoke-test") {
             runRealtimeVoicesSmoke()
         } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
@@ -4946,6 +4948,79 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runRemoteControlRevokeSmoke() {
+        Task {
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexRemoteRevokeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let logURL = workspaceURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = workspaceURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeRemoteControlAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let client = CodexAppServerClient(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    workspaceURL: workspaceURL,
+                    environmentOverrides: [
+                        "RAYTONE_REMOTE_REVOKE_LOG": logURL.path
+                    ],
+                    remoteControl: true
+                )
+
+                try await client.initialize()
+                let before = try await client.listRemoteControlClients(
+                    environmentID: "env-smoke",
+                    limit: 10,
+                    order: "asc"
+                )
+                try await client.revokeRemoteControlClient(
+                    environmentID: "env-smoke",
+                    clientID: "client-smoke"
+                )
+                let after = try await client.listRemoteControlClients(
+                    environmentID: "env-smoke",
+                    limit: 10,
+                    order: "asc"
+                )
+                await client.stop()
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let ok = before.clients.contains { $0.clientID == "client-smoke" } &&
+                    after.clients.allSatisfy { $0.clientID != "client-smoke" } &&
+                    logText.contains(#""method": "remoteControl/client/revoke""#) &&
+                    logText.contains(#""environmentId": "env-smoke""#) &&
+                    logText.contains(#""clientId": "client-smoke""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "beforeClientCount": before.clients.count,
+                    "afterClientCount": after.clients.count,
+                    "beforeClients": before.clients.map(remoteClientPayload),
+                    "afterClients": after.clients.map(remoteClientPayload),
+                    "requestLogPreview": String(logText.prefix(1400))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runProjectSwitchSmoke() {
         Task { @MainActor in
             let temporaryRoot = FileManager.default.temporaryDirectory
@@ -5412,6 +5487,89 @@ enum SmokeTestRunner {
         """#
     }
 
+    private static var fakeRemoteControlAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_REMOTE_REVOKE_LOG")
+        clients = [
+            {
+                "clientId": "client-smoke",
+                "displayName": "Raytone Smoke iPhone",
+                "deviceType": "phone",
+                "platform": "iOS",
+                "osVersion": "26.0",
+                "deviceModel": "iPhone",
+                "appVersion": "0.1.0",
+                "lastSeenAt": 1783300000,
+            },
+            {
+                "clientId": "client-keep",
+                "displayName": "Raytone Keep Mac",
+                "deviceType": "desktop",
+                "platform": "macOS",
+                "osVersion": "26.0",
+                "deviceModel": "Mac",
+                "appVersion": "0.1.0",
+                "lastSeenAt": 1783300100,
+            },
+        ]
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, indent=0) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "remoteControl/status/read":
+                send_result(request_id, {
+                    "status": "connected",
+                    "serverName": "raytone-fake-remote",
+                    "installationId": "install-smoke",
+                    "environmentId": "env-smoke",
+                })
+            elif method == "remoteControl/client/list":
+                send_result(request_id, {"data": clients, "nextCursor": None})
+            elif method == "remoteControl/client/revoke":
+                environment_id = params.get("environmentId")
+                client_id = params.get("clientId")
+                if environment_id != "env-smoke":
+                    send_error(request_id, "unexpected environmentId")
+                    continue
+                clients = [client for client in clients if client.get("clientId") != client_id]
+                send_result(request_id, {})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
     private static var mockModelsServerScript: String {
         #"""
         import json
@@ -5864,6 +6022,19 @@ enum SmokeTestRunner {
             "serverName": status?.serverName ?? "",
             "installationID": status?.installationID ?? "",
             "environmentID": status?.environmentID ?? ""
+        ]
+    }
+
+    private static func remoteClientPayload(_ client: CodexRemoteControlClient) -> [String: Any] {
+        [
+            "clientID": client.clientID,
+            "displayName": client.displayName ?? "",
+            "deviceType": client.deviceType ?? "",
+            "platform": client.platform ?? "",
+            "osVersion": client.osVersion ?? "",
+            "deviceModel": client.deviceModel ?? "",
+            "appVersion": client.appVersion ?? "",
+            "lastSeenAt": client.lastSeenAt.map { $0 as Any } ?? NSNull()
         ]
     }
 

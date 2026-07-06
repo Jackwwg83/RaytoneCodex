@@ -2290,6 +2290,13 @@ public actor CodexAppServerClient {
         return Self.remoteControlClientCatalog(from: result)
     }
 
+    public func revokeRemoteControlClient(environmentID: String, clientID: String) async throws {
+        _ = try await request(method: "remoteControl/client/revoke", params: .object([
+            "environmentId": .string(environmentID),
+            "clientId": .string(clientID)
+        ]))
+    }
+
     public func listRealtimeVoices() async throws -> CodexRealtimeVoices {
         let result = try await request(method: "thread/realtime/listVoices", params: .object([:]))
         return Self.realtimeVoices(from: result["voices"] ?? result)

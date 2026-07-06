@@ -1792,6 +1792,11 @@ struct SettingsRouteView: View {
                                         .lineLimit(2)
                                 }
                                 Spacer(minLength: 0)
+                                Button("撤销") {
+                                    Task { await store.revokeRemoteControlClient(client) }
+                                }
+                                .buttonStyle(ChipButtonStyle())
+                                .disabled(store.runtimeCatalogIsRefreshing)
                             }
                         }
                     }

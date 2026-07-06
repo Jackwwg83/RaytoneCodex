@@ -3543,6 +3543,40 @@ final class SessionStore: ObservableObject {
         runtimeCatalogIsRefreshing = false
     }
 
+    func revokeRemoteControlClient(_ remoteClient: CodexRemoteControlClient, confirm: Bool = true) async {
+        let environmentID = runtimeRemoteControlStatus?.environmentID ?? runtimeRemoteControlPairing?.environmentID
+        guard let environmentID, !environmentID.isEmpty else {
+            runtimeCatalogStatusText = "remoteControl/client/revoke：当前没有 environmentId"
+            return
+        }
+        guard !remoteClient.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            runtimeCatalogStatusText = "remoteControl/client/revoke：缺少 clientId"
+            return
+        }
+        guard !confirm || confirmRemoteControlClientRevoke(remoteClient) else {
+            return
+        }
+
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在撤销 \(remoteClient.displayName ?? remoteClient.clientID)…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false, remoteControl: true)
+            try await client.revokeRemoteControlClient(
+                environmentID: environmentID,
+                clientID: remoteClient.clientID
+            )
+            try await loadRemoteControlClientsIfAvailable(using: client, environmentID: environmentID)
+            runtimeCatalogStatusText = "remoteControl/client/revoke：已撤销 \(remoteClient.displayName ?? remoteClient.clientID)"
+        } catch {
+            runtimeCatalogStatusText = "remoteControl/client/revoke 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
     private func applyRemoteControlStatus(_ status: CodexRuntimeRemoteControlStatus) {
         runtimeRemoteControlStatus = status
         workspaceExecutionMode = status.status == "disabled" ? .local : .cloudPending
@@ -3567,6 +3601,16 @@ final class SessionStore: ObservableObject {
         let catalog = try await client.listRemoteControlClients(environmentID: environmentID)
         runtimeRemoteControlClients = catalog.clients
         runtimeRemoteControlClientsNextCursor = catalog.nextCursor
+    }
+
+    private func confirmRemoteControlClientRevoke(_ client: CodexRemoteControlClient) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "撤销授权客户端？"
+        alert.informativeText = "将通过 Codex app-server 调用 remoteControl/client/revoke，撤销 \(client.displayName ?? client.clientID)。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "撤销")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func togglePluginInstallation(_ plugin: CodexRuntimePlugin) async {
