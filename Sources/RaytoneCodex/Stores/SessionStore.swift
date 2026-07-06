@@ -126,6 +126,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimeLoadedThreadsStatusText = "未读取"
     @Published var runtimeThreadMetadataStatusText = "未同步"
     @Published var runtimeThreadSyncStatusText = "未同步"
+    @Published var runtimeThreadSearchSnippets: [String: String] = [:]
     @Published var workspaceGitDiff: CodexRuntimeGitDiff?
     @Published var workspaceGitStatusText = ""
     @Published var workspacePullRequestStatusText = "未刷新"
@@ -3557,17 +3558,41 @@ final class SessionStore: ObservableObject {
     }
 
     func refreshRuntimeThreads(searchTerm: String? = nil, limit: Int = 50) async {
-        runtimeThreadSyncStatusText = "正在读取 thread/list…"
+        let trimmedSearch = searchTerm?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        runtimeThreadSyncStatusText = trimmedSearch.isEmpty ? "正在读取 thread/list…" : "正在搜索 thread/search…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            if !trimmedSearch.isEmpty {
+                do {
+                    let catalog = try await client.searchThreads(
+                        searchTerm: trimmedSearch,
+                        archived: false,
+                        limit: limit
+                    )
+                    runtimeThreadSearchSnippets = Dictionary(
+                        uniqueKeysWithValues: catalog.results.map { ($0.thread.id, $0.snippet) }
+                    )
+                    mergeRuntimeThreads(catalog.results.map(\.thread))
+                    runtimeThreadSyncStatusText = "thread/search：\(catalog.results.count) 个匹配"
+                    return
+                } catch {
+                    runtimeThreadSearchSnippets = [:]
+                    runtimeThreadSyncStatusText = "thread/search 失败，降级 thread/list…"
+                }
+            } else {
+                runtimeThreadSearchSnippets = [:]
+            }
+
             let catalog = try await client.listThreads(
                 archived: false,
                 cwd: nil,
                 limit: limit,
-                searchTerm: searchTerm
+                searchTerm: trimmedSearch.isEmpty ? nil : trimmedSearch
             )
             mergeRuntimeThreads(catalog.threads)
-            runtimeThreadSyncStatusText = "thread/list：\(catalog.threads.count) 个历史对话"
+            runtimeThreadSyncStatusText = trimmedSearch.isEmpty
+                ? "thread/list：\(catalog.threads.count) 个历史对话"
+                : "thread/list：\(catalog.threads.count) 个标题匹配"
         } catch {
             runtimeThreadSyncStatusText = "历史对话读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]

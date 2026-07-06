@@ -29,6 +29,7 @@ struct SidebarView: View {
             } else {
                 runtimeSearchTask?.cancel()
                 runtimeSearchTask = nil
+                store.runtimeThreadSearchSnippets = [:]
             }
         }
         .onDisappear {
@@ -104,7 +105,12 @@ struct SidebarView: View {
                 .padding(.top, 2)
 
                 ForEach(visibleProjects) { project in
-                    ProjectGroup(store: store, project: project, threads: threads(in: project))
+                    ProjectGroup(
+                        store: store,
+                        project: project,
+                        threads: threads(in: project),
+                        showSnippets: !trimmedSearch.isEmpty
+                    )
                 }
 
                 if visibleProjects.isEmpty {
@@ -205,8 +211,15 @@ struct SidebarView: View {
         guard !trimmedSearch.isEmpty else { return all }
         if project.name.lowercased().contains(trimmedSearch) { return all }
         return all.filter {
-            $0.title.lowercased().contains(trimmedSearch) || $0.preview.lowercased().contains(trimmedSearch)
+            $0.title.lowercased().contains(trimmedSearch) ||
+                $0.preview.lowercased().contains(trimmedSearch) ||
+                runtimeSnippet(for: $0).lowercased().contains(trimmedSearch)
         }
+    }
+
+    private func runtimeSnippet(for thread: ChatThread) -> String {
+        guard let threadID = thread.appServerThreadID else { return "" }
+        return store.runtimeThreadSearchSnippets[threadID] ?? ""
     }
 }
 
@@ -254,6 +267,7 @@ private struct ProjectGroup: View {
     @ObservedObject var store: SessionStore
     let project: Project
     let threads: [ChatThread]
+    let showSnippets: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -288,6 +302,7 @@ private struct ProjectGroup: View {
                         SidebarThreadRow(
                             store: store,
                             thread: thread,
+                            searchSnippet: runtimeSnippet(for: thread),
                             isSelected: store.selectedThreadID == thread.id
                         )
                     }
@@ -296,11 +311,18 @@ private struct ProjectGroup: View {
             }
         }
     }
+
+    private func runtimeSnippet(for thread: ChatThread) -> String {
+        guard showSnippets else { return "" }
+        guard let threadID = thread.appServerThreadID else { return "" }
+        return store.runtimeThreadSearchSnippets[threadID] ?? ""
+    }
 }
 
 private struct SidebarThreadRow: View {
     @ObservedObject var store: SessionStore
     let thread: ChatThread
+    let searchSnippet: String
     let isSelected: Bool
 
     @State private var hovering = false
@@ -309,21 +331,30 @@ private struct SidebarThreadRow: View {
         Button {
             store.selectThread(thread)
         } label: {
-            HStack(spacing: 8) {
-                Text(thread.title)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                    .foregroundStyle(isSelected ? .primary : Color.primary.opacity(0.82))
-                    .lineLimit(1)
-                Spacer(minLength: 6)
-                if isWorking {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.7)
-                        .frame(width: 14, height: 14)
-                } else {
-                    Text(RelativeTime.short(thread.updatedAt))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(thread.title)
+                        .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                        .foregroundStyle(isSelected ? .primary : Color.primary.opacity(0.82))
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    if isWorking {
+                        ProgressView()
+                            .controlSize(.small)
+                            .scaleEffect(0.7)
+                            .frame(width: 14, height: 14)
+                    } else {
+                        Text(RelativeTime.short(thread.updatedAt))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                if !searchSnippet.isEmpty {
+                    Text(searchSnippet)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
             .padding(.leading, 25)

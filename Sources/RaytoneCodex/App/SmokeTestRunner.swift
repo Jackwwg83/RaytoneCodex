@@ -6205,11 +6205,17 @@ enum SmokeTestRunner {
             reloaded.workspacePath = workspacePath
             await reloaded.refreshRuntime()
             await reloaded.refreshRuntimeThreads(searchTerm: marker, limit: 10)
+            let historySearchStatus = reloaded.runtimeThreadSyncStatusText
+            let historySearchSnippet = reloaded.runtimeThreadSearchSnippets[createdThreadID] ??
+                reloaded.runtimeThreadSearchSnippets.values.first(where: { $0.contains(marker) }) ??
+                ""
 
             let historyThread = reloaded.threads.first { thread in
                 thread.appServerThreadID == createdThreadID ||
                     thread.title.localizedCaseInsensitiveContains(marker) ||
-                    thread.preview.localizedCaseInsensitiveContains(marker)
+                    thread.preview.localizedCaseInsensitiveContains(marker) ||
+                    (thread.appServerThreadID.flatMap { reloaded.runtimeThreadSearchSnippets[$0] } ?? "")
+                        .localizedCaseInsensitiveContains(marker)
             }
             if let historyThread {
                 reloaded.selectThread(historyThread)
@@ -6230,6 +6236,8 @@ enum SmokeTestRunner {
                 !store.isRunning &&
                 !usedExecFallback &&
                 initialAgentMessages == [marker] &&
+                historySearchStatus.hasPrefix("thread/search") &&
+                historySearchSnippet.localizedCaseInsensitiveContains(marker) &&
                 historyThread != nil &&
                 loadedUserMessages.contains(prompt) &&
                 loadedAgentMessages == [marker]
@@ -6243,7 +6251,8 @@ enum SmokeTestRunner {
                 "marker": marker,
                 "createdThreadID": createdThreadID,
                 "usedExecFallback": usedExecFallback,
-                "historySyncStatus": reloaded.runtimeThreadSyncStatusText,
+                "historySyncStatus": historySearchStatus,
+                "historySearchSnippet": historySearchSnippet,
                 "historyThreadFound": historyThread != nil,
                 "loadedTranscriptItemCount": loadedItems.count,
                 "initialAgentMessages": initialAgentMessages,

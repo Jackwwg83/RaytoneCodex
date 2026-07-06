@@ -1333,6 +1333,30 @@ public struct CodexRuntimeThreadCatalog: Equatable, Sendable {
     }
 }
 
+public struct CodexRuntimeThreadSearchCatalog: Equatable, Sendable {
+    public var results: [CodexRuntimeThreadSearchResult]
+    public var nextCursor: String?
+    public var backwardsCursor: String?
+
+    public init(results: [CodexRuntimeThreadSearchResult], nextCursor: String?, backwardsCursor: String?) {
+        self.results = results
+        self.nextCursor = nextCursor
+        self.backwardsCursor = backwardsCursor
+    }
+}
+
+public struct CodexRuntimeThreadSearchResult: Equatable, Sendable, Identifiable {
+    public var thread: CodexRuntimeThreadSummary
+    public var snippet: String
+
+    public var id: String { thread.id }
+
+    public init(thread: CodexRuntimeThreadSummary, snippet: String) {
+        self.thread = thread
+        self.snippet = snippet
+    }
+}
+
 public struct CodexRuntimeLoadedThreadCatalog: Equatable, Sendable {
     public var threadIDs: [String]
     public var nextCursor: String?
@@ -2665,6 +2689,29 @@ public actor CodexAppServerClient {
 
         let result = try await request(method: "thread/list", params: .object(params))
         return Self.threadCatalog(from: result)
+    }
+
+    public func searchThreads(
+        searchTerm: String,
+        archived: Bool? = false,
+        limit: Int = 25,
+        cursor: String? = nil
+    ) async throws -> CodexRuntimeThreadSearchCatalog {
+        var params: [String: JSONValue] = [
+            "searchTerm": .string(searchTerm),
+            "limit": .number(Double(limit)),
+            "sortKey": .string("updated_at"),
+            "sortDirection": .string("desc")
+        ]
+        if let archived {
+            params["archived"] = .bool(archived)
+        }
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/search", params: .object(params))
+        return Self.threadSearchCatalog(from: result)
     }
 
     public func listLoadedThreads(limit: Int? = 100, cursor: String? = nil) async throws -> CodexRuntimeLoadedThreadCatalog {
@@ -4266,6 +4313,25 @@ public actor CodexAppServerClient {
             threads: result["data"]?.arrayValue?.compactMap(threadSummary(from:)) ?? [],
             nextCursor: result["nextCursor"]?.stringValue,
             backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func threadSearchCatalog(from result: JSONValue) -> CodexRuntimeThreadSearchCatalog {
+        CodexRuntimeThreadSearchCatalog(
+            results: result["data"]?.arrayValue?.compactMap(threadSearchResult(from:)) ?? [],
+            nextCursor: result["nextCursor"]?.stringValue,
+            backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func threadSearchResult(from value: JSONValue) -> CodexRuntimeThreadSearchResult? {
+        guard let threadValue = value["thread"],
+              let thread = threadSummary(from: threadValue) else {
+            return nil
+        }
+        return CodexRuntimeThreadSearchResult(
+            thread: thread,
+            snippet: value["snippet"]?.stringValue ?? ""
         )
     }
 
