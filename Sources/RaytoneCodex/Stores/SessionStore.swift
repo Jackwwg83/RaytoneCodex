@@ -7312,6 +7312,7 @@ final class SessionStore: ObservableObject {
             activeAppServerTurnID = nil
             handleCompletedTurn(params?["turn"])
             clearLocalActiveGoalIfNeeded()
+            refreshProviderUsageAfterCompletedTurn()
             if sideChatStatusText.hasPrefix("已提交") ||
                 sideChatStatusText.hasPrefix("已追加") ||
                 sideChatStatusText.hasPrefix("正在通过 turn/start") ||
@@ -7475,6 +7476,11 @@ final class SessionStore: ObservableObject {
         default:
             break
         }
+    }
+
+    private func refreshProviderUsageAfterCompletedTurn() {
+        guard selectedProvider.usesSidecar else { return }
+        Task { await refreshSelectedProviderUsage() }
     }
 
     private func handleThreadStartedNotification(_ params: JSONValue?) {

@@ -3765,10 +3765,13 @@ enum SmokeTestRunner {
                 try store.saveProviderAPIKey("raytone-smoke-key", providerID: providerID)
                 await store.refreshRuntime()
                 await store.testProviderConnection(providerID: providerID)
-                let usageResponse = try await postProviderUsageSmokeRequest(
+                let directUsageResponse = try await postProviderUsageSmokeRequest(
                     sidecarBaseURL: store.providerConnectionBaseURL,
                     model: editedModel
                 )
+                store.prompt = "请回复 Raytone provider usage smoke OK，验证 Codex app-server 正在使用 sidecar Provider。"
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
                 await store.refreshSelectedProviderUsage()
 
                 let codexConfigText = (try? String(
@@ -3783,6 +3786,10 @@ enum SmokeTestRunner {
                 let persistedConfigText = (try? String(contentsOf: persistedConfigURL, encoding: .utf8)) ?? ""
                 let persistedProvider = store.runtimeConfig?.raytoneProviders.first { $0.id == providerID }
                 let providerUsage = store.providerUsage
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
                 let syncedModels = [editedModel, "smoke-secondary-model"]
                 let ok = store.runtimeSnapshot.executable != nil &&
                     store.selectedProviderID == providerID &&
@@ -3811,20 +3818,25 @@ enum SmokeTestRunner {
                     proxyConfigText.contains("model = \"\(editedModel)\"") &&
                     proxyConfigText.contains("smoke-secondary-model") &&
                     proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"") &&
-                    usageResponse.contains("\"total_tokens\":18") &&
+                    directUsageResponse.contains("\"total_tokens\":18") &&
+                    agentMessages.contains("Raytone provider usage smoke OK") &&
                     providerUsage?.provider == providerID &&
                     providerUsage?.model == editedModel &&
-                    providerUsage?.requests == 1 &&
-                    providerUsage?.successfulResponses == 1 &&
-                    providerUsage?.totalTokens == 18 &&
-                    providerUsage?.reasoningTokens == 3
+                    (providerUsage?.requests ?? 0) >= 2 &&
+                    (providerUsage?.successfulResponses ?? 0) >= 2 &&
+                    (providerUsage?.totalTokens ?? 0) >= 36 &&
+                    (providerUsage?.reasoningTokens ?? 0) >= 6
                 let upstreamRequestLog = (try? String(contentsOf: server.requestLogURL, encoding: .utf8)) ?? ""
+                let chatCompletionRequestCount =
+                    upstreamRequestLog.components(separatedBy: "\"path\":\"/v1/chat/completions\"").count - 1 +
+                    upstreamRequestLog.components(separatedBy: "\"path\":\"\\/v1\\/chat\\/completions\"").count - 1
                 let upstreamVerified = (
                     upstreamRequestLog.contains("\"path\":\"/v1/models\"") ||
                         upstreamRequestLog.contains("\"path\":\"\\/v1\\/models\"")
                 ) &&
-                    upstreamRequestLog.contains("\"path\":\"/v1/chat/completions\"") &&
-                    upstreamRequestLog.contains("\"authorization\":\"Bearer raytone-smoke-key\"")
+                    chatCompletionRequestCount >= 2 &&
+                    upstreamRequestLog.contains("\"authorization\":\"Bearer raytone-smoke-key\"") &&
+                    upstreamRequestLog.contains("sidecar Provider")
                 let finalOK = ok && upstreamVerified
 
                 await store.stopAppServerForTesting()
@@ -3845,7 +3857,9 @@ enum SmokeTestRunner {
                     "detail": store.providerConnectionDetailText,
                     "sidecar": store.sidecarStatusText,
                     "usageStatus": store.providerUsageStatusText,
-                    "usageResponse": usageResponse,
+                    "directUsageResponse": directUsageResponse,
+                    "chatCompletionRequestCount": chatCompletionRequestCount,
+                    "agentMessages": agentMessages,
                     "syncedModels": store.selectedProvider.models,
                     "providerUsage": providerUsage.map { usage in
                         [
@@ -14995,6 +15009,10 @@ enum SmokeTestRunner {
             def do_POST(self):
                 length = int(self.headers.get("content-length") or "0")
                 body = self.rfile.read(length).decode("utf-8", "replace")
+                try:
+                    request_body = json.loads(body) if body else {}
+                except Exception:
+                    request_body = {}
                 with log_file.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps({
                         "method": "POST",
@@ -15006,11 +15024,57 @@ enum SmokeTestRunner {
                     self.send_response(404)
                     self.end_headers()
                     return
+                model = models[0] if models else "smoke-model"
+                if request_body.get("stream"):
+                    chunks = [
+                        {
+                            "id": "chatcmpl-raytone-usage",
+                            "object": "chat.completion.chunk",
+                            "created": 0,
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": "Raytone provider usage smoke OK"},
+                                "finish_reason": None,
+                            }],
+                        },
+                        {
+                            "id": "chatcmpl-raytone-usage",
+                            "object": "chat.completion.chunk",
+                            "created": 0,
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop",
+                            }],
+                            "usage": {
+                                "prompt_tokens": 11,
+                                "completion_tokens": 7,
+                                "total_tokens": 18,
+                                "completion_tokens_details": {
+                                    "reasoning_tokens": 3,
+                                },
+                            },
+                        },
+                    ]
+                    payload = "".join(
+                        "data: " + json.dumps(chunk, separators=(",", ":")) + "\n\n"
+                        for chunk in chunks
+                    ) + "data: [DONE]\n\n"
+                    data = payload.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("content-type", "text/event-stream")
+                    self.send_header("cache-control", "no-cache")
+                    self.send_header("content-length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 payload = json.dumps({
                     "id": "chatcmpl-raytone-usage",
                     "object": "chat.completion",
                     "created": 0,
-                    "model": models[0] if models else "smoke-model",
+                    "model": model,
                     "choices": [{
                         "index": 0,
                         "message": {
