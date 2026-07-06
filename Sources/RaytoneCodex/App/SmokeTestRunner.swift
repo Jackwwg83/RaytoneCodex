@@ -10614,23 +10614,49 @@ enum SmokeTestRunner {
 
                 await store.refreshIntegrationRuntime(forceRefetchApps: true)
                 let deadline = Date().addingTimeInterval(8)
-                while Date() < deadline && store.runtimeApps.isEmpty {
+                while Date() < deadline &&
+                    (store.runtimeApps.isEmpty || !store.runtimeAppsStatusText.contains("app/list/updated")) {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                 }
                 let apps = store.runtimeApps
                 let status = store.runtimeCatalogStatusText
-                let appStatus = store.runtimeAppsStatusText
+                let initialAppStatus = store.runtimeAppsStatusText
                 let requirements = store.runtimeRequirements
                 let permissionProfiles = store.runtimePermissionProfiles
+
+                let firstApp = apps.first
+                var disableOK = false
+                var enableOK = false
+                var disabledStatus = ""
+                var enabledStatus = ""
+                var disabledApp: CodexRuntimeAppInfo?
+                var enabledApp: CodexRuntimeAppInfo?
+                if let firstApp {
+                    disableOK = await store.setRuntimeAppEnabled(firstApp, enabled: false)
+                    disabledStatus = store.runtimeCatalogStatusText
+                    disabledApp = store.runtimeApps.first { $0.id == firstApp.id }
+                    if let disabledApp {
+                        enableOK = await store.setRuntimeAppEnabled(disabledApp, enabled: true)
+                    }
+                    enabledStatus = store.runtimeCatalogStatusText
+                    enabledApp = store.runtimeApps.first { $0.id == firstApp.id }
+                }
+
                 await store.stopAppServerForTesting()
 
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                let firstApp = apps.first
+                let configWriteCount = logText.components(separatedBy: #""method":"config/value/write""#).count - 1
                 let ok = apps.count == 1 &&
                     firstApp?.id == "raytone-snapshot-app" &&
                     firstApp?.screenshotPrompts == ["打开设置并截取主窗口"] &&
                     firstApp?.installURL == "https://chatgpt.com/apps/raytone/snapshot" &&
-                    appStatus.contains("app/list/updated") &&
+                    initialAppStatus.contains("app/list/updated") &&
+                    disableOK &&
+                    enableOK &&
+                    disabledApp?.isEnabled == false &&
+                    enabledApp?.isEnabled == true &&
+                    disabledStatus.contains("config/value/write + app/list") &&
+                    enabledStatus.contains("config/value/write + app/list") &&
                     requirements?.allowedApprovalPolicies == ["on-request", "never"] &&
                     requirements?.allowedSandboxModes == ["read-only", "workspace-write"] &&
                     requirements?.allowedPermissionProfiles[":workspace"] == true &&
@@ -10643,7 +10669,9 @@ enum SmokeTestRunner {
                     logText.contains(#""method":"app/list""#) &&
                     logText.contains(#""method":"configRequirements/read""#) &&
                     logText.contains(#""method":"permissionProfile/list""#) &&
-                    logText.contains(#""forceRefetch":true"#)
+                    logText.contains(#""forceRefetch":true"#) &&
+                    configWriteCount == 2 &&
+                    logText.contains(#""keyPath":"apps.\"raytone-snapshot-app\".enabled""#)
 
                 emitJSON([
                     "ok": ok,
@@ -10651,9 +10679,28 @@ enum SmokeTestRunner {
                     "fakeExecutable": scriptURL.path,
                     "requestLog": logURL.path,
                     "status": status,
-                    "appStatus": appStatus,
+                    "initialAppStatus": initialAppStatus,
                     "appCount": apps.count,
                     "appsWithScreenshotMetadata": apps.filter { !$0.screenshotPrompts.isEmpty }.count,
+                    "disableOK": disableOK,
+                    "enableOK": enableOK,
+                    "disabledStatus": disabledStatus,
+                    "enabledStatus": enabledStatus,
+                    "disabledApp": disabledApp.map { app in
+                        [
+                            "id": app.id,
+                            "name": app.name,
+                            "enabled": app.isEnabled
+                        ] as [String: Any]
+                    } ?? NSNull(),
+                    "enabledApp": enabledApp.map { app in
+                        [
+                            "id": app.id,
+                            "name": app.name,
+                            "enabled": app.isEnabled
+                        ] as [String: Any]
+                    } ?? NSNull(),
+                    "configValueWriteCount": configWriteCount,
                     "requirements": [
                         "allowedApprovalPolicies": requirements?.allowedApprovalPolicies ?? [],
                         "allowedSandboxModes": requirements?.allowedSandboxModes ?? [],
@@ -15107,6 +15154,7 @@ enum SmokeTestRunner {
         import sys
 
         log_path = os.environ.get("RAYTONE_APP_LIST_UPDATED_LOG")
+        app_enabled = True
 
         def log(message):
             if not log_path:
@@ -15164,11 +15212,12 @@ enum SmokeTestRunner {
                 "labels": {"source": "app-list-updated-smoke"},
                 "installUrl": "https://chatgpt.com/apps/raytone/snapshot",
                 "isAccessible": True,
-                "isEnabled": True,
+                "isEnabled": app_enabled,
                 "pluginDisplayNames": ["Browser"],
             }
 
         def result_for(method, params):
+            global app_enabled
             if method == "initialize":
                 return {}
             if method == "configRequirements/read":
@@ -15232,7 +15281,13 @@ enum SmokeTestRunner {
                     }
                 }
             if method == "app/list":
-                return {"data": [], "nextCursor": None}
+                return {"data": [app_payload()], "nextCursor": None}
+            if method == "config/value/write":
+                key_path = params.get("keyPath", "")
+                if "raytone-snapshot-app" in key_path and key_path.endswith(".enabled"):
+                    app_enabled = bool(params.get("value"))
+                    return {"status": "ok", "filePath": "/tmp/raytone-codex-config.toml"}
+                raise ValueError(f"unexpected config key {key_path}")
             if method == "remoteControl/status/read":
                 return {"status": "disabled", "serverName": "fake", "installationId": "fake-installation", "environmentId": None}
             if method == "permissionProfile/list":

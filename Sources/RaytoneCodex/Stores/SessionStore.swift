@@ -5063,6 +5063,7 @@ final class SessionStore: ObservableObject {
     @discardableResult
     func setRuntimeAppEnabled(_ app: CodexRuntimeAppInfo, enabled: Bool) async -> Bool {
         runtimeCatalogIsRefreshing = true
+        let completedText = enabled ? "已启用" : "已停用"
         runtimeCatalogStatusText = "正在写入 apps.\(app.id).enabled…"
         runtimeCatalogErrors = []
 
@@ -5073,11 +5074,16 @@ final class SessionStore: ObservableObject {
                 value: .bool(enabled)
             )
             await refreshIntegrationRuntime(forceRefetchApps: true)
-            if let index = runtimeApps.firstIndex(where: { $0.id == app.id }) {
-                runtimeApps[index].isEnabled = enabled
-            }
+            let updatedApp = runtimeApps.first { $0.id == app.id }
             let snapshotCount = runtimeApps.filter { !$0.screenshotPrompts.isEmpty }.count
-            runtimeCatalogStatusText = "config/value/write：\(app.name) 已\(enabled ? "启用" : "停用")"
+            if updatedApp?.isEnabled == enabled {
+                runtimeCatalogStatusText = "config/value/write + app/list：\(app.name) \(completedText)"
+            } else if let updatedApp {
+                let observedText = updatedApp.isEnabled ? "启用" : "停用"
+                runtimeCatalogStatusText = "config/value/write：已提交；app/list 仍显示\(observedText)"
+            } else {
+                runtimeCatalogStatusText = "config/value/write：已提交；app/list 未找到 \(app.name)"
+            }
             runtimeAppsStatusText = "app/list：\(runtimeApps.count) 个 app · \(snapshotCount) 个含快照说明"
             runtimeCatalogIsRefreshing = false
             return true
