@@ -1976,6 +1976,7 @@ final class SessionStore: ObservableObject {
 
     func startVoiceInput() async {
         await refreshRealtimeVoicesForVoiceInput()
+        _ = await startRealtimeTextSessionForVoiceInput()
 
         let didStart = NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
         guard !didStart else {
@@ -1988,6 +1989,69 @@ final class SessionStore: ObservableObject {
                 level: .info,
                 text: "系统没有接受听写命令。Codex realtime 已读取 \(runtimeRealtimeVoicesSummary)。请确认 macOS 已启用听写，或把焦点放到输入框后再点麦克风。"
             ))))
+        }
+    }
+
+    @discardableResult
+    func startRealtimeTextSessionForVoiceInput(
+        prompt: String = "RaytoneCodex macOS 麦克风输入，请把随后追加的文本作为用户语音转写。"
+    ) async -> Bool {
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let threadID = try await ensureAppServerThread(client: client, options: appServerOptions())
+            try await client.startRealtime(
+                threadID: threadID,
+                outputModality: "text",
+                prompt: prompt,
+                voice: runtimeRealtimeVoices?.defaultV2.isEmpty == false ? runtimeRealtimeVoices?.defaultV2 : nil
+            )
+            voiceInputStatusText = "thread/realtime/start：文本会话已启动"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return true
+        } catch {
+            voiceInputStatusText = "thread/realtime/start 失败，继续系统听写：\(error.localizedDescription)"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return false
+        }
+    }
+
+    func appendRealtimeTextForVoiceInput(_ text: String) async -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard let client = appServerClient,
+              let threadID = selectedThread.appServerThreadID else {
+            voiceInputStatusText = "thread/realtime/appendText：没有活动 realtime 线程"
+            return false
+        }
+
+        do {
+            try await client.appendRealtimeText(threadID: threadID, text: trimmed)
+            voiceInputStatusText = "thread/realtime/appendText：已追加文本"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return true
+        } catch {
+            voiceInputStatusText = "thread/realtime/appendText 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return false
+        }
+    }
+
+    func stopRealtimeVoiceInput() async -> Bool {
+        guard let client = appServerClient,
+              let threadID = selectedThread.appServerThreadID else {
+            voiceInputStatusText = "thread/realtime/stop：没有活动 realtime 线程"
+            return false
+        }
+
+        do {
+            try await client.stopRealtime(threadID: threadID)
+            voiceInputStatusText = "thread/realtime/stop：已停止"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return true
+        } catch {
+            voiceInputStatusText = "thread/realtime/stop 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = voiceInputStatusText
+            return false
         }
     }
 

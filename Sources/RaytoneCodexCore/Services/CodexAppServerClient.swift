@@ -3161,6 +3161,39 @@ public actor CodexAppServerClient {
         return Self.realtimeVoices(from: result["voices"] ?? result)
     }
 
+    public func startRealtime(
+        threadID: String,
+        outputModality: String = "text",
+        prompt: String? = nil,
+        realtimeSessionID: String? = nil,
+        voice: String? = nil
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "outputModality": .string(outputModality),
+            "realtimeSessionId": realtimeSessionID.map(JSONValue.string) ?? .null,
+            "transport": .null,
+            "voice": voice.map(JSONValue.string) ?? .null
+        ]
+        if let prompt {
+            params["prompt"] = .string(prompt)
+        }
+        _ = try await request(method: "thread/realtime/start", params: .object(params))
+    }
+
+    public func appendRealtimeText(threadID: String, text: String) async throws {
+        _ = try await request(method: "thread/realtime/appendText", params: .object([
+            "threadId": .string(threadID),
+            "text": .string(text)
+        ]))
+    }
+
+    public func stopRealtime(threadID: String) async throws {
+        _ = try await request(method: "thread/realtime/stop", params: .object([
+            "threadId": .string(threadID)
+        ]))
+    }
+
     public func resetMemory() async throws {
         _ = try await request(method: "memory/reset", params: nil)
     }

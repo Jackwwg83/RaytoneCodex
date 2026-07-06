@@ -129,6 +129,8 @@ enum SmokeTestRunner {
             runRemoteControlRevokeSmoke()
         } else if CommandLine.arguments.contains("--realtime-voices-smoke-test") {
             runRealtimeVoicesSmoke()
+        } else if CommandLine.arguments.contains("--realtime-session-smoke-test") {
+            runRealtimeSessionSmoke()
         } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
             runAccessModeSmoke()
         } else if CommandLine.arguments.contains("--personality-smoke-test") {
@@ -10146,6 +10148,118 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runRealtimeSessionSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexRealtimeSessionSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeRealtimeSessionAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-realtime-session"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_REALTIME_SESSION_LOG": logURL.path
+                ]
+
+                fputs("realtime-session-smoke: list voices\n", stderr)
+                await store.refreshRealtimeVoicesForVoiceInput()
+                let voices = store.runtimeRealtimeVoices
+
+                fputs("realtime-session-smoke: start realtime\n", stderr)
+                let started = await store.startRealtimeTextSessionForVoiceInput(prompt: "Raytone realtime session smoke prompt")
+
+                fputs("realtime-session-smoke: append text\n", stderr)
+                let appended = await store.appendRealtimeTextForVoiceInput("Raytone realtime append text smoke")
+
+                fputs("realtime-session-smoke: stop realtime\n", stderr)
+                let stopped = await store.stopRealtimeVoiceInput()
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""realtimeStopped":true"#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let transcriptTexts = store.selectedThread.items.compactMap { item -> String? in
+                    switch item.kind {
+                    case let .userMessage(text), let .agentMessage(text):
+                        return text
+                    default:
+                        return nil
+                    }
+                }
+                let requestObserved = logText.contains(#""method":"thread/realtime/listVoices""#) &&
+                    logText.contains(#""method":"thread/start""#) &&
+                    logText.contains(#""method":"thread/realtime/start""#) &&
+                    logText.contains(#""outputModality":"text""#) &&
+                    logText.contains(#""voice":"marin""#) &&
+                    logText.contains("Raytone realtime session smoke prompt") &&
+                    logText.contains(#""method":"thread/realtime/appendText""#) &&
+                    logText.contains("Raytone realtime append text smoke") &&
+                    logText.contains(#""method":"thread/realtime/stop""#)
+                let notificationObserved = transcriptTexts.contains("Raytone realtime append text smoke") &&
+                    (
+                        store.voiceInputStatusText.contains("已停止") ||
+                        store.voiceInputStatusText.contains("已关闭")
+                    )
+                let ok = started &&
+                    appended &&
+                    stopped &&
+                    requestObserved &&
+                    notificationObserved &&
+                    voices?.defaultV2 == "marin" &&
+                    store.selectedThread.appServerThreadID == "thread-realtime-smoke"
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "started": started,
+                    "appended": appended,
+                    "stopped": stopped,
+                    "requestObserved": requestObserved,
+                    "notificationObserved": notificationObserved,
+                    "voiceInputStatusText": store.voiceInputStatusText,
+                    "threadID": store.selectedThread.appServerThreadID ?? "",
+                    "voices": realtimeVoicesPayload(voices),
+                    "transcriptTexts": transcriptTexts,
+                    "requestLogPreview": String(logText.prefix(2600)),
+                    "source": "thread/realtime/listVoices + start + appendText + stop"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runSlashSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -10568,6 +10682,111 @@ enum SmokeTestRunner {
                     continue
                 clients = [client for client in clients if client.get("clientId") != client_id]
                 send_result(request_id, {})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeRealtimeSessionAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_REALTIME_SESSION_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/realtime/listVoices":
+                send_result(request_id, {
+                    "voices": {
+                        "v1": ["alloy"],
+                        "v2": ["marin", "cedar"],
+                        "defaultV1": "alloy",
+                        "defaultV2": "marin",
+                    }
+                })
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-realtime-smoke",
+                        "sessionId": "session-realtime-smoke",
+                        "name": "Realtime smoke",
+                        "preview": "Realtime smoke",
+                        "cwd": os.getcwd(),
+                        "createdAt": 1700000000,
+                        "updatedAt": 1700000001,
+                        "status": {"type": "active", "activeFlags": []},
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only",
+                })
+            elif method == "thread/realtime/start":
+                send_result(request_id, {})
+                send_notification("thread/realtime/started", {
+                    "threadId": "thread-realtime-smoke",
+                    "realtimeSessionId": "rt-session-smoke",
+                    "version": "v2",
+                })
+                log({"realtimeStarted": True, "params": params})
+            elif method == "thread/realtime/appendText":
+                text = params.get("text", "")
+                send_result(request_id, {})
+                send_notification("thread/realtime/transcript/delta", {
+                    "threadId": "thread-realtime-smoke",
+                    "role": "user",
+                    "delta": text,
+                })
+                send_notification("thread/realtime/transcript/done", {
+                    "threadId": "thread-realtime-smoke",
+                    "role": "user",
+                    "text": text,
+                })
+                log({"realtimeAppendText": text})
+            elif method == "thread/realtime/stop":
+                send_result(request_id, {})
+                send_notification("thread/realtime/closed", {
+                    "threadId": "thread-realtime-smoke",
+                    "reason": "requested",
+                })
+                log({"realtimeStopped": True})
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
