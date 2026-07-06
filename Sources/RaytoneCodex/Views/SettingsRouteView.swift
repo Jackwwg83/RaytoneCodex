@@ -678,6 +678,7 @@ struct SettingsRouteView: View {
             ], spacing: 12) {
                 accountSummaryCard
                 tokenUsageSummaryCard
+                threadTokenUsageSummaryCard
                 providerUsageSummaryCard
             }
 
@@ -888,6 +889,38 @@ struct SettingsRouteView: View {
                 metricRow("最长任务", durationText(store.runtimeTokenUsage?.longestRunningTurnSec))
                 metricRow("连续天数", daysText(store.runtimeTokenUsage?.currentStreakDays))
                 metricRow("最长连续", daysText(store.runtimeTokenUsage?.longestStreakDays))
+            }
+        }
+    }
+
+    private var threadTokenUsageSummaryCard: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "waveform.path.ecg.rectangle")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("当前线程")
+                        .font(.system(size: 13.5, weight: .semibold))
+                    Spacer(minLength: 0)
+                    statusBadge(store.selectedThreadTokenUsage == nil ? "未返回" : "实时", ok: store.selectedThreadTokenUsage != nil)
+                }
+
+                if let usage = store.selectedThreadTokenUsage {
+                    metricRow("线程", threadTokenUsageThreadText(usage.threadID))
+                    metricRow("Turn", usage.turnID)
+                    metricRow("总 Token", tokenText(usage.total.totalTokens))
+                    metricRow("最近一轮", tokenText(usage.last.totalTokens))
+                    metricRow("输入 / 输出", "\(tokenText(usage.total.inputTokens)) / \(tokenText(usage.total.outputTokens))")
+                    metricRow("缓存输入", tokenText(usage.total.cachedInputTokens))
+                    metricRow("推理输出", tokenText(usage.total.reasoningOutputTokens))
+                    metricRow("上下文窗口", tokenText(usage.modelContextWindow))
+                    metricRow("来源", "thread/tokenUsage/updated")
+                } else {
+                    metricRow("状态", "等待当前线程运行或历史重放")
+                    metricRow("线程", store.selectedThread.appServerThreadID.map(threadTokenUsageThreadText) ?? "本地线程")
+                    metricRow("来源", "thread/tokenUsage/updated")
+                }
             }
         }
     }
@@ -3162,6 +3195,10 @@ struct SettingsRouteView: View {
     private func tokenText(_ value: Int?) -> String {
         guard let value else { return "未返回" }
         return SessionStore.compactNumber(value)
+    }
+
+    private func threadTokenUsageThreadText(_ threadID: String) -> String {
+        threadID.count > 12 ? "\(threadID.prefix(12))…" : threadID
     }
 
     private func daysText(_ value: Int?) -> String {

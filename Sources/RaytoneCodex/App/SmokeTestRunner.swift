@@ -8748,6 +8748,7 @@ enum SmokeTestRunner {
                 let voiceStatus = store.voiceInputStatusText
                 let runtimeStatus = store.runtimeCatalogStatusText
                 let runtimeErrors = store.runtimeCatalogErrors
+                let threadTokenUsage = store.selectedThreadTokenUsage
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
                 await store.stopAppServerForTesting()
 
@@ -8767,7 +8768,8 @@ enum SmokeTestRunner {
                     "thread/realtime/outputAudio/delta",
                     "thread/realtime/sdp",
                     "thread/realtime/error",
-                    "thread/realtime/closed"
+                    "thread/realtime/closed",
+                    "thread/tokenUsage/updated"
                 ]
                 let logHasAllMethods = expectedMethods.allSatisfy { method in
                     logText.contains(#""method":"\#(method)""#)
@@ -8786,7 +8788,12 @@ enum SmokeTestRunner {
                     voiceStatus.contains("已关闭") &&
                     notices.contains(where: { $0.contains("realtime 错误") }) &&
                     runtimeErrors.contains("realtime smoke error") &&
-                    runtimeStatus.contains("thread/realtime/closed") &&
+                    runtimeStatus.contains("thread/tokenUsage/updated") &&
+                    threadTokenUsage?.threadID == "thread-notification-smoke" &&
+                    threadTokenUsage?.turnID == "turn-notification-smoke" &&
+                    threadTokenUsage?.total.totalTokens == 200 &&
+                    threadTokenUsage?.last.outputTokens == 7 &&
+                    threadTokenUsage?.modelContextWindow == 4096 &&
                     logHasAllMethods
 
                 emitJSON([
@@ -8803,6 +8810,13 @@ enum SmokeTestRunner {
                     "voiceStatus": voiceStatus,
                     "runtimeCatalogStatus": runtimeStatus,
                     "runtimeCatalogErrors": runtimeErrors,
+                    "threadTokenUsage": [
+                        "threadId": threadTokenUsage?.threadID ?? "",
+                        "turnId": threadTokenUsage?.turnID ?? "",
+                        "totalTokens": threadTokenUsage?.total.totalTokens ?? 0,
+                        "lastOutputTokens": threadTokenUsage?.last.outputTokens ?? 0,
+                        "modelContextWindow": threadTokenUsage?.modelContextWindow ?? 0
+                    ],
                     "noticeText": notices.joined(separator: "\n"),
                     "logHasAllMethods": logHasAllMethods,
                     "requestLogPreview": String(logText.prefix(3200))
@@ -12322,6 +12336,27 @@ enum SmokeTestRunner {
             send_notification("thread/realtime/closed", {
                 "threadId": "thread-notification-smoke",
                 "reason": "smoke complete",
+            })
+            send_notification("thread/tokenUsage/updated", {
+                "threadId": "thread-notification-smoke",
+                "turnId": "turn-notification-smoke",
+                "tokenUsage": {
+                    "total": {
+                        "totalTokens": 200,
+                        "inputTokens": 120,
+                        "cachedInputTokens": 25,
+                        "outputTokens": 80,
+                        "reasoningOutputTokens": 30,
+                    },
+                    "last": {
+                        "totalTokens": 13,
+                        "inputTokens": 6,
+                        "cachedInputTokens": 2,
+                        "outputTokens": 7,
+                        "reasoningOutputTokens": 3,
+                    },
+                    "modelContextWindow": 4096,
+                },
             })
             send_notification("turn/completed", {
                 "turn": {"id": "turn-notification-smoke", "status": "completed"}

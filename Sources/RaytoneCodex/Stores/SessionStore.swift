@@ -104,6 +104,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimeAccount: CodexRuntimeAccount?
     @Published var activeAccountLogin: CodexAccountLogin?
     @Published var runtimeTokenUsage: CodexRuntimeTokenUsage?
+    @Published var threadTokenUsageByThreadID: [String: CodexRuntimeThreadTokenUsage] = [:]
+    @Published var selectedThreadTokenUsage: CodexRuntimeThreadTokenUsage?
     @Published var runtimeRateLimits: CodexRuntimeRateLimits?
     @Published var runtimeRequirements: CodexRuntimeConfigRequirements?
     @Published var runtimeRemoteControlStatus: CodexRuntimeRemoteControlStatus?
@@ -666,6 +668,7 @@ final class SessionStore: ObservableObject {
 
     func selectThread(_ thread: ChatThread) {
         selectedThreadID = thread.id
+        syncSelectedThreadTokenUsage()
         if let project = projects.first(where: { $0.id == thread.projectID }) {
             workspacePath = project.path
         }
@@ -684,6 +687,14 @@ final class SessionStore: ObservableObject {
         if thread.appServerThreadID != nil, thread.items.isEmpty {
             Task { await resumeRuntimeThread(localThreadID: thread.id, loadTranscript: true) }
         }
+    }
+
+    func syncSelectedThreadTokenUsage() {
+        guard let appServerThreadID = selectedThread.appServerThreadID else {
+            selectedThreadTokenUsage = nil
+            return
+        }
+        selectedThreadTokenUsage = threadTokenUsageByThreadID[appServerThreadID]
     }
 
     func selectThread(_ threadID: UUID) {
@@ -7277,8 +7288,10 @@ final class SessionStore: ObservableObject {
             runtimeCatalogErrors = []
             appServerConnectionState = nil
             Task { await refreshAccountUsageRuntime() }
-        case "account/rateLimits/updated", "thread/tokenUsage/updated":
+        case "account/rateLimits/updated":
             Task { await refreshAccountUsageRuntime() }
+        case "thread/tokenUsage/updated":
+            handleThreadTokenUsageUpdated(params)
         case "app/list/updated":
             let catalog = CodexAppServerClient.runtimeAppCatalog(from: params ?? .object([:]))
             runtimeApps = catalog.apps
@@ -7362,6 +7375,18 @@ final class SessionStore: ObservableObject {
         } else {
             runtimeThreadSyncStatusText = "thread/started：\(threadValue["name"]?.stringValue ?? threadValue["preview"]?.stringValue ?? threadID)"
         }
+    }
+
+    private func handleThreadTokenUsageUpdated(_ params: JSONValue?) {
+        guard let usage = CodexAppServerClient.runtimeThreadTokenUsage(from: params) else {
+            return
+        }
+
+        threadTokenUsageByThreadID[usage.threadID] = usage
+        if selectedThread.appServerThreadID == usage.threadID {
+            selectedThreadTokenUsage = usage
+        }
+        runtimeCatalogStatusText = "thread/tokenUsage/updated：当前线程 \(Self.compactNumber(usage.total.totalTokens)) token"
     }
 
     private func handleThreadStatusChanged(_ params: JSONValue?) {
@@ -9877,6 +9902,7 @@ final class SessionStore: ObservableObject {
         }
         update(&threads[index])
         threads[index].updatedAt = Date()
+        syncSelectedThreadTokenUsage()
     }
 
     private func updateThread(appServerThreadID: String, _ update: (inout ChatThread) -> Void) {

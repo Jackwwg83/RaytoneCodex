@@ -65,6 +65,7 @@ extension SessionStore {
             threads[index].personality = personality
             threads[index].updatedAt = Date()
             selectedThreadID = threads[index].id
+            syncSelectedThreadTokenUsage()
             workspacePath = project.path
             filePanelPath = project.path
             route = .thread
@@ -118,6 +119,9 @@ extension SessionStore {
         }
         let wasSelected = selectedThreadID == id
         threads.removeAll { $0.id == id }
+        if let appServerThreadID {
+            threadTokenUsageByThreadID[appServerThreadID] = nil
+        }
         if wasSelected, let next = threads.first {
             selectThread(next)
         }

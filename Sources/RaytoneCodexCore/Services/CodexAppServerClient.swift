@@ -1228,6 +1228,50 @@ public struct CodexRuntimeTokenUsageBucket: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexRuntimeThreadTokenUsage: Equatable, Sendable {
+    public var threadID: String
+    public var turnID: String
+    public var total: CodexRuntimeThreadTokenUsageBreakdown
+    public var last: CodexRuntimeThreadTokenUsageBreakdown
+    public var modelContextWindow: Int?
+
+    public init(
+        threadID: String,
+        turnID: String,
+        total: CodexRuntimeThreadTokenUsageBreakdown,
+        last: CodexRuntimeThreadTokenUsageBreakdown,
+        modelContextWindow: Int?
+    ) {
+        self.threadID = threadID
+        self.turnID = turnID
+        self.total = total
+        self.last = last
+        self.modelContextWindow = modelContextWindow
+    }
+}
+
+public struct CodexRuntimeThreadTokenUsageBreakdown: Equatable, Sendable {
+    public var totalTokens: Int
+    public var inputTokens: Int
+    public var cachedInputTokens: Int
+    public var outputTokens: Int
+    public var reasoningOutputTokens: Int
+
+    public init(
+        totalTokens: Int,
+        inputTokens: Int,
+        cachedInputTokens: Int,
+        outputTokens: Int,
+        reasoningOutputTokens: Int
+    ) {
+        self.totalTokens = totalTokens
+        self.inputTokens = inputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.outputTokens = outputTokens
+        self.reasoningOutputTokens = reasoningOutputTokens
+    }
+}
+
 public struct CodexRuntimeRateLimits: Equatable, Sendable {
     public var buckets: [CodexRuntimeRateLimitBucket]
 
@@ -4651,6 +4695,45 @@ public actor CodexAppServerClient {
             currentStreakDays: summary?["currentStreakDays"]?.intValue,
             longestStreakDays: summary?["longestStreakDays"]?.intValue,
             dailyBuckets: buckets
+        )
+    }
+
+    public static func runtimeThreadTokenUsage(from params: JSONValue?) -> CodexRuntimeThreadTokenUsage? {
+        guard let threadID = params?["threadId"]?.stringValue,
+              let turnID = params?["turnId"]?.stringValue,
+              let tokenUsage = params?["tokenUsage"],
+              let total = runtimeThreadTokenUsageBreakdown(from: tokenUsage["total"]),
+              let last = runtimeThreadTokenUsageBreakdown(from: tokenUsage["last"]) else {
+            return nil
+        }
+
+        return CodexRuntimeThreadTokenUsage(
+            threadID: threadID,
+            turnID: turnID,
+            total: total,
+            last: last,
+            modelContextWindow: tokenUsage["modelContextWindow"]?.intValue
+        )
+    }
+
+    private static func runtimeThreadTokenUsageBreakdown(
+        from value: JSONValue?
+    ) -> CodexRuntimeThreadTokenUsageBreakdown? {
+        guard let value,
+              let totalTokens = value["totalTokens"]?.intValue,
+              let inputTokens = value["inputTokens"]?.intValue,
+              let cachedInputTokens = value["cachedInputTokens"]?.intValue,
+              let outputTokens = value["outputTokens"]?.intValue,
+              let reasoningOutputTokens = value["reasoningOutputTokens"]?.intValue else {
+            return nil
+        }
+
+        return CodexRuntimeThreadTokenUsageBreakdown(
+            totalTokens: totalTokens,
+            inputTokens: inputTokens,
+            cachedInputTokens: cachedInputTokens,
+            outputTokens: outputTokens,
+            reasoningOutputTokens: reasoningOutputTokens
         )
     }
 
