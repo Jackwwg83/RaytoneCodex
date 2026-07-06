@@ -1687,6 +1687,12 @@ public enum CodexAppServerApprovalDecision: String, Sendable {
     case cancel
 }
 
+public enum CodexAppServerElicitationAction: String, Sendable {
+    case accept
+    case decline
+    case cancel
+}
+
 public enum ServerEvent: Sendable {
     case notification(method: String, params: JSONValue?)
     case serverRequest(id: CodexAppServerRequestID, method: String, params: JSONValue?)
@@ -3024,6 +3030,24 @@ public actor CodexAppServerClient {
         try respond(requestID: requestID, result: .object([
             "decision": .string(decision.rawValue)
         ]))
+    }
+
+    public func respondMcpElicitation(
+        requestID: CodexAppServerRequestID,
+        action: CodexAppServerElicitationAction,
+        content: JSONValue? = nil,
+        meta: JSONValue? = nil
+    ) async throws {
+        var result: [String: JSONValue] = [
+            "action": .string(action.rawValue)
+        ]
+        if let content {
+            result["content"] = content
+        }
+        if let meta {
+            result["_meta"] = meta
+        }
+        try respond(requestID: requestID, result: .object(result))
     }
 
     public func stop() {

@@ -27,6 +27,8 @@ enum SmokeTestRunner {
             runMCPResourceSmoke()
         } else if CommandLine.arguments.contains("--mcp-tool-smoke-test") {
             runMCPToolSmoke()
+        } else if CommandLine.arguments.contains("--mcp-elicitation-smoke-test") {
+            runMCPElicitationSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--skill-read-smoke-test") {
@@ -1409,6 +1411,104 @@ enum SmokeTestRunner {
                     "runtimeVersion": "",
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runMCPElicitationSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexMCPElicitationSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeMCPElicitationAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-mcp-elicitation"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_MCP_ELICITATION_LOG": logURL.path
+                ]
+                store.prompt = "触发 MCP 表单输入"
+
+                await store.runPrompt()
+                let elicitationItemID = await waitForMCPElicitation(in: store)
+                let defaultDraft = elicitationItemID.flatMap { store.mcpElicitationDrafts[$0] } ?? ""
+                if let elicitationItemID {
+                    store.updateMcpElicitationDraft(
+                        itemID: elicitationItemID,
+                        draft: #"{"token":"raytone-smoke-token","confirmed":true}"#
+                    )
+                    store.decideMcpElicitation(itemID: elicitationItemID, action: .accept)
+                }
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""elicitationResponse""#) &&
+                        logText.contains(#""action":"accept""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let elicitationRequests = store.selectedThread.items.compactMap { item -> McpElicitationRequest? in
+                    if case let .mcpElicitation(request) = item.kind {
+                        return request
+                    }
+                    return nil
+                }
+                let accepted = elicitationRequests.contains { request in
+                    request.status == .accepted &&
+                        request.serverName == "raytone_mcp" &&
+                        request.message.contains("访问令牌")
+                }
+                let ok = elicitationItemID != nil &&
+                    accepted &&
+                    defaultDraft.contains(#""token""#) &&
+                    defaultDraft.contains(#""confirmed""#) &&
+                    logText.contains(#""method":"turn/start""#) &&
+                    logText.contains(#""method":"mcpServer/elicitation/request""#) &&
+                    logText.contains(#""elicitationResponse""#) &&
+                    logText.contains(#""action":"accept""#) &&
+                    logText.contains(#""raytone-smoke-token""#)
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "transcriptItemCount": store.selectedThread.items.count,
+                    "elicitationCount": elicitationRequests.count,
+                    "defaultDraft": defaultDraft,
+                    "accepted": accepted,
+                    "isRunning": store.isRunning,
+                    "requestLogPreview": String(logText.prefix(2200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
                     "error": error.localizedDescription
                 ])
                 exit(1)
@@ -4911,6 +5011,23 @@ enum SmokeTestRunner {
             }
             return count
         }
+    }
+
+    @MainActor
+    private static func waitForMCPElicitation(in store: SessionStore, timeout: TimeInterval = 8) async -> UUID? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let item = store.selectedThread.items.first(where: { item in
+                if case .mcpElicitation = item.kind {
+                    return true
+                }
+                return false
+            }) {
+                return item.id
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return nil
     }
 
     private struct StoreThreadManagementSmokeResult: Sendable {
@@ -8483,6 +8600,119 @@ enum SmokeTestRunner {
                     "imageGeneration": True,
                     "webSearch": False,
                 })
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeMCPElicitationAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_MCP_ELICITATION_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        def send_elicitation_request():
+            message = {
+                "id": "elicitation-smoke",
+                "method": "mcpServer/elicitation/request",
+                "params": {
+                    "serverName": "raytone_mcp",
+                    "threadId": "thread-smoke",
+                    "turnId": "turn-smoke",
+                    "mode": "form",
+                    "message": "请输入访问令牌以继续 MCP 工具调用。",
+                    "requestedSchema": {
+                        "type": "object",
+                        "properties": {
+                            "token": {
+                                "type": "string",
+                                "title": "访问令牌",
+                                "description": "用于 smoke 的合成令牌。",
+                                "default": ""
+                            },
+                            "confirmed": {
+                                "type": "boolean",
+                                "title": "确认",
+                                "default": False
+                            }
+                        },
+                        "required": ["token", "confirmed"]
+                    }
+                }
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id == "elicitation-smoke" and "result" in request:
+                log({"elicitationResponse": request.get("result")})
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "elicitation-smoke"
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-smoke", "status": "completed"}
+                })
+                continue
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-smoke",
+                        "sessionId": "session-smoke",
+                        "preview": "MCP elicitation smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-smoke", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-smoke",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_elicitation_request()
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

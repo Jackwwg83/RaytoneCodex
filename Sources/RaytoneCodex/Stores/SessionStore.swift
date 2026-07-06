@@ -137,6 +137,7 @@ final class SessionStore: ObservableObject {
     @Published var lastMentionInputPreview: [[String: String]] = []
     @Published var pendingLocalImagePaths: [String] = []
     @Published var lastLocalImageInputPreview: [String] = []
+    @Published var mcpElicitationDrafts: [UUID: String] = [:]
     @Published var settingsPane: SettingsPane = .general
     @Published var providers: [RaytoneProviderConfiguration] = RaytoneProviderConfiguration.defaultProviders
     @Published var selectedProviderID = "openai"
@@ -189,6 +190,7 @@ final class SessionStore: ObservableObject {
     private var appServerItemIDs: [String: UUID] = [:]
     private var activeDiffTranscriptIDs: Set<UUID> = []
     private var pendingApprovalRequestIDs: [UUID: CodexAppServerRequestID] = [:]
+    private var pendingMcpElicitationRequestIDs: [UUID: CodexAppServerRequestID] = [:]
     private var activeAppServerTurnID: String?
     private var appServerConnectionState: ConnectionState?
     private var appServerEnvironmentKey: String?
@@ -589,6 +591,9 @@ final class SessionStore: ObservableObject {
         appServerEnvironmentKey = nil
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
+        pendingApprovalRequestIDs.removeAll()
+        pendingMcpElicitationRequestIDs.removeAll()
+        mcpElicitationDrafts.removeAll()
         appServerItemIDs.removeAll()
         resetActiveTerminal()
         resetFilePanelWatch()
@@ -1374,6 +1379,90 @@ final class SessionStore: ObservableObject {
                     text: "审批结果未能回传给 app-server：\(error.localizedDescription)"
                 ))))
             }
+        }
+    }
+
+    func respondToAppServerMcpElicitation(
+        itemID: UUID,
+        action: McpElicitationRequest.Action,
+        content: JSONValue?
+    ) async {
+        guard let requestID = pendingMcpElicitationRequestIDs.removeValue(forKey: itemID),
+              let client = appServerClient else {
+            return
+        }
+
+        let appServerAction: CodexAppServerElicitationAction
+        switch action {
+        case .accept:
+            appServerAction = .accept
+        case .decline:
+            appServerAction = .decline
+        case .cancel:
+            appServerAction = .cancel
+        }
+
+        do {
+            try await client.respondMcpElicitation(
+                requestID: requestID,
+                action: appServerAction,
+                content: content
+            )
+        } catch {
+            updateMcpElicitationStatus(itemID: itemID, status: .failed(error.localizedDescription))
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "MCP 输入结果未能回传给 app-server：\(error.localizedDescription)"
+                ))))
+            }
+        }
+    }
+
+    func updateMcpElicitationDraft(itemID: UUID, draft: String) {
+        mcpElicitationDrafts[itemID] = draft
+    }
+
+    func decideMcpElicitation(itemID: UUID, action: McpElicitationRequest.Action) {
+        guard let threadIndex = threads.firstIndex(where: { $0.id == selectedThreadID }),
+              let itemIndex = threads[threadIndex].items.firstIndex(where: { $0.id == itemID }),
+              case var .mcpElicitation(request) = threads[threadIndex].items[itemIndex].kind else {
+            return
+        }
+
+        var content: JSONValue?
+        if action == .accept, request.mode == .form {
+            let draft = (mcpElicitationDrafts[itemID] ?? "{}")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            do {
+                content = try JSONValue(jsonString: draft.isEmpty ? "{}" : draft)
+            } catch {
+                threads[threadIndex].items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .warning,
+                    text: "MCP 表单内容不是有效 JSON，尚未提交：\(error.localizedDescription)"
+                ))))
+                threads[threadIndex].updatedAt = Date()
+                return
+            }
+        }
+
+        switch action {
+        case .accept:
+            request.status = .accepted
+        case .decline:
+            request.status = .declined
+        case .cancel:
+            request.status = .cancelled
+        }
+        threads[threadIndex].items[itemIndex].kind = .mcpElicitation(request)
+        threads[threadIndex].updatedAt = Date()
+
+        Task {
+            await respondToAppServerMcpElicitation(
+                itemID: itemID,
+                action: action,
+                content: content
+            )
         }
     }
 
@@ -5872,6 +5961,9 @@ final class SessionStore: ObservableObject {
             appServerEventsTask = nil
             appServerItemIDs.removeAll()
             activeDiffTranscriptIDs.removeAll()
+            pendingApprovalRequestIDs.removeAll()
+            pendingMcpElicitationRequestIDs.removeAll()
+            mcpElicitationDrafts.removeAll()
             resetActiveTerminal()
             resetFilePanelWatch()
         }
@@ -6382,6 +6474,29 @@ final class SessionStore: ObservableObject {
             )
             pendingApprovalRequestIDs[transcriptID] = id
             upsertTranscriptItem(serverItemID: "approval:\(id.description)", kind: .approval(request))
+        case "mcpServer/elicitation/request":
+            let mode = McpElicitationRequest.Mode(rawValue: params?["mode"]?.stringValue ?? "form")
+            let requestedSchema = params?["requestedSchema"]
+            let transcriptID = transcriptUUID(for: "mcp-elicitation:\(id.description)")
+            let request = McpElicitationRequest(
+                id: transcriptID,
+                serverName: params?["serverName"]?.stringValue ?? "MCP",
+                threadID: params?["threadId"]?.stringValue,
+                turnID: params?["turnId"]?.stringValue,
+                message: params?["message"]?.stringValue ?? "MCP 工具请求输入",
+                mode: mode,
+                urlString: params?["url"]?.stringValue,
+                requestedSchema: requestedSchema,
+                status: .pending
+            )
+            if mode == .form, mcpElicitationDrafts[transcriptID] == nil {
+                mcpElicitationDrafts[transcriptID] = Self.defaultMcpElicitationDraft(from: requestedSchema)
+            }
+            pendingMcpElicitationRequestIDs[transcriptID] = id
+            upsertTranscriptItem(
+                serverItemID: "mcp-elicitation:\(id.description)",
+                kind: .mcpElicitation(request)
+            )
         default:
             break
         }
@@ -6590,6 +6705,65 @@ final class SessionStore: ObservableObject {
         pendingApprovalRequestIDs = pendingApprovalRequestIDs.filter { _, value in
             value.description != requestID
         }
+        let resolvedElicitationIDs = pendingMcpElicitationRequestIDs.compactMap { itemID, value in
+            value.description == requestID ? itemID : nil
+        }
+        pendingMcpElicitationRequestIDs = pendingMcpElicitationRequestIDs.filter { _, value in
+            value.description != requestID
+        }
+        for itemID in resolvedElicitationIDs {
+            updateMcpElicitationStatusIfPending(itemID: itemID, status: .cancelled)
+        }
+    }
+
+    private func updateMcpElicitationStatus(itemID: UUID, status: McpElicitationRequest.Status) {
+        guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }),
+              let itemIndex = threads[index].items.firstIndex(where: { $0.id == itemID }),
+              case var .mcpElicitation(request) = threads[index].items[itemIndex].kind else {
+            return
+        }
+        request.status = status
+        threads[index].items[itemIndex].kind = .mcpElicitation(request)
+        threads[index].updatedAt = Date()
+    }
+
+    private func updateMcpElicitationStatusIfPending(itemID: UUID, status: McpElicitationRequest.Status) {
+        guard let index = threads.firstIndex(where: { $0.id == selectedThreadID }),
+              let itemIndex = threads[index].items.firstIndex(where: { $0.id == itemID }),
+              case var .mcpElicitation(request) = threads[index].items[itemIndex].kind,
+              request.status == .pending else {
+            return
+        }
+        request.status = status
+        threads[index].items[itemIndex].kind = .mcpElicitation(request)
+        threads[index].updatedAt = Date()
+    }
+
+    private static func defaultMcpElicitationDraft(from schema: JSONValue?) -> String {
+        guard let properties = schema?["properties"]?.objectValue else {
+            return "{}"
+        }
+
+        var content: [String: JSONValue] = [:]
+        for (name, property) in properties {
+            if let defaultValue = property["default"], defaultValue != .null {
+                content[name] = defaultValue
+                continue
+            }
+
+            switch property["type"]?.stringValue {
+            case "boolean":
+                content[name] = .bool(false)
+            case "number", "integer":
+                content[name] = .number(0)
+            case "array":
+                content[name] = .array([])
+            default:
+                content[name] = .string("")
+            }
+        }
+
+        return JSONValue.object(content).prettyJSONString
     }
 
     @discardableResult

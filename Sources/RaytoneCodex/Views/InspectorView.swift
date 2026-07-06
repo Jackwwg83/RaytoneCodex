@@ -879,6 +879,8 @@ private struct SideChatToolPanel: View {
             sideChatBubble(title: "提示", text: notice.text, symbol: "exclamationmark.circle", accent: Theme.warning)
         case let .approval(request):
             sideChatBubble(title: "审批", text: request.title, symbol: "checkmark.shield", accent: Theme.warning)
+        case let .mcpElicitation(request):
+            sideChatBubble(title: "MCP 输入", text: request.message, symbol: "puzzlepiece.extension", accent: Theme.info)
         case let .reasoning(block):
             sideChatBubble(title: block.title, text: block.detail, symbol: "brain", accent: Theme.textSecondary)
         case let .fileChange(change):

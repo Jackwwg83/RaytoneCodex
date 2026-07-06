@@ -1,4 +1,5 @@
 import SwiftUI
+import RaytoneCodexCore
 
 /// Dispatches a transcript item to its row view. The transcript is a flowing
 /// document — no avatars, no role labels — matching the Codex desktop app.
@@ -21,6 +22,8 @@ struct TranscriptItemRow: View {
             FileChangeLine(change: change)
         case let .approval(request):
             ApprovalCard(store: store, itemID: item.id, request: request)
+        case let .mcpElicitation(request):
+            McpElicitationCard(store: store, itemID: item.id, request: request)
         case let .notice(notice):
             NoticeLine(notice: notice)
         }
@@ -522,6 +525,173 @@ private struct CommandApprovalCard: View {
 
     private var commandPrefix: String {
         request.commandPrefix ?? commandText
+    }
+}
+
+// MARK: - MCP elicitation
+
+private struct McpElicitationCard: View {
+    @ObservedObject var store: SessionStore
+    let itemID: UUID
+    let request: McpElicitationRequest
+
+    @State private var schemaExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+
+            Text(request.message)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+
+            if request.mode == .form {
+                formEditor
+                schemaDisclosure
+            } else if let url = request.url {
+                urlRow(url)
+            } else if let rawURL = request.urlString, !rawURL.isEmpty {
+                Text(rawURL)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+            }
+
+            switch request.status {
+            case .pending:
+                actionRow
+            case .accepted:
+                resolved("checkmark.circle.fill", "已提交给 MCP 工具", Theme.success)
+            case .declined:
+                resolved("xmark.circle.fill", "已拒绝", Theme.danger)
+            case .cancelled:
+                resolved("minus.circle.fill", "已取消", Theme.textTertiary)
+            case let .failed(message):
+                resolved("exclamationmark.triangle.fill", "回传失败：\(message)", Theme.warning)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkles.square.filled.on.square")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.info)
+            Text("MCP 工具请求输入")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text(request.serverName)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(request.mode.label)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+    }
+
+    private var formEditor: some View {
+        TextEditor(text: Binding(
+            get: { store.mcpElicitationDrafts[itemID] ?? "{}" },
+            set: { store.updateMcpElicitationDraft(itemID: itemID, draft: $0) }
+        ))
+        .font(Theme.mono(12))
+        .foregroundStyle(Theme.textPrimary)
+        .textSelection(.enabled)
+        .scrollContentBackground(.hidden)
+        .padding(8)
+        .frame(minHeight: 96, maxHeight: 180)
+        .background(Theme.fill)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        .disabled(request.status != .pending)
+    }
+
+    private var schemaDisclosure: some View {
+        DisclosureGroup(isExpanded: $schemaExpanded) {
+            Text(request.requestedSchema?.prettyJSONString ?? "{}")
+                .font(Theme.mono(11.5))
+                .foregroundStyle(Theme.textSecondary)
+                .textSelection(.enabled)
+                .padding(.top, 6)
+        } label: {
+            Text("查看请求 schema")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .disabled(request.requestedSchema == nil)
+    }
+
+    private func urlRow(_ url: URL) -> some View {
+        HStack(spacing: 8) {
+            Text(url.absoluteString)
+                .font(Theme.mono(12))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            Spacer(minLength: 8)
+            Link(destination: url) {
+                Label("打开链接", systemImage: "arrow.up.right.square")
+            }
+            .buttonStyle(ChipButtonStyle())
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Theme.fill)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+    }
+
+    private var actionRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                store.decideMcpElicitation(itemID: itemID, action: .accept)
+            } label: {
+                Label(request.mode == .url ? "已完成" : "提交", systemImage: "checkmark")
+            }
+            .buttonStyle(ChipButtonStyle(tint: Theme.success, prominent: true))
+
+            Button {
+                store.decideMcpElicitation(itemID: itemID, action: .decline)
+            } label: {
+                Label("拒绝", systemImage: "xmark")
+            }
+            .buttonStyle(ChipButtonStyle())
+
+            Button {
+                store.decideMcpElicitation(itemID: itemID, action: .cancel)
+            } label: {
+                Label("取消", systemImage: "minus")
+            }
+            .buttonStyle(ChipButtonStyle())
+        }
+    }
+
+    private func resolved(_ symbol: String, _ text: String, _ tint: Color) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+            Text(text)
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(tint)
     }
 }
 

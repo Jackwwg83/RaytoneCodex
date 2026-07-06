@@ -89,6 +89,7 @@ struct ChatThread: Identifiable, Equatable {
             case let .command(run): return run.command
             case let .fileChange(change): return "Edited \(change.fileName)"
             case let .approval(req): return req.title
+            case let .mcpElicitation(request): return "MCP 请求：\(request.message)"
             case let .reasoning(block): return block.title
             case let .notice(notice): return notice.text
             }
