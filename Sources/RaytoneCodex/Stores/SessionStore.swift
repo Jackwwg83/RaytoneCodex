@@ -4153,8 +4153,16 @@ final class SessionStore: ObservableObject {
     }
 
     func refreshAccountUsageRuntime() async {
+        await refreshAccountUsageRuntime(statusText: "正在读取账户和用量…")
+    }
+
+    func refreshUsageBillingRuntime() async {
+        await refreshAccountUsageRuntime(statusText: "正在读取账户、用量、速率限制和 Provider 用量…")
+    }
+
+    private func refreshAccountUsageRuntime(statusText: String) async {
         runtimeCatalogIsRefreshing = true
-        runtimeCatalogStatusText = "正在读取账户和用量…"
+        runtimeCatalogStatusText = statusText
         runtimeCatalogErrors = []
 
         do {
@@ -4184,7 +4192,17 @@ final class SessionStore: ObservableObject {
             runtimeCatalogErrors = errors
             let accountLabel = runtimeAccount.map { Self.accountDisplayName($0) } ?? "未返回账户"
             let tokenLabel = runtimeTokenUsage?.lifetimeTokens.map(Self.compactNumber) ?? "未知 token"
-            runtimeCatalogStatusText = "账户：\(accountLabel) · 累计 \(tokenLabel)"
+            let providerLabel: String
+            if selectedProvider.usesSidecar {
+                if let providerUsage {
+                    providerLabel = " · Provider \(providerUsage.successfulResponses) 次响应 · \(Self.compactNumber(providerUsage.totalTokens)) token"
+                } else {
+                    providerLabel = " · Provider \(providerUsageStatusText)"
+                }
+            } else {
+                providerLabel = ""
+            }
+            runtimeCatalogStatusText = "账户：\(accountLabel) · 累计 \(tokenLabel)\(providerLabel)"
         } catch {
             runtimeCatalogStatusText = "账户读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]

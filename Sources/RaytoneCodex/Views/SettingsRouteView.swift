@@ -161,8 +161,10 @@ struct SettingsRouteView: View {
         .task(id: store.settingsPane) {
             requestSettingsBrowserSnapshotSmokeIfNeeded()
             switch store.settingsPane {
-            case .profile, .usageBilling:
+            case .profile:
                 await store.refreshAccountUsageRuntime()
+            case .usageBilling:
+                await store.refreshUsageBillingRuntime()
             case .mcpServers:
                 await store.refreshRuntimeMCPServers()
             case .hooks:
@@ -663,10 +665,10 @@ struct SettingsRouteView: View {
     private var usageBillingPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                paneTitle("使用情况和计费", subtitle: "来自 app-server 的 account/read、account/usage/read、account/rateLimits/read")
+                paneTitle("使用情况和计费", subtitle: "来自 app-server 的 account/read、account/usage/read、account/rateLimits/read，以及 raytone-proxy /usage")
                 Spacer(minLength: 0)
                 Button("刷新") {
-                    Task { await store.refreshAccountUsageRuntime() }
+                    Task { await store.refreshUsageBillingRuntime() }
                 }
                 .buttonStyle(ChipButtonStyle())
             }

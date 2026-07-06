@@ -92,7 +92,14 @@ settings_runtime = {
         "--realtime-voices-smoke-test",
     ],
     "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")"],
-    "usageBilling": ["account/usage/read", "account/rateLimits/read", "--usage-activity-smoke-test"],
+    "usageBilling": [
+        "account/usage/read",
+        "account/rateLimits/read",
+        "raytone-proxy /usage",
+        "refreshUsageBillingRuntime",
+        "--usage-activity-smoke-test",
+        "--provider-sidecar-smoke-test",
+    ],
     "appSnapshots": ["app/list", "captureBrowserPanelScreenshot", "--app-mention-turn-smoke-test"],
     "mcpServers": ["mcpServerStatus/list", "mcpServer/tool/call", "mcpServer/resource/read", "--mcp-tool-smoke-test", "--mcp-resource-smoke-test"],
     "browser": [
