@@ -69,6 +69,10 @@ enum SmokeTestRunner {
             runProfileShareSmoke()
         } else if CommandLine.arguments.contains("--add-credits-nudge-smoke-test") {
             runAddCreditsNudgeSmoke()
+        } else if CommandLine.arguments.contains("--feedback-upload-smoke-test") {
+            runFeedbackUploadSmoke()
+        } else if CommandLine.arguments.contains("--windows-sandbox-smoke-test") {
+            runWindowsSandboxSmoke()
         } else if CommandLine.arguments.contains("--experimental-features-smoke-test") {
             runExperimentalFeaturesSmoke()
         } else if CommandLine.arguments.contains("--mention-smoke-test") {
@@ -9401,6 +9405,161 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runFeedbackUploadSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexFeedbackUploadSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeFeedbackUploadAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-feedback-upload"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_FEEDBACK_UPLOAD_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "FeedbackUploadSmoke"
+                }
+
+                let localThreadID = store.selectedThreadID
+                store.prompt = "建立反馈上传 smoke 线程"
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+                let runtimeThreadID = await waitForThreadServerID(in: store, localThreadID: localThreadID)
+                let uploadOK = await store.uploadRuntimeFeedback(
+                    category: .bug,
+                    reason: "  Raytone feedback upload smoke  ",
+                    includeLogs: true
+                )
+
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""method":"feedback/upload""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let requestLogged = logText.contains(#""method":"feedback/upload""#) &&
+                    logText.contains(#""classification":"bug""#) &&
+                    logText.contains(#""reason":"Raytone feedback upload smoke""#) &&
+                    logText.contains(#""threadId":"thread-feedback-upload-smoke""#) &&
+                    logText.contains(#""includeLogs":true"#) &&
+                    logText.contains(#""raytone_client":"macos""#) &&
+                    logText.contains(#""raytone_surface":"settings""#)
+                let ok = uploadOK &&
+                    runtimeThreadID == "thread-feedback-upload-smoke" &&
+                    store.feedbackUploadThreadID == "feedback-tracking-smoke" &&
+                    store.feedbackUploadStatusText.contains("已上传日志") &&
+                    requestLogged
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "runtimeThreadID": runtimeThreadID,
+                    "feedbackUploadThreadID": store.feedbackUploadThreadID,
+                    "feedbackUploadStatus": store.feedbackUploadStatusText,
+                    "requestLogged": requestLogged,
+                    "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runWindowsSandboxSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexWindowsSandboxSmoke-\(UUID().uuidString)", isDirectory: true)
+            let logURL = workspaceURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = workspaceURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeWindowsSandboxAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-windows-sandbox"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_WINDOWS_SANDBOX_LOG": logURL.path
+                ]
+
+                await store.refreshWindowsSandboxReadiness()
+                let readinessStatus = store.windowsSandboxReadinessStatusText
+                let started = await store.startWindowsSandboxSetup(mode: .unelevated)
+                let setupStatus = store.windowsSandboxSetupStatusText
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let ok = store.windowsSandboxReadiness == .updateRequired &&
+                    readinessStatus.contains("需要更新") &&
+                    started &&
+                    setupStatus.contains("非管理员模式") &&
+                    logText.contains(#""method":"windowsSandbox/readiness""#) &&
+                    logText.contains(#""method":"windowsSandbox/setupStart""#) &&
+                    logText.contains(#""mode":"unelevated""#) &&
+                    logText.contains(#""cwd":"\#(workspaceURL.path)""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "readinessStatus": readinessStatus,
+                    "setupStatus": setupStatus,
+                    "started": started,
+                    "requestLogPreview": String(logText.prefix(1600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runExperimentalFeaturesSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -11212,6 +11371,167 @@ enum SmokeTestRunner {
                     send_result(request_id, {"status": "cooldown_active"})
                 else:
                     send_error(request_id, f"unexpected creditType {credit_type}")
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeFeedbackUploadAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_FEEDBACK_UPLOAD_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        def thread_payload():
+            return {
+                "id": "thread-feedback-upload-smoke",
+                "sessionId": "session-feedback-upload-smoke",
+                "name": "反馈上传线程",
+                "preview": "Feedback upload smoke",
+                "cwd": cwd,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000001,
+                "status": {"type": "active", "activeFlags": []},
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "workspace-write",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-feedback-upload-smoke", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {"id": "turn-feedback-upload-smoke", "status": "inProgress"}
+                })
+                send_notification("rawResponseItem/completed", {
+                    "threadId": "thread-feedback-upload-smoke",
+                    "turnId": "turn-feedback-upload-smoke",
+                    "item": {
+                        "id": "feedback-message-smoke",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "feedback upload thread ready",
+                        }],
+                    },
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-feedback-upload-smoke", "status": "completed"}
+                })
+            elif method == "feedback/upload":
+                if params.get("classification") != "bug":
+                    send_error(request_id, "expected bug classification")
+                else:
+                    send_result(request_id, {"threadId": "feedback-tracking-smoke"})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeWindowsSandboxAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_WINDOWS_SANDBOX_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "windowsSandbox/readiness":
+                send_result(request_id, {"status": "updateRequired"})
+            elif method == "windowsSandbox/setupStart":
+                send_result(request_id, {"started": True})
+                send_notification("windowsSandbox/setupCompleted", {
+                    "mode": params.get("mode", "unelevated"),
+                    "success": True,
+                    "error": None,
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

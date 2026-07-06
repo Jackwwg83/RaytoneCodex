@@ -120,6 +120,9 @@ final class SessionStore: ObservableObject {
     @Published var lastOpenedRuntimeAppInstallURL = ""
     @Published var archivedRuntimeThreads: [CodexRuntimeThreadSummary] = []
     @Published var loadedRuntimeThreadIDs: [String] = []
+    @Published var windowsSandboxReadiness: CodexWindowsSandboxReadiness?
+    @Published var windowsSandboxReadinessStatusText = "未读取"
+    @Published var windowsSandboxSetupStatusText = "未启动"
     @Published var runtimeLoadedThreadsStatusText = "未读取"
     @Published var runtimeThreadMetadataStatusText = "未同步"
     @Published var runtimeThreadSyncStatusText = "未同步"
@@ -158,6 +161,8 @@ final class SessionStore: ObservableObject {
     @Published var providerOnboardingPresented = false
     @Published var providerOnboardingStatusText = "未开始"
     @Published var addCreditsNudgeStatusText = "未发送"
+    @Published var feedbackUploadStatusText = "未发送"
+    @Published var feedbackUploadThreadID = ""
     @Published var modelProviderCapabilities: CodexModelProviderCapabilities?
     @Published var modelProviderCapabilitiesStatusText = "未读取"
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
@@ -4155,6 +4160,14 @@ final class SessionStore: ObservableObject {
                 errors.append("permissionProfile/list：\(error.localizedDescription)")
             }
 
+            do {
+                let readiness = try await client.readWindowsSandboxReadiness()
+                applyWindowsSandboxReadiness(readiness)
+            } catch {
+                windowsSandboxReadinessStatusText = "windowsSandbox/readiness 失败：\(error.localizedDescription)"
+                errors.append("windowsSandbox/readiness：\(error.localizedDescription)")
+            }
+
             if runtimePlugins.isEmpty {
                 do {
                     let catalog = try await client.listPluginCatalog(cwds: [workspacePath])
@@ -4182,6 +4195,56 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    func refreshWindowsSandboxReadiness() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在读取 windowsSandbox/readiness…"
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let readiness = try await client.readWindowsSandboxReadiness()
+            applyWindowsSandboxReadiness(readiness)
+            runtimeCatalogStatusText = windowsSandboxReadinessStatusText
+        } catch {
+            windowsSandboxReadinessStatusText = "windowsSandbox/readiness 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = windowsSandboxReadinessStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    @discardableResult
+    func startWindowsSandboxSetup(mode: CodexWindowsSandboxSetupMode) async -> Bool {
+        runtimeCatalogIsRefreshing = true
+        windowsSandboxSetupStatusText = "正在调用 windowsSandbox/setupStart…"
+        runtimeCatalogStatusText = windowsSandboxSetupStatusText
+        runtimeCatalogErrors = []
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let started = try await client.startWindowsSandboxSetup(mode: mode, cwd: workspacePath)
+            windowsSandboxSetupStatusText = started
+                ? "windowsSandbox/setupStart：已启动 \(Self.windowsSandboxSetupModeName(mode))"
+                : "windowsSandbox/setupStart：未启动"
+            runtimeCatalogStatusText = windowsSandboxSetupStatusText
+            runtimeCatalogErrors = []
+            runtimeCatalogIsRefreshing = false
+            return started
+        } catch {
+            windowsSandboxSetupStatusText = "windowsSandbox/setupStart 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = windowsSandboxSetupStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return false
+        }
+    }
+
+    private func applyWindowsSandboxReadiness(_ readiness: CodexWindowsSandboxReadiness) {
+        windowsSandboxReadiness = readiness
+        windowsSandboxReadinessStatusText = "windowsSandbox/readiness：\(Self.windowsSandboxReadinessName(readiness))"
     }
 
     @discardableResult
@@ -5646,6 +5709,52 @@ final class SessionStore: ObservableObject {
         openToolPanel(.terminal)
         terminalCommand = "\(Self.shellQuoted(executablePath)) --version && \(Self.shellQuoted(executablePath)) app-server --help | head -40"
         await runTerminalCommand()
+    }
+
+    @discardableResult
+    func uploadRuntimeFeedback(
+        category: CodexFeedbackCategory,
+        reason: String,
+        includeLogs: Bool
+    ) async -> Bool {
+        runtimeCatalogIsRefreshing = true
+        feedbackUploadStatusText = "正在调用 feedback/upload…"
+        runtimeCatalogStatusText = feedbackUploadStatusText
+        runtimeCatalogErrors = []
+
+        do {
+            let client: CodexAppServerClient
+            if let existing = appServerClient {
+                client = existing
+            } else {
+                client = try await ensureAppServerClient(useProviderConfiguration: false)
+            }
+            let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = try await client.uploadFeedback(
+                classification: category.rawValue,
+                reason: trimmedReason.isEmpty ? nil : trimmedReason,
+                threadID: selectedThread.appServerThreadID,
+                includeLogs: includeLogs,
+                tags: [
+                    "raytone_client": "macos",
+                    "raytone_surface": "settings"
+                ]
+            )
+            feedbackUploadThreadID = result.threadID
+            feedbackUploadStatusText = includeLogs
+                ? "feedback/upload：已上传日志 · \(result.threadID)"
+                : "feedback/upload：已记录 · \(result.threadID)"
+            runtimeCatalogStatusText = feedbackUploadStatusText
+            runtimeCatalogErrors = []
+            runtimeCatalogIsRefreshing = false
+            return true
+        } catch {
+            feedbackUploadStatusText = "feedback/upload 失败：\(error.localizedDescription)"
+            runtimeCatalogStatusText = feedbackUploadStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return false
+        }
     }
 
     private func updateTerminalRun(
@@ -7161,6 +7270,23 @@ final class SessionStore: ObservableObject {
             "非管理员模式"
         default:
             value
+        }
+    }
+
+    private static func windowsSandboxSetupModeName(_ mode: CodexWindowsSandboxSetupMode) -> String {
+        windowsSandboxModeName(mode.rawValue)
+    }
+
+    private static func windowsSandboxReadinessName(_ readiness: CodexWindowsSandboxReadiness) -> String {
+        switch readiness {
+        case .ready:
+            "就绪"
+        case .notConfigured:
+            "未配置"
+        case .updateRequired:
+            "需要更新"
+        case .unknown:
+            "未知"
         }
     }
 

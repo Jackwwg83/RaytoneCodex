@@ -196,6 +196,26 @@ public struct CodexAppServerTurn: Equatable, Sendable {
     }
 }
 
+public struct CodexFeedbackUploadResult: Equatable, Sendable {
+    public var threadID: String
+
+    public init(threadID: String) {
+        self.threadID = threadID
+    }
+}
+
+public enum CodexWindowsSandboxReadiness: String, Equatable, Sendable {
+    case ready
+    case notConfigured
+    case updateRequired
+    case unknown
+}
+
+public enum CodexWindowsSandboxSetupMode: String, Equatable, Sendable, CaseIterable {
+    case elevated
+    case unelevated
+}
+
 public enum CodexReviewDelivery: String, Sendable {
     case inline
     case detached
@@ -2531,6 +2551,58 @@ public actor CodexAppServerClient {
         ]))
         let rawStatus = result["status"]?.stringValue ?? ""
         return CodexAddCreditsNudgeEmailStatus(rawValue: rawStatus) ?? .unknown
+    }
+
+    public func uploadFeedback(
+        classification: String,
+        reason: String? = nil,
+        threadID: String? = nil,
+        includeLogs: Bool = false,
+        extraLogFiles: [String]? = nil,
+        tags: [String: String]? = nil
+    ) async throws -> CodexFeedbackUploadResult {
+        var params: [String: JSONValue] = [
+            "classification": .string(classification),
+            "includeLogs": .bool(includeLogs)
+        ]
+        if let reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            params["reason"] = .string(reason)
+        }
+        if let threadID, !threadID.isEmpty {
+            params["threadId"] = .string(threadID)
+        }
+        if let extraLogFiles {
+            params["extraLogFiles"] = .array(extraLogFiles.map(JSONValue.string))
+        }
+        if let tags, !tags.isEmpty {
+            params["tags"] = .object(tags.mapValues(JSONValue.string))
+        }
+
+        let result = try await request(method: "feedback/upload", params: .object(params))
+        guard let threadID = result["threadId"]?.stringValue, !threadID.isEmpty else {
+            throw CodexAppServerError.invalidResponse("Missing feedback/upload threadId.")
+        }
+        return CodexFeedbackUploadResult(threadID: threadID)
+    }
+
+    public func readWindowsSandboxReadiness() async throws -> CodexWindowsSandboxReadiness {
+        let result = try await request(method: "windowsSandbox/readiness", params: nil)
+        let rawStatus = result["status"]?.stringValue ?? ""
+        return CodexWindowsSandboxReadiness(rawValue: rawStatus) ?? .unknown
+    }
+
+    public func startWindowsSandboxSetup(
+        mode: CodexWindowsSandboxSetupMode,
+        cwd: String? = nil
+    ) async throws -> Bool {
+        var params: [String: JSONValue] = [
+            "mode": .string(mode.rawValue)
+        ]
+        if let cwd, !cwd.isEmpty {
+            params["cwd"] = .string(cwd)
+        }
+        let result = try await request(method: "windowsSandbox/setupStart", params: .object(params))
+        return result["started"]?.boolValue ?? false
     }
 
     public func startChatGPTAccountLogin(codexStreamlinedLogin: Bool = false) async throws -> CodexAccountLogin {

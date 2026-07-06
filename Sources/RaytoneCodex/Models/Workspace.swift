@@ -173,6 +173,36 @@ struct GuardianDeniedAction: Identifiable, Equatable {
     var createdAt: Date
 }
 
+enum CodexFeedbackCategory: String, CaseIterable, Identifiable {
+    case badResult = "bad_result"
+    case goodResult = "good_result"
+    case bug = "bug"
+    case safetyCheck = "safety_check"
+    case other = "other"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .badResult: "结果不好"
+        case .goodResult: "结果很好"
+        case .bug: "Bug"
+        case .safetyCheck: "安全检查"
+        case .other: "其他"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .badResult: "Codex 给出了错误、不完整或不实用的结果"
+        case .goodResult: "Codex 这次表现很好，帮助我们改进体验"
+        case .bug: "应用或 Codex 运行时出现崩溃、卡住或异常"
+        case .safetyCheck: "安全审查拒绝了你认为应允许的操作"
+        case .other: "其他反馈"
+        }
+    }
+}
+
 struct EnvironmentSourceFact: Identifiable, Equatable {
     var id: String { title }
     var symbol: String

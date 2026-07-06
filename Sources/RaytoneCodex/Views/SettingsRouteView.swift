@@ -16,6 +16,10 @@ struct SettingsRouteView: View {
     @State private var instructionsStatus = ""
     @State private var profileStatus = ""
     @State private var didRequestSettingsBrowserSnapshotSmoke = false
+    @State private var showFeedbackUpload = false
+    @State private var feedbackCategory: CodexFeedbackCategory = .bug
+    @State private var feedbackReason = ""
+    @State private var feedbackIncludeLogs = false
     @State private var usageActivityScale = "每日"
     @State private var customInstructions = """
     Prefer concise, actionable engineering updates.
@@ -148,6 +152,9 @@ struct SettingsRouteView: View {
         }
         .frame(minWidth: 760)
         .background(Theme.window)
+        .sheet(isPresented: $showFeedbackUpload) {
+            feedbackUploadSheet
+        }
         .task(id: store.settingsPane) {
             requestSettingsBrowserSnapshotSmokeIfNeeded()
             switch store.settingsPane {
@@ -184,6 +191,109 @@ struct SettingsRouteView: View {
                 customInstructions = instructions
             }
         }
+    }
+
+    private var feedbackUploadSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 28, height: 28)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("上传 Codex 反馈")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("这会调用当前 Codex app-server 的 feedback/upload。只有你打开日志开关时才会附带日志、doctor report 和当前线程 rollout。")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Text("分类")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 0)
+                    Picker("分类", selection: $feedbackCategory) {
+                        ForEach(CodexFeedbackCategory.allCases) { category in
+                            Text(category.title).tag(category)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                }
+
+                Text(feedbackCategory.detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle("附带 Codex 日志和当前线程 rollout", isOn: $feedbackIncludeLogs)
+                    .font(.system(size: 12.5))
+                    .toggleStyle(.switch)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("补充说明")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    TextEditor(text: $feedbackReason)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textPrimary)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(height: 96)
+                        .background(Theme.fill)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                                .stroke(Theme.borderSoft, lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                }
+
+                HStack(spacing: 8) {
+                    statusBadge(store.feedbackUploadStatusText, ok: store.feedbackUploadThreadID.isEmpty == false)
+                    if let threadID = store.selectedThread.appServerThreadID, !threadID.isEmpty {
+                        Text("当前对话 \(threadID)")
+                            .font(Theme.mono(10.5, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button("取消") {
+                    showFeedbackUpload = false
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button("上传反馈") {
+                    Task { @MainActor in
+                        let ok = await store.uploadRuntimeFeedback(
+                            category: feedbackCategory,
+                            reason: feedbackReason,
+                            includeLogs: feedbackIncludeLogs
+                        )
+                        if ok {
+                            showFeedbackUpload = false
+                        }
+                    }
+                }
+                .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                .disabled(store.runtimeCatalogIsRefreshing)
+            }
+        }
+        .padding(22)
+        .frame(width: 520)
+        .background(Theme.window)
     }
 
     private var settingsSidebar: some View {
@@ -1279,6 +1389,18 @@ struct SettingsRouteView: View {
                         }
                             .buttonStyle(ChipButtonStyle())
                     }
+                    SettingsValueRow(title: "上传诊断反馈", description: "调用 Codex app-server 的 feedback/upload；只有勾选时才附带日志") {
+                        HStack(spacing: 8) {
+                            statusBadge(
+                                store.feedbackUploadThreadID.isEmpty ? store.feedbackUploadStatusText : "已提交",
+                                ok: store.feedbackUploadThreadID.isEmpty == false
+                            )
+                            Button("反馈") {
+                                openFeedbackUploadSheet()
+                            }
+                            .buttonStyle(ChipButtonStyle(prominent: true))
+                        }
+                    }
                     SettingsValueRow(title: "Codex 数据目录", description: "打开当前运行时使用的 CODEX_HOME，插件、技能和配置都从这里读取") {
                         Button("打开 .codex") {
                             store.revealCodexHomeSubfolder("")
@@ -2019,6 +2141,14 @@ struct SettingsRouteView: View {
             : Project.abbreviate(store.browserAttachedSnapshotPath)
     }
 
+    private var windowsSandboxSetupAvailable: Bool {
+        #if os(Windows)
+        true
+        #else
+        false
+        #endif
+    }
+
     private var computerControlPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
@@ -2040,6 +2170,36 @@ struct SettingsRouteView: View {
                 metricRow("权限配置", store.runtimeRequirements?.defaultPermissions ?? "未返回")
                 metricRow("受管 hooks", optionalBoolText(store.runtimeRequirements?.managedHooksOnly))
                 metricRow("来源", "configRequirements/read")
+                Divider()
+                    .overlay(Theme.borderSoft)
+                    .padding(.vertical, 8)
+                metricRow("Windows 沙箱", store.windowsSandboxReadinessStatusText)
+                metricRow("设置状态", store.windowsSandboxSetupStatusText)
+                Text(windowsSandboxSetupAvailable ? "可从当前平台启动 Windows 沙箱设置。" : "当前 macOS 客户端只显示 app-server readiness，不启动 Windows 沙箱设置。")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+                HStack(spacing: 8) {
+                    Button("刷新 Windows 沙箱") {
+                        Task { await store.refreshWindowsSandboxReadiness() }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.runtimeCatalogIsRefreshing)
+
+                    Button("设置非管理员") {
+                        Task { await store.startWindowsSandboxSetup(mode: .unelevated) }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(!windowsSandboxSetupAvailable || store.runtimeCatalogIsRefreshing)
+
+                    Button("设置管理员") {
+                        Task { await store.startWindowsSandboxSetup(mode: .elevated) }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(!windowsSandboxSetupAvailable || store.runtimeCatalogIsRefreshing)
+                }
+                .padding(.top, 6)
             }
 
             integrationPluginSection(
@@ -2665,6 +2825,13 @@ struct SettingsRouteView: View {
         guard let userCode = store.activeAccountLogin?.userCode, !userCode.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(userCode, forType: .string)
+    }
+
+    private func openFeedbackUploadSheet() {
+        feedbackCategory = .bug
+        feedbackReason = ""
+        feedbackIncludeLogs = false
+        showFeedbackUpload = true
     }
 
     private func confirmResetMemory() {
