@@ -159,6 +159,8 @@ enum SmokeTestRunner {
             runConfigWriteSmoke()
         } else if CommandLine.arguments.contains("--thread-management-smoke-test") {
             runThreadManagementSmoke()
+        } else if CommandLine.arguments.contains("--thread-lifecycle-smoke-test") {
+            runThreadLifecycleSmoke()
         } else if CommandLine.arguments.contains("--history-smoke-test") {
             runHistorySmoke()
         } else if CommandLine.arguments.contains("--loaded-threads-smoke-test") {
@@ -5193,6 +5195,149 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runThreadLifecycleSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadLifecycleSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# Thread lifecycle smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeThreadLifecycleAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-thread-lifecycle"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_THREAD_LIFECYCLE_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "ThreadLifecycleSmoke"
+                }
+
+                store.prompt = "触发线程生命周期通知"
+                await store.runPrompt()
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline,
+                      !store.runtimeThreadSyncStatusText.contains("thread/closed") {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                let serverID = store.threads.first { $0.appServerThreadID == "thread-life" }?.appServerThreadID ?? ""
+                let titleAfterNotification = store.threads.first { $0.appServerThreadID == "thread-life" }?.title ?? ""
+                let compactNoticeObserved = store.threads
+                    .first { $0.appServerThreadID == "thread-life" }?
+                    .items
+                    .contains { item in
+                        if case let .notice(notice) = item.kind {
+                            return notice.text.contains("turn-life")
+                        }
+                        return false
+                    } ?? false
+                let closedStatus = store.runtimeThreadSyncStatusText
+                let loadedAfterClosed = store.loadedRuntimeThreadIDs
+
+                await store.archiveRuntimeThread(
+                    id: "thread-life",
+                    title: titleAfterNotification,
+                    preview: "生命周期 smoke",
+                    cwd: workspaceURL.path
+                )
+                let archiveDeadline = Date().addingTimeInterval(8)
+                while Date() < archiveDeadline,
+                      store.threads.contains(where: { $0.appServerThreadID == "thread-life" }) {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let archivedContainsThread = store.archivedRuntimeThreads.contains { $0.id == "thread-life" }
+                let localRemovedAfterArchive = !store.threads.contains { $0.appServerThreadID == "thread-life" }
+                let archiveStatus = store.runtimeCatalogStatusText
+
+                if let archived = store.archivedRuntimeThreads.first(where: { $0.id == "thread-life" }) {
+                    await store.unarchiveRuntimeThread(archived)
+                }
+                let unarchiveDeadline = Date().addingTimeInterval(8)
+                while Date() < unarchiveDeadline,
+                      !store.threads.contains(where: { $0.appServerThreadID == "thread-life" }) {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let unarchiveStatus = store.runtimeCatalogStatusText
+                let localRestoredAfterUnarchive = store.threads.contains { $0.appServerThreadID == "thread-life" }
+                let removedFromArchived = !store.archivedRuntimeThreads.contains { $0.id == "thread-life" }
+                let restoredTitle = store.threads.first { $0.appServerThreadID == "thread-life" }?.title ?? ""
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let ok = serverID == "thread-life" &&
+                    titleAfterNotification == "远端生命周期重命名" &&
+                    compactNoticeObserved &&
+                    closedStatus.contains("thread/closed") &&
+                    !loadedAfterClosed.contains("thread-life") &&
+                    archivedContainsThread &&
+                    localRemovedAfterArchive &&
+                    archiveStatus.contains("thread/archive") &&
+                    localRestoredAfterUnarchive &&
+                    removedFromArchived &&
+                    restoredTitle == "远端生命周期重命名" &&
+                    unarchiveStatus.contains("thread/unarchive") &&
+                    logText.contains(#""method":"thread/started""#) &&
+                    logText.contains(#""method":"thread/status/changed""#) &&
+                    logText.contains(#""method":"thread/name/updated""#) &&
+                    logText.contains(#""method":"thread/compacted""#) &&
+                    logText.contains(#""method":"thread/closed""#) &&
+                    logText.contains(#""method":"thread/archived""#) &&
+                    logText.contains(#""method":"thread/unarchived""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "serverID": serverID,
+                    "titleAfterNotification": titleAfterNotification,
+                    "compactNoticeObserved": compactNoticeObserved,
+                    "closedStatus": closedStatus,
+                    "loadedAfterClosed": loadedAfterClosed,
+                    "archivedContainsThread": archivedContainsThread,
+                    "localRemovedAfterArchive": localRemovedAfterArchive,
+                    "archiveStatus": archiveStatus,
+                    "localRestoredAfterUnarchive": localRestoredAfterUnarchive,
+                    "removedFromArchived": removedFromArchived,
+                    "restoredTitle": restoredTitle,
+                    "unarchiveStatus": unarchiveStatus,
+                    "threadTitles": store.threads.map(\.title),
+                    "archivedThreadIDs": store.archivedRuntimeThreads.map(\.id),
+                    "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     @MainActor
     private static func runStoreThreadManagementSmoke(
         workspacePath: String,
@@ -8872,6 +9017,133 @@ enum SmokeTestRunner {
                     continue
                 clients = [client for client in clients if client.get("clientId") != client_id]
                 send_result(request_id, {})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeThreadLifecycleAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_THREAD_LIFECYCLE_LOG")
+        archived = False
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log({"notification": payload})
+            send(payload)
+
+        def thread_payload(name="生命周期初始线程", is_archived=None):
+            return {
+                "id": "thread-life",
+                "sessionId": "session-life",
+                "name": name,
+                "preview": "生命周期 smoke",
+                "cwd": cwd,
+                "archived": archived if is_archived is None else is_archived,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000042,
+                "modelProvider": "mock_provider",
+                "source": {"type": "local"},
+                "gitInfo": {
+                    "branch": "main",
+                    "sha": "abcdef1234567890",
+                    "originUrl": "https://example.invalid/raytone.git",
+                },
+                "memoryMode": "enabled",
+                "status": {"type": "idle"},
+            }
+
+        def thread_list(params):
+            requested_archived = params.get("archived")
+            if requested_archived is True:
+                return {"data": [thread_payload("远端生命周期重命名", True)] if archived else [], "nextCursor": None}
+            if requested_archived is False:
+                return {"data": [] if archived else [thread_payload("远端生命周期重命名", False)], "nextCursor": None}
+            return {"data": [thread_payload("远端生命周期重命名", archived)], "nextCursor": None}
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "danger-full-access",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-life", "status": "inProgress"}
+                })
+                send_notification("thread/status/changed", {
+                    "threadId": "thread-life",
+                    "status": {"type": "active", "activeFlags": ["waitingOnApproval"]},
+                })
+                send_notification("thread/name/updated", {
+                    "threadId": "thread-life",
+                    "threadName": "远端生命周期重命名",
+                })
+                send_notification("thread/compacted", {
+                    "threadId": "thread-life",
+                    "turnId": "turn-life",
+                })
+                send_notification("thread/status/changed", {
+                    "threadId": "thread-life",
+                    "status": {"type": "idle"},
+                })
+                send_notification("thread/closed", {
+                    "threadId": "thread-life",
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-life", "status": "completed"},
+                })
+            elif method == "thread/archive":
+                archived = True
+                send_result(request_id, {})
+                send_notification("thread/archived", {"threadId": "thread-life"})
+            elif method == "thread/unarchive":
+                archived = False
+                send_result(request_id, {"thread": thread_payload("远端生命周期重命名", False)})
+                send_notification("thread/unarchived", {"threadId": "thread-life"})
+            elif method == "thread/list":
+                send_result(request_id, thread_list(params))
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

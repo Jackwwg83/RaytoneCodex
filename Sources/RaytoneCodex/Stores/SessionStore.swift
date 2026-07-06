@@ -3790,6 +3790,63 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func mergeRuntimeThreadValue(_ threadValue: JSONValue) {
+        guard let summary = Self.runtimeThreadSummary(from: threadValue) else {
+            return
+        }
+        mergeRuntimeThreads([summary])
+        if let sessionID = threadValue["sessionId"]?.stringValue {
+            updateThread(appServerThreadID: summary.id) { thread in
+                thread.appServerSessionID = sessionID
+            }
+        }
+    }
+
+    private static func runtimeThreadSummary(from value: JSONValue) -> CodexRuntimeThreadSummary? {
+        guard let id = value["id"]?.stringValue else {
+            return nil
+        }
+        let gitInfo = value["gitInfo"]
+        let title = value["name"]?.stringValue ??
+            value["threadName"]?.stringValue ??
+            value["preview"]?.stringValue ??
+            "未命名对话"
+        return CodexRuntimeThreadSummary(
+            id: id,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名对话" : title,
+            preview: value["preview"]?.stringValue ?? "",
+            cwd: runtimePathString(value["cwd"]),
+            modelProvider: value["modelProvider"]?.stringValue,
+            source: value["source"]?.stringValue ?? value["source"]?["type"]?.stringValue,
+            createdAt: runtimeTimestampString(value["createdAt"]),
+            updatedAt: runtimeTimestampString(value["updatedAt"] ?? value["recencyAt"]),
+            archived: value["archived"]?.boolValue ?? false,
+            gitBranch: gitInfo?["branch"]?.stringValue,
+            gitSHA: gitInfo?["sha"]?.stringValue,
+            gitOriginURL: gitInfo?["originUrl"]?.stringValue,
+            memoryMode: CodexThreadMemoryMode(
+                rawValue: value["memoryMode"]?.stringValue ?? value["memory_mode"]?.stringValue ?? ""
+            )
+        )
+    }
+
+    private static func runtimePathString(_ value: JSONValue?) -> String? {
+        value?.stringValue ?? value?["path"]?.stringValue
+    }
+
+    private static func runtimeTimestampString(_ value: JSONValue?) -> String? {
+        guard let value else {
+            return nil
+        }
+        if let string = value.stringValue {
+            return string
+        }
+        if case let .number(seconds) = value {
+            return ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: seconds))
+        }
+        return nil
+    }
+
     private func projectIDForRuntimeThread(cwd: String?) -> UUID {
         let path = cwd?.isEmpty == false ? cwd! : workspacePath
         if let existing = projects.first(where: { $0.path == path }) {
@@ -6310,6 +6367,20 @@ final class SessionStore: ObservableObject {
 
     private func handleAppServerNotification(method: String, params: JSONValue?) {
         switch method {
+        case "thread/started":
+            handleThreadStartedNotification(params)
+        case "thread/status/changed":
+            handleThreadStatusChanged(params)
+        case "thread/name/updated":
+            handleThreadNameUpdated(params)
+        case "thread/archived":
+            handleThreadArchived(params)
+        case "thread/unarchived":
+            handleThreadUnarchived(params)
+        case "thread/closed":
+            handleThreadClosed(params)
+        case "thread/compacted":
+            handleThreadCompacted(params)
         case "turn/started":
             isRunning = true
             activeAppServerTurnID = params?["turn"]?["id"]?.stringValue
@@ -6454,6 +6525,184 @@ final class SessionStore: ObservableObject {
             appendCommandOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         default:
             break
+        }
+    }
+
+    private func handleThreadStartedNotification(_ params: JSONValue?) {
+        guard let threadValue = params?["thread"],
+              let threadID = threadValue["id"]?.stringValue else {
+            return
+        }
+        mergeRuntimeThreadValue(threadValue)
+        if loadedRuntimeThreadIDs.contains(threadID) == false {
+            loadedRuntimeThreadIDs.insert(threadID, at: 0)
+        }
+        if let status = threadValue["status"] {
+            applyThreadStatus(threadID: threadID, status: status)
+        } else {
+            runtimeThreadSyncStatusText = "thread/started：\(threadValue["name"]?.stringValue ?? threadValue["preview"]?.stringValue ?? threadID)"
+        }
+    }
+
+    private func handleThreadStatusChanged(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue,
+              let status = params?["status"] else {
+            return
+        }
+        applyThreadStatus(threadID: threadID, status: status)
+    }
+
+    private func applyThreadStatus(threadID: String, status: JSONValue) {
+        let type = status["type"]?.stringValue ?? status.stringValue ?? "unknown"
+        let activeFlags = status["activeFlags"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        let flagsText = activeFlags.map(Self.threadActiveFlagName).joined(separator: "、")
+        let display = Self.threadStatusDisplayName(type)
+        runtimeThreadSyncStatusText = flagsText.isEmpty
+            ? "thread/status/changed：\(display)"
+            : "thread/status/changed：\(display) · \(flagsText)"
+        runtimeLoadedThreadsStatusText = runtimeThreadSyncStatusText
+
+        guard selectedThread.appServerThreadID == threadID else {
+            return
+        }
+
+        switch type {
+        case "active":
+            isRunning = true
+            updateSelectedThread { thread in
+                if thread.activeGoal == nil {
+                    let title = activeFlags.contains("waitingOnApproval")
+                        ? "等待审批"
+                        : activeFlags.contains("waitingOnUserInput") ? "等待输入" : "运行 Codex"
+                    thread.activeGoal = ActiveGoal(title: title, startedAt: Date(), runtimeBacked: false)
+                }
+            }
+        case "idle", "notLoaded", "systemError":
+            isRunning = false
+            activeAppServerTurnID = nil
+            clearLocalActiveGoalIfNeeded()
+        default:
+            break
+        }
+    }
+
+    private func handleThreadNameUpdated(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue else {
+            return
+        }
+        let name = params?["threadName"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = name?.isEmpty == false ? name! : "未命名对话"
+        updateThread(appServerThreadID: threadID) { thread in
+            thread.title = title
+        }
+        if let index = archivedRuntimeThreads.firstIndex(where: { $0.id == threadID }) {
+            archivedRuntimeThreads[index].title = title
+            archivedRuntimeThreads[index].updatedAt = ISO8601DateFormatter().string(from: Date())
+        }
+        runtimeThreadSyncStatusText = "thread/name/updated：\(title)"
+        runtimeCatalogStatusText = runtimeThreadSyncStatusText
+    }
+
+    private func handleThreadArchived(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue else {
+            return
+        }
+        let archivedThread = threads.first { $0.appServerThreadID == threadID }
+        let archivedProjectPath = archivedThread.flatMap { target in
+            projects.first(where: { $0.id == target.projectID })?.path
+        }
+        rememberArchivedRuntimeThread(
+            id: threadID,
+            title: archivedThread?.title,
+            preview: archivedThread?.preview,
+            cwd: archivedProjectPath
+        )
+
+        let selectedWasArchived = selectedThread.appServerThreadID == threadID
+        threads.removeAll { $0.appServerThreadID == threadID }
+        loadedRuntimeThreadIDs.removeAll { $0 == threadID }
+        if threads.isEmpty {
+            newThread(in: projects.first?.id ?? UUID())
+        } else if selectedWasArchived || !threads.contains(where: { $0.id == selectedThreadID }) {
+            selectThread(threads[0])
+        }
+        runtimeCatalogStatusText = "thread/archived：已归档 \(archivedThread?.title ?? threadID)"
+    }
+
+    private func handleThreadUnarchived(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue else {
+            return
+        }
+        let existingArchived = archivedRuntimeThreads.first { $0.id == threadID }
+        archivedRuntimeThreads.removeAll { $0.id == threadID }
+        if let existingArchived {
+            var summary = existingArchived
+            summary.archived = false
+            summary.updatedAt = ISO8601DateFormatter().string(from: Date())
+            mergeRuntimeThreads([summary])
+            runtimeCatalogStatusText = "thread/unarchived：已恢复 \(summary.title)"
+        } else {
+            runtimeCatalogStatusText = "thread/unarchived：\(threadID)"
+        }
+    }
+
+    private func handleThreadClosed(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue else {
+            return
+        }
+        loadedRuntimeThreadIDs.removeAll { $0 == threadID }
+        if selectedThread.appServerThreadID == threadID {
+            isRunning = false
+            activeAppServerTurnID = nil
+            clearLocalActiveGoalIfNeeded()
+        }
+        runtimeLoadedThreadsStatusText = "thread/closed：\(threadID)"
+        runtimeThreadSyncStatusText = runtimeLoadedThreadsStatusText
+    }
+
+    private func handleThreadCompacted(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue else {
+            return
+        }
+        let turnID = params?["turnId"]?.stringValue ?? ""
+        if selectedThread.appServerThreadID == threadID {
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(Notice(
+                    level: .info,
+                    text: turnID.isEmpty ? "Codex 已压缩当前上下文。" : "Codex 已压缩当前上下文：\(turnID)"
+                ))))
+            }
+        }
+        runtimeThreadSyncStatusText = turnID.isEmpty
+            ? "thread/compacted：\(threadID)"
+            : "thread/compacted：\(turnID)"
+        runtimeCatalogStatusText = runtimeThreadSyncStatusText
+    }
+
+    private static func threadStatusDisplayName(_ value: String) -> String {
+        switch value {
+        case "notLoaded":
+            "未加载"
+        case "idle":
+            "空闲"
+        case "systemError":
+            "系统错误"
+        case "active":
+            "活动中"
+        default:
+            value
+        }
+    }
+
+    private static func threadActiveFlagName(_ value: String) -> String {
+        switch value {
+        case "waitingOnApproval":
+            "等待审批"
+        case "waitingOnUserInput":
+            "等待输入"
+        default:
+            value
         }
     }
 
