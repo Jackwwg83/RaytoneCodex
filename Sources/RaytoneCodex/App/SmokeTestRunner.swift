@@ -8280,7 +8280,8 @@ enum SmokeTestRunner {
                     eventText.contains("\"source\":\"RaytoneCodex\"") &&
                     eventText.contains("\"template\":\"项目监控\"") &&
                     eventText.contains("\"event\":\"UserPromptSubmit\"") &&
-                    installStatus.contains("fs/writeFile + hooks/list") &&
+                    installStatus.contains("fs/createDirectory + fs/getMetadata + fs/writeFile + hooks/list") &&
+                    eventLogStatus.contains("fs/getMetadata + fs/readFile") &&
                     installErrors.isEmpty &&
                     requestLog.contains("/v1/responses") &&
                     agentMessages.contains("Raytone automation hook smoke OK") &&

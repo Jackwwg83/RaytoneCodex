@@ -6190,7 +6190,7 @@ final class SessionStore: ObservableObject {
             }
 
             let command = Self.raytoneAutomationHookCommand(title: title)
-            let configURL = try ensureCodexConfigFile()
+            let configURL = try await ensureCodexConfigFile(using: client)
             let existingConfigData = try await client.readFile(path: configURL.path)
             let existingConfig = String(data: existingConfigData, encoding: .utf8) ?? ""
             let updatedConfig = Self.installRaytoneAutomationHookBlock(
@@ -6219,7 +6219,7 @@ final class SessionStore: ObservableObject {
 
             let raytoneHook = runtimeHooks.first(where: Self.isRaytoneAutomationHook)
             let trustSuffix = raytoneHook.map(Self.isTrustedHook) == true ? " · 已信任" : ""
-            runtimeCatalogStatusText = "fs/writeFile + hooks/list：已安装 \(title)，返回 \(runtimeHooks.count) 个钩子\(trustSuffix)"
+            runtimeCatalogStatusText = "fs/createDirectory + fs/getMetadata + fs/writeFile + hooks/list：已安装 \(title)，返回 \(runtimeHooks.count) 个钩子\(trustSuffix)"
             if !templatePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 prompt = templatePrompt
             }
@@ -6244,19 +6244,22 @@ final class SessionStore: ObservableObject {
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let metadata = try await client.getMetadata(path: eventURL.path)
+            guard metadata.isFile else {
+                automationEventLogText = ""
+                automationEventLogStatusText = metadata.isDirectory
+                    ? "事件日志路径是目录：\(Project.abbreviate(eventURL.path))"
+                    : "事件日志不是可读取文件：\(Project.abbreviate(eventURL.path))"
+                return
+            }
             let data = try await client.readFile(path: eventURL.path)
             automationEventLogText = String(data: data, encoding: .utf8) ?? ""
             automationEventLogStatusText = automationEventLogText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? "事件日志为空：\(Project.abbreviate(eventURL.path))"
-                : "已读取 \(automationEventLogLineCount) 条事件"
+                ? "fs/getMetadata + fs/readFile：事件日志为空 · \(Project.abbreviate(eventURL.path))"
+                : "fs/getMetadata + fs/readFile：已读取 \(automationEventLogLineCount) 条事件"
         } catch {
-            let fallbackText = (try? String(contentsOf: eventURL, encoding: .utf8)) ?? ""
-            automationEventLogText = fallbackText
-            if fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                automationEventLogStatusText = "还没有事件：\(Project.abbreviate(eventURL.path))"
-            } else {
-                automationEventLogStatusText = "已从本地读取 \(automationEventLogLineCount) 条事件"
-            }
+            automationEventLogText = ""
+            automationEventLogStatusText = "fs/getMetadata 或 fs/readFile 未读取到事件：\(Project.abbreviate(eventURL.path)) · \(error.localizedDescription)"
         }
     }
 
@@ -6267,7 +6270,7 @@ final class SessionStore: ObservableObject {
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            let configURL = try ensureCodexConfigFile()
+            let configURL = try await ensureCodexConfigFile(using: client)
             let existingConfigData = try await client.readFile(path: configURL.path)
             let existingConfig = String(data: existingConfigData, encoding: .utf8) ?? ""
             let updatedConfig = Self.removeRaytoneAutomationHookBlock(from: existingConfig)
@@ -6280,7 +6283,7 @@ final class SessionStore: ObservableObject {
 
             try await client.writeFile(path: configURL.path, data: Self.utf8Data(updatedConfig + "\n"))
             await refreshRuntimeHooks()
-            runtimeCatalogStatusText = "fs/writeFile + hooks/list：已移除 Raytone 自动化 hook，返回 \(runtimeHooks.count) 个钩子"
+            runtimeCatalogStatusText = "fs/createDirectory + fs/getMetadata + fs/writeFile + hooks/list：已移除 Raytone 自动化 hook，返回 \(runtimeHooks.count) 个钩子"
         } catch {
             runtimeCatalogStatusText = "移除自动化 hook 失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
@@ -6324,6 +6327,27 @@ final class SessionStore: ObservableObject {
         )
         if !FileManager.default.fileExists(atPath: configURL.path) {
             FileManager.default.createFile(atPath: configURL.path, contents: Data())
+        }
+        return configURL
+    }
+
+    private func ensureCodexConfigFile(using client: CodexAppServerClient) async throws -> URL {
+        let configURL = Self.defaultCodexConfigURL(
+            overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
+        )
+        try await client.createDirectory(path: configURL.deletingLastPathComponent().path)
+        let existingMetadata = try? await client.getMetadata(path: configURL.path)
+        if let metadata = existingMetadata {
+            guard metadata.isFile else {
+                throw CodexAppServerError.invalidResponse("Codex config path is not a file: \(configURL.path)")
+            }
+            return configURL
+        }
+
+        try await client.writeFile(path: configURL.path, data: Data())
+        let metadata = try await client.getMetadata(path: configURL.path)
+        guard metadata.isFile else {
+            throw CodexAppServerError.invalidResponse("Codex config path was not created as a file: \(configURL.path)")
         }
         return configURL
     }
