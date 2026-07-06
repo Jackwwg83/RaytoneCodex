@@ -482,29 +482,37 @@ enum SmokeTestRunner {
 
                 let ok = store.runtimeSnapshot.executable != nil &&
                     streamedBeforeInput &&
+                    stdinRun?.processID?.hasPrefix("raytone-terminal-") == true &&
                     stdinRun?.output.contains("got:raytone-stdin-smoke") == true &&
                     stdinRun?.status == .succeeded &&
                     streamedBeforeTerminate &&
+                    terminatedRun?.processID?.hasPrefix("raytone-terminal-") == true &&
                     terminatedRun?.output.contains("sleeping") == true &&
                     terminatedRun?.output.contains("done") != true &&
+                    store.runtimeCatalogStatusText.contains("process/exited") &&
                     store.terminalIsRunning == false
 
                 let stdinOutput = stdinRun?.output ?? ""
                 let terminatedOutput = terminatedRun?.output ?? ""
+                let runtimeCatalogStatus = store.runtimeCatalogStatusText
                 await store.stopAppServerForTesting()
 
                 emitJSON([
                     "ok": ok,
+                    "source": "process/spawn + process/writeStdin + process/kill",
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "runtimeCatalogStatus": runtimeCatalogStatus,
                     "workspacePath": workspaceURL.path,
                     "codexHomePath": codexHomeURL.path,
                     "streamedBeforeInput": streamedBeforeInput,
+                    "stdinProcessHandle": stdinRun?.processID ?? "",
                     "stdinExitCode": Int(stdinRun?.exitCode ?? -999),
                     "stdinStatus": terminalStatusName(stdinRun?.status),
                     "stdinOutput": stdinOutput,
                     "streamedBeforeTerminate": streamedBeforeTerminate,
+                    "terminatedProcessHandle": terminatedRun?.processID ?? "",
                     "terminatedExitCode": Int(terminatedRun?.exitCode ?? -999),
                     "terminatedStatus": terminalStatusName(terminatedRun?.status),
                     "terminatedOutput": terminatedOutput
@@ -574,13 +582,15 @@ enum SmokeTestRunner {
                 let output = run?.output ?? ""
                 let ok = store.runtimeSnapshot.executable != nil &&
                     streamedBeforeResize &&
-                    resizeStatus.contains("command/exec/resize") &&
+                    resizeStatus.contains("process/resizePty") &&
                     output.contains("line:raytone-resize-smoke") &&
                     output.contains("42 132") &&
                     run?.status == .succeeded &&
+                    run?.processID?.hasPrefix("raytone-terminal-") == true &&
                     store.terminalRows == 42 &&
                     store.terminalCols == 132
 
+                let runtimeCatalogStatus = store.runtimeCatalogStatusText
                 await store.stopAppServerForTesting()
 
                 emitJSON([
@@ -594,9 +604,11 @@ enum SmokeTestRunner {
                     "resizeStatus": resizeStatus,
                     "terminalRows": store.terminalRows,
                     "terminalCols": store.terminalCols,
+                    "processHandle": run?.processID ?? "",
+                    "runtimeCatalogStatus": runtimeCatalogStatus,
                     "runStatus": terminalStatusName(run?.status),
                     "output": output,
-                    "source": "command/exec/resize"
+                    "source": "process/spawn + process/resizePty + process/writeStdin"
                 ])
                 exit(ok ? 0 : 1)
             } catch {

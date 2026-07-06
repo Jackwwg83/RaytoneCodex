@@ -3339,6 +3339,66 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func spawnProcess(
+        _ command: [String],
+        processHandle: String,
+        cwd: URL,
+        tty: Bool = false,
+        streamStdin: Bool = false,
+        streamStdoutStderr: Bool = false,
+        rows: Int = 30,
+        cols: Int = 100
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "command": .array(command.map(JSONValue.string)),
+            "processHandle": .string(processHandle),
+            "cwd": .string(cwd.path),
+            "tty": .bool(tty),
+            "streamStdin": .bool(streamStdin),
+            "streamStdoutStderr": .bool(streamStdoutStderr),
+            "outputBytesCap": .null,
+            "timeoutMs": .null
+        ]
+        if tty {
+            params["size"] = .object([
+                "rows": .number(Double(rows)),
+                "cols": .number(Double(cols))
+            ])
+        }
+        _ = try await request(method: "process/spawn", params: .object(params))
+    }
+
+    public func writeProcessInput(
+        processHandle: String,
+        data: Data,
+        closeStdin: Bool = false
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "processHandle": .string(processHandle),
+            "closeStdin": .bool(closeStdin)
+        ]
+        if !data.isEmpty {
+            params["deltaBase64"] = .string(data.base64EncodedString())
+        }
+        _ = try await request(method: "process/writeStdin", params: .object(params))
+    }
+
+    public func killProcess(processHandle: String) async throws {
+        _ = try await request(method: "process/kill", params: .object([
+            "processHandle": .string(processHandle)
+        ]))
+    }
+
+    public func resizeProcessPty(processHandle: String, rows: Int, cols: Int) async throws {
+        _ = try await request(method: "process/resizePty", params: .object([
+            "processHandle": .string(processHandle),
+            "size": .object([
+                "rows": .number(Double(rows)),
+                "cols": .number(Double(cols))
+            ])
+        ]))
+    }
+
     public func respondApproval(
         requestID: CodexAppServerRequestID,
         decision: CodexAppServerApprovalDecision
