@@ -6259,11 +6259,26 @@ final class SessionStore: ObservableObject {
     }
 
     func toggleSkill(_ skill: CodexRuntimeSkill) async {
-        runtimeCatalogStatusText = skill.enabled ? "正在停用 \(skill.displayName)…" : "正在启用 \(skill.displayName)…"
+        let targetEnabled = !skill.enabled
+        let actionText = targetEnabled ? "启用" : "停用"
+        let completedText = targetEnabled ? "已启用" : "已停用"
+        runtimeCatalogStatusText = "正在\(actionText) \(skill.displayName)…"
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            try await client.setSkillEnabled(skill, enabled: !skill.enabled)
+            try await client.setSkillEnabled(skill, enabled: targetEnabled)
             await refreshRuntimeCatalog(forceReloadSkills: true)
+            let updatedSkill = runtimeSkills.first {
+                $0.name == skill.name &&
+                    Self.canonicalPath($0.path) == Self.canonicalPath(skill.path)
+            }
+            if updatedSkill?.enabled == targetEnabled {
+                runtimeCatalogStatusText = "skills/config/write + skills/list：\(skill.displayName) \(completedText)"
+            } else if let updatedSkill {
+                let observedText = updatedSkill.enabled ? "启用" : "停用"
+                runtimeCatalogStatusText = "skills/config/write：已提交；skills/list 仍显示\(observedText)"
+            } else {
+                runtimeCatalogStatusText = "skills/config/write：已提交；skills/list 未找到 \(skill.displayName)"
+            }
         } catch {
             runtimeCatalogStatusText = "技能操作失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]

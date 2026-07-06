@@ -45,6 +45,8 @@ enum SmokeTestRunner {
             runSkillReadSmoke()
         } else if CommandLine.arguments.contains("--skill-extra-roots-smoke-test") {
             runSkillExtraRootsSmoke()
+        } else if CommandLine.arguments.contains("--skill-toggle-smoke-test") {
+            runSkillToggleSmoke()
         } else if CommandLine.arguments.contains("--plugin-scaffold-smoke-test") {
             runPluginScaffoldSmoke()
         } else if CommandLine.arguments.contains("--plugin-install-response-smoke-test") {
@@ -2727,6 +2729,137 @@ enum SmokeTestRunner {
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
                     "extraSkillsRoot": extraSkillsRootURL.path,
+                    "skillPath": skillURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSkillToggleSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexSkillToggleSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let skillURL = codexHomeURL
+                .appendingPathComponent("skills/raytone-toggle-skill/SKILL.md")
+            let configURL = codexHomeURL.appendingPathComponent("config.toml")
+            let marker = "RAYTONE_SKILL_TOGGLE_SMOKE_MARKER"
+            let skillText = """
+            ---
+            name: raytone-toggle-skill
+            description: Smoke skill toggled through codex app-server skills/config/write.
+            ---
+
+            # Raytone Toggle Skill
+
+            \(marker)
+            """
+            var store: SessionStore?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(
+                    at: skillURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try skillText.write(to: skillURL, atomically: true, encoding: .utf8)
+
+                let skillStore = SessionStore()
+                store = skillStore
+                skillStore.workspacePath = workspaceURL.path
+                skillStore.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("skill-toggle-smoke: refreshRuntimeCatalog\n", stderr)
+                await skillStore.refreshRuntime()
+                await skillStore.refreshRuntimeCatalog(forceReloadSkills: true)
+                guard let initialSkill = skillStore.runtimeSkills.first(where: { $0.name == "raytone-toggle-skill" }) else {
+                    await skillStore.stopAppServerForTesting()
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": skillStore.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                        "runtimePath": skillStore.runtimeSnapshot.executable?.url.path ?? "",
+                        "runtimeVersion": skillStore.runtimeSnapshot.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHome": codexHomeURL.path,
+                        "skillPath": skillURL.path,
+                        "status": skillStore.runtimeCatalogStatusText,
+                        "errors": skillStore.runtimeCatalogErrors,
+                        "skills": skillStore.runtimeSkills.map(skillPayload)
+                    ])
+                    exit(1)
+                }
+                let initialStatus = skillStore.runtimeCatalogStatusText
+
+                fputs("skill-toggle-smoke: disable skill\n", stderr)
+                await skillStore.toggleSkill(initialSkill)
+                let disabledStatus = skillStore.runtimeCatalogStatusText
+                let disabledSkill = skillStore.runtimeSkills.first(where: { $0.name == initialSkill.name })
+                let disabledConfig = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+
+                fputs("skill-toggle-smoke: enable skill\n", stderr)
+                if let disabledSkill {
+                    await skillStore.toggleSkill(disabledSkill)
+                }
+                let enabledStatus = skillStore.runtimeCatalogStatusText
+                let enabledSkill = skillStore.runtimeSkills.first(where: { $0.name == initialSkill.name })
+                let finalConfig = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+
+                await skillStore.stopAppServerForTesting()
+
+                let canonicalSkillPath = SessionStore.canonicalPath(skillURL.path)
+                let smokeChecks: [String: Bool] = [
+                    "hasRuntimeExecutable": skillStore.runtimeSnapshot.executable != nil,
+                    "initialEnabled": initialSkill.enabled,
+                    "initialPathMatches": SessionStore.canonicalPath(initialSkill.path) == canonicalSkillPath,
+                    "disabledByList": disabledSkill?.enabled == false,
+                    "enabledByList": enabledSkill?.enabled == true,
+                    "disabledStatusShowsWriteAndList": disabledStatus.contains("skills/config/write + skills/list"),
+                    "enabledStatusShowsWriteAndList": enabledStatus.contains("skills/config/write + skills/list"),
+                    "disabledConfigHasSkillsTable": disabledConfig.contains("[[skills.config]]"),
+                    "disabledConfigHasListedPath": disabledSkill.map { disabledConfig.contains("path = \"\($0.path)\"") } ?? false,
+                    "disabledConfigHasFalse": disabledConfig.contains("enabled = false"),
+                    "finalConfigClearedDisable": !finalConfig.contains("enabled = false")
+                ]
+                let ok = smokeChecks.values.allSatisfy { $0 }
+
+                emitJSON([
+                    "ok": ok,
+                    "checks": smokeChecks,
+                    "runtimeSource": skillStore.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": skillStore.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": skillStore.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "configPath": configURL.path,
+                    "skillPath": skillURL.path,
+                    "initialSkill": skillPayload(initialSkill),
+                    "disabledSkill": disabledSkill.map(skillPayload) ?? NSNull(),
+                    "enabledSkill": enabledSkill.map(skillPayload) ?? NSNull(),
+                    "initialStatus": initialStatus,
+                    "disabledStatus": disabledStatus,
+                    "enabledStatus": enabledStatus,
+                    "disabledConfig": disabledConfig,
+                    "finalConfig": finalConfig,
+                    "source": "skills/config/write + skills/list(forceReload) + config.toml"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                await store?.stopAppServerForTesting()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": store?.runtimeSnapshot.executable?.source.rawValue ?? "unknown",
+                    "runtimePath": store?.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store?.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
                     "skillPath": skillURL.path,
                     "error": error.localizedDescription
                 ])
@@ -15736,6 +15869,18 @@ enum SmokeTestRunner {
             "enabled": hook.enabled,
             "trustStatus": hook.trustStatus,
             "currentHash": hook.currentHash
+        ]
+    }
+
+    private static func skillPayload(_ skill: CodexRuntimeSkill) -> [String: Any] {
+        [
+            "name": skill.name,
+            "displayName": skill.displayName,
+            "summary": skill.summary,
+            "path": skill.path,
+            "cwd": skill.cwd,
+            "scope": skill.scope,
+            "enabled": skill.enabled
         ]
     }
 
