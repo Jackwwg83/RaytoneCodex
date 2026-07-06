@@ -1694,6 +1694,39 @@ public enum CodexAppServerLegacyReviewDecision: String, Sendable {
     case abort
 }
 
+public enum CodexThreadUnsubscribeStatus: Equatable, Sendable {
+    case notLoaded
+    case notSubscribed
+    case unsubscribed
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "notLoaded":
+            self = .notLoaded
+        case "notSubscribed":
+            self = .notSubscribed
+        case "unsubscribed":
+            self = .unsubscribed
+        default:
+            self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .notLoaded:
+            return "notLoaded"
+        case .notSubscribed:
+            return "notSubscribed"
+        case .unsubscribed:
+            return "unsubscribed"
+        case let .unknown(rawValue):
+            return rawValue
+        }
+    }
+}
+
 public enum CodexAppServerElicitationAction: String, Sendable {
     case accept
     case decline
@@ -2496,6 +2529,14 @@ public actor CodexAppServerClient {
 
         let result = try await request(method: "thread/loaded/list", params: .object(params))
         return Self.loadedThreadCatalog(from: result)
+    }
+
+    @discardableResult
+    public func unsubscribeThread(id threadID: String) async throws -> CodexThreadUnsubscribeStatus {
+        let result = try await request(method: "thread/unsubscribe", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return CodexThreadUnsubscribeStatus(rawValue: result["status"]?.stringValue ?? "unknown")
     }
 
     public func readThread(id threadID: String, includeTurns: Bool = true) async throws -> JSONValue {

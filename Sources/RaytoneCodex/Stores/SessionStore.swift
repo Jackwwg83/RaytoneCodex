@@ -3672,8 +3672,18 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             try await client.archiveThread(id: threadID)
+            let unsubscribeStatusText: String
+            do {
+                let unsubscribeStatus = try await client.unsubscribeThread(id: threadID)
+                unsubscribeStatusText = unsubscribeStatus.rawValue
+            } catch {
+                unsubscribeStatusText = "failed: \(error.localizedDescription)"
+                runtimeCatalogErrors = [error.localizedDescription]
+            }
             rememberArchivedRuntimeThread(id: threadID, title: title, preview: preview, cwd: cwd)
-            runtimeCatalogStatusText = "thread/archive：已归档 \(threadID)"
+            loadedRuntimeThreadIDs.removeAll { $0 == threadID }
+            runtimeCatalogStatusText = "thread/archive：已归档 \(threadID) · unsubscribe \(unsubscribeStatusText)"
+            runtimeLoadedThreadsStatusText = "thread/unsubscribe：\(unsubscribeStatusText)"
         } catch {
             runtimeCatalogStatusText = "归档失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]

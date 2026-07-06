@@ -177,6 +177,8 @@ enum SmokeTestRunner {
             runHistorySmoke()
         } else if CommandLine.arguments.contains("--loaded-threads-smoke-test") {
             runLoadedThreadsSmoke()
+        } else if CommandLine.arguments.contains("--thread-unsubscribe-smoke-test") {
+            runThreadUnsubscribeSmoke()
         } else if CommandLine.arguments.contains("--thread-metadata-smoke-test") {
             runThreadMetadataSmoke()
         } else if CommandLine.arguments.contains("--thread-shell-command-smoke-test") {
@@ -6068,6 +6070,102 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runThreadUnsubscribeSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let workspaceURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadUnsubscribeSmoke-\(UUID().uuidString)", isDirectory: true)
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexThreadUnsubscribeCodexHome-\(UUID().uuidString)", isDirectory: true)
+            var mockServer: MockResponsesServer?
+            var client: CodexAppServerClient?
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try "thread unsubscribe smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+
+                mockServer = try startMockResponsesServer(message: "Raytone thread unsubscribe smoke")
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
+
+                let runtime = await CodexCLIService().inspectRuntime()
+                guard let executable = runtime.executable else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": "none",
+                        "runtimePath": "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspaceURL.path,
+                        "codexHomePath": codexHomeURL.path,
+                        "error": runtime.errorDescription ?? "Codex CLI executable was not found."
+                    ])
+                    mockServer?.stop()
+                    exit(1)
+                }
+
+                let appServerClient = CodexAppServerClient(
+                    executable: executable,
+                    workspaceURL: workspaceURL,
+                    environmentOverrides: ["CODEX_HOME": codexHomeURL.path]
+                )
+                client = appServerClient
+                try await appServerClient.initialize()
+                let options = CodexAppServerOptions(
+                    workspaceURL: workspaceURL,
+                    model: "mock-model",
+                    sandbox: .readOnly,
+                    approvalPolicy: .never
+                )
+                let thread = try await appServerClient.startThread(options: options)
+                let loadedBefore = try await appServerClient.listLoadedThreads(limit: 20)
+                let firstStatus = try await appServerClient.unsubscribeThread(id: thread.id)
+                let loadedAfterFirst = try await appServerClient.listLoadedThreads(limit: 20)
+                let secondStatus = try await appServerClient.unsubscribeThread(id: thread.id)
+
+                await appServerClient.stop()
+                mockServer?.stop()
+
+                let ok = loadedBefore.threadIDs.contains(thread.id) &&
+                    firstStatus == .unsubscribed &&
+                    secondStatus == .notSubscribed
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": executable.source.rawValue,
+                    "runtimePath": executable.url.path,
+                    "runtimeVersion": runtime.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "appServerThreadID": thread.id,
+                    "loadedBefore": loadedBefore.threadIDs,
+                    "loadedAfterFirst": loadedAfterFirst.threadIDs,
+                    "firstUnsubscribeStatus": firstStatus.rawValue,
+                    "secondUnsubscribeStatus": secondStatus.rawValue,
+                    "source": "thread/unsubscribe"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                if let client {
+                    await client.stop()
+                }
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runThreadMetadataSmoke() {
         Task { @MainActor in
             let fileManager = FileManager.default
@@ -9711,6 +9809,7 @@ enum SmokeTestRunner {
 
         log_path = os.environ.get("RAYTONE_THREAD_LIFECYCLE_LOG")
         archived = False
+        subscribed = False
         cwd = os.getcwd()
 
         def log(message):
@@ -9781,6 +9880,7 @@ enum SmokeTestRunner {
                 send_result(request_id, {})
             elif method == "thread/start":
                 cwd = params.get("cwd") or cwd
+                subscribed = True
                 send_result(request_id, {
                     "thread": thread_payload(),
                     "approvalPolicy": "on-request",
@@ -9811,6 +9911,7 @@ enum SmokeTestRunner {
                 send_notification("thread/closed", {
                     "threadId": "thread-life",
                 })
+                subscribed = False
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-life", "status": "completed"},
                 })
@@ -9818,6 +9919,10 @@ enum SmokeTestRunner {
                 archived = True
                 send_result(request_id, {})
                 send_notification("thread/archived", {"threadId": "thread-life"})
+            elif method == "thread/unsubscribe":
+                status = "unsubscribed" if subscribed else "notSubscribed"
+                subscribed = False
+                send_result(request_id, {"status": status})
             elif method == "thread/unarchive":
                 archived = False
                 send_result(request_id, {"thread": thread_payload("远端生命周期重命名", False)})
