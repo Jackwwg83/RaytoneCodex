@@ -32,7 +32,7 @@ struct RaytoneCodexApp: App {
 
         Settings {
             SettingsView(store: sessionStore)
-                .frame(width: 520)
+                .frame(minWidth: 1040, minHeight: 760)
                 .preferredColorScheme(sessionStore.preferredColorScheme)
         }
 

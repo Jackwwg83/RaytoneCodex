@@ -66,20 +66,12 @@ struct ContentView: View {
 struct SettingsView: View {
     @ObservedObject var store: SessionStore
 
+    static let runtimeSurfaceDescription = "SettingsRouteView"
+
     var body: some View {
-        Form {
-            TextField("工作区", text: $store.workspacePath)
-            TextField("模型", text: $store.model)
-            Picker("沙箱", selection: $store.sandbox) {
-                ForEach(CodexSandboxMode.allCases, id: \.self) { mode in
-                    Text(ComposerView.sandboxName(mode)).tag(mode)
-                }
+        SettingsRouteView(store: store)
+            .onAppear {
+                store.route = .settings
             }
-            LabeledContent("审批") {
-                Text(store.execApprovalDisplayName)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        }
-        .padding(20)
     }
 }

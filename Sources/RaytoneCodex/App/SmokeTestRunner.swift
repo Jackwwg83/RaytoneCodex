@@ -52,6 +52,8 @@ enum SmokeTestRunner {
             runMentionSmoke()
         } else if CommandLine.arguments.contains("--runtime-pages-smoke-test") {
             runRuntimePagesSmoke()
+        } else if CommandLine.arguments.contains("--settings-scene-smoke-test") {
+            runSettingsSceneSmoke()
         } else if CommandLine.arguments.contains("--sample-data-gate-smoke-test") {
             runSampleDataGateSmoke()
         } else if CommandLine.arguments.contains("--usage-activity-smoke-test") {
@@ -4895,6 +4897,49 @@ enum SmokeTestRunner {
                 "threadCount": store.threads.count,
                 "projectNames": projectNames,
                 "threadTitles": threadTitles
+            ])
+            exit(ok ? 0 : 1)
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSettingsSceneSmoke() {
+        let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
+
+        Task { @MainActor in
+            let store = SessionStore()
+            store.workspacePath = workspacePath
+            store.route = .settings
+            store.settingsPane = .configuration
+
+            fputs("settings-scene-smoke: refreshRuntime\n", stderr)
+            await store.refreshRuntime()
+
+            fputs("settings-scene-smoke: refreshRuntimeConfiguration\n", stderr)
+            await store.refreshRuntimeConfiguration()
+
+            let surface = SettingsView.runtimeSurfaceDescription
+            let ok = surface == "SettingsRouteView" &&
+                store.route == .settings &&
+                store.settingsPane == .configuration &&
+                store.runtimeCatalogStatusText.hasPrefix("config/read：") &&
+                store.runtimeSnapshot.executable != nil
+
+            emitJSON([
+                "ok": ok,
+                "settingsSceneSurface": surface,
+                "legacyFormRemoved": surface == "SettingsRouteView",
+                "route": "\(store.route)",
+                "settingsPane": "\(store.settingsPane)",
+                "runtimeStatus": store.runtimeCatalogStatusText,
+                "runtimeErrors": store.runtimeCatalogErrors,
+                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                "workspacePath": workspacePath,
+                "configLayerCount": store.runtimeConfig?.layerCount ?? 0,
+                "source": "Settings scene -> SettingsRouteView -> config/read"
             ])
             exit(ok ? 0 : 1)
         }
