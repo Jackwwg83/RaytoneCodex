@@ -81,6 +81,8 @@ enum SmokeTestRunner {
             runAutomationSmoke()
         } else if CommandLine.arguments.contains("--automation-hook-smoke-test") {
             runAutomationHookSmoke()
+        } else if CommandLine.arguments.contains("--hook-notification-smoke-test") {
+            runHookNotificationSmoke()
         } else if CommandLine.arguments.contains("--hook-controls-smoke-test") {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
@@ -6830,6 +6832,102 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runHookNotificationSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexHookNotificationSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# Hook notification smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeHookNotificationAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-hook-notification"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_HOOK_NOTIFICATION_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "HookNotificationSmoke"
+                }
+
+                store.prompt = "触发 app-server hook 通知"
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline,
+                      !store.automationEventLogText.contains(#""method":"hook/completed""#) {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let eventLogText = store.automationEventLogText
+                let eventLines = eventLogText
+                    .components(separatedBy: .newlines)
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                let statusText = store.automationEventLogStatusText
+                let catalogStatus = store.runtimeCatalogStatusText
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let ok = !store.isRunning &&
+                    eventLines.count >= 2 &&
+                    eventLogText.contains(#""source":"Codex app-server""#) &&
+                    eventLogText.contains(#""method":"hook/started""#) &&
+                    eventLogText.contains(#""method":"hook/completed""#) &&
+                    eventLogText.contains(#""eventName":"userPromptSubmit""#) &&
+                    eventLogText.contains(#""status":"running""#) &&
+                    eventLogText.contains(#""status":"completed""#) &&
+                    statusText.contains("hook/completed") &&
+                    catalogStatus.contains("提交用户提示") &&
+                    logText.contains(#""method":"turn/start""#) &&
+                    logText.contains(#""method":"hook/started""#) &&
+                    logText.contains(#""method":"hook/completed""#)
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "eventLogLineCount": store.automationEventLogLineCount,
+                    "eventLogStatus": statusText,
+                    "runtimeCatalogStatus": catalogStatus,
+                    "eventLogText": eventLogText,
+                    "eventLines": eventLines,
+                    "isRunning": store.isRunning,
+                    "requestLogPreview": String(logText.prefix(2200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAccountAuthSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
@@ -8774,6 +8872,117 @@ enum SmokeTestRunner {
                     continue
                 clients = [client for client in clients if client.get("clientId") != client_id]
                 send_result(request_id, {})
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeHookNotificationAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_HOOK_NOTIFICATION_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log({"notification": payload})
+            send(payload)
+
+        def hook_run(status):
+            run = {
+                "id": "hook-run-smoke",
+                "eventName": "userPromptSubmit",
+                "handlerType": "command",
+                "executionMode": "sync",
+                "scope": "turn",
+                "sourcePath": os.path.join(os.getcwd(), ".codex", "config.toml"),
+                "source": "project",
+                "displayOrder": 0,
+                "status": status,
+                "statusMessage": "Raytone hook notification smoke",
+                "startedAt": 1700000000000,
+                "completedAt": None,
+                "durationMs": None,
+                "entries": [],
+            }
+            if status == "completed":
+                run["completedAt"] = 1700000000042
+                run["durationMs"] = 42
+                run["entries"] = [
+                    {"kind": "context", "text": "hook notification smoke context"},
+                    {"kind": "feedback", "text": "hook notification smoke completed"},
+                ]
+            return run
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-smoke",
+                        "sessionId": "session-smoke",
+                        "preview": "Hook notification smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-smoke",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_notification("hook/started", {
+                    "threadId": "thread-smoke",
+                    "turnId": "turn-smoke",
+                    "run": hook_run("running")
+                })
+                send_notification("hook/completed", {
+                    "threadId": "thread-smoke",
+                    "turnId": "turn-smoke",
+                    "run": hook_run("completed")
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-smoke", "status": "completed"}
+                })
+                send_result(request_id, {
+                    "turn": {"id": "turn-smoke", "status": "completed"}
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

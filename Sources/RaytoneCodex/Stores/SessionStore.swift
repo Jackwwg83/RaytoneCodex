@@ -6347,6 +6347,8 @@ final class SessionStore: ObservableObject {
             if let diff = params?["diff"]?.stringValue {
                 upsertDiffFileChanges(diff)
             }
+        case "hook/started", "hook/completed":
+            handleHookNotification(method: method, params: params)
         case "thread/settings/updated":
             handleThreadSettingsUpdated(params)
         case "thread/goal/updated":
@@ -6452,6 +6454,114 @@ final class SessionStore: ObservableObject {
             appendCommandOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         default:
             break
+        }
+    }
+
+    private func handleHookNotification(method: String, params: JSONValue?) {
+        let run = params?["run"]
+        let hookID = run?["id"]?.stringValue ?? "unknown"
+        let eventName = run?["eventName"]?.stringValue ?? "hook"
+        let status = run?["status"]?.stringValue ?? (method == "hook/started" ? "running" : "completed")
+        let handlerType = run?["handlerType"]?.stringValue ?? "handler"
+        let executionMode = run?["executionMode"]?.stringValue ?? "sync"
+        let scope = run?["scope"]?.stringValue ?? "turn"
+        let sourcePath = run?["sourcePath"]?.stringValue ?? ""
+        let statusMessage = run?["statusMessage"]?.stringValue ?? ""
+        let durationMs = run?["durationMs"]?.intValue
+        let entries = run?["entries"]?.arrayValue ?? []
+        let displayEvent = Self.hookEventDisplayName(eventName)
+        let displayStatus = Self.hookRunStatusDisplayName(status)
+        let statusSuffix = durationMs.map { " · \($0)ms" } ?? ""
+
+        var event: [String: JSONValue] = [
+            "source": .string("Codex app-server"),
+            "method": .string(method),
+            "threadId": .string(params?["threadId"]?.stringValue ?? selectedThread.appServerThreadID ?? ""),
+            "turnId": .string(params?["turnId"]?.stringValue ?? activeAppServerTurnID ?? ""),
+            "hookId": .string(hookID),
+            "eventName": .string(eventName),
+            "eventDisplayName": .string(displayEvent),
+            "status": .string(status),
+            "statusDisplayName": .string(displayStatus),
+            "handlerType": .string(handlerType),
+            "executionMode": .string(executionMode),
+            "scope": .string(scope),
+            "sourcePath": .string(sourcePath),
+            "entryCount": .number(Double(entries.count))
+        ]
+        if !statusMessage.isEmpty {
+            event["statusMessage"] = .string(statusMessage)
+        }
+        if let durationMs {
+            event["durationMs"] = .number(Double(durationMs))
+        }
+
+        appendAutomationRuntimeEvent(.object(event))
+        automationEventLogStatusText = "\(method)：\(displayEvent) · \(displayStatus)\(statusSuffix) · 已同步 \(automationEventLogLineCount) 条事件"
+        runtimeCatalogStatusText = "\(method)：\(displayEvent) · \(displayStatus)\(statusSuffix)"
+        runtimeCatalogErrors = []
+    }
+
+    private func appendAutomationRuntimeEvent(_ event: JSONValue) {
+        let line = Self.compactJSONString(event)
+        if automationEventLogText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            automationEventLogText = line
+        } else {
+            automationEventLogText += "\n\(line)"
+        }
+    }
+
+    private static func compactJSONString(_ value: JSONValue) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value),
+              let text = String(data: data, encoding: .utf8) else {
+            return value.prettyJSONString.replacingOccurrences(of: "\n", with: " ")
+        }
+        return text
+    }
+
+    private static func hookEventDisplayName(_ value: String) -> String {
+        switch value {
+        case "preToolUse":
+            "工具使用前"
+        case "permissionRequest":
+            "权限请求"
+        case "postToolUse":
+            "工具使用后"
+        case "preCompact":
+            "压缩前"
+        case "postCompact":
+            "压缩后"
+        case "sessionStart":
+            "会话开始"
+        case "userPromptSubmit":
+            "提交用户提示"
+        case "subagentStart":
+            "子代理开始"
+        case "subagentStop":
+            "子代理停止"
+        case "stop":
+            "停止"
+        default:
+            value
+        }
+    }
+
+    private static func hookRunStatusDisplayName(_ value: String) -> String {
+        switch value {
+        case "running":
+            "运行中"
+        case "completed":
+            "已完成"
+        case "failed":
+            "失败"
+        case "blocked":
+            "已阻止"
+        case "stopped":
+            "已停止"
+        default:
+            value
         }
     }
 
