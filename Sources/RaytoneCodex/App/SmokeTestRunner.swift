@@ -1819,7 +1819,7 @@ enum SmokeTestRunner {
                 var logText = ""
                 while Date() < deadline {
                     logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                    if logText.contains(#""dynamicToolResponse""#) {
+                    if logText.contains(#""dynamicToolFilesResponse""#) {
                         break
                     }
                     try? await Task.sleep(nanoseconds: 100_000_000)
@@ -1830,14 +1830,22 @@ enum SmokeTestRunner {
                 let dynamicCommand = commands.last { command in
                     command.command.contains("动态工具 raytone_context.workspace_snapshot")
                 }
+                let filesCommand = commands.last { command in
+                    command.command.contains("动态工具 raytone_context.list_workspace_files")
+                }
                 let output = dynamicCommand?.output ?? ""
+                let filesOutput = filesCommand?.output ?? ""
                 let normalizedOutput = output.replacingOccurrences(of: "\\/", with: "/")
+                let normalizedFilesOutput = filesOutput.replacingOccurrences(of: "\\/", with: "/")
                 let registeredDynamicTool = logText.contains(#""dynamicTools""#) &&
                     logText.contains(#""namespace":"raytone_context""#) &&
-                    logText.contains(#""name":"workspace_snapshot""#)
+                    logText.contains(#""name":"workspace_snapshot""#) &&
+                    logText.contains(#""name":"list_workspace_files""#)
                 let requestObserved = logText.contains(#""method":"item/tool/call""#) &&
-                    logText.contains(#""tool":"workspace_snapshot""#)
+                    logText.contains(#""tool":"workspace_snapshot""#) &&
+                    logText.contains(#""tool":"list_workspace_files""#)
                 let responseObserved = logText.contains(#""dynamicToolResponse""#) &&
+                    logText.contains(#""dynamicToolFilesResponse""#) &&
                     logText.contains(#""success":true"#) &&
                     logText.contains(#""contentItems""#)
                 let commandExecObserved = logText.contains(#""method":"command/exec""#) ||
@@ -1846,12 +1854,18 @@ enum SmokeTestRunner {
                     output.contains(#""files" : 1"#) &&
                     output.contains(#""additions" : 1"#) &&
                     output.contains(#"M README.md"#)
+                let fileListObserved = filesOutput.contains(#""entries""#) &&
+                    filesOutput.contains(#""entryCount""#) &&
+                    normalizedFilesOutput.contains("README.md") &&
+                    normalizedFilesOutput.contains(workspaceURL.path)
                 let ok = registeredDynamicTool &&
                     requestObserved &&
                     responseObserved &&
                     commandExecObserved &&
                     freshDiffObserved &&
+                    fileListObserved &&
                     dynamicCommand?.status == .succeeded &&
+                    filesCommand?.status == .succeeded &&
                     output.contains(#""workspacePath""#) &&
                     normalizedOutput.contains(workspaceURL.path) &&
                     output.contains(#""approvalPolicy""#) &&
@@ -1868,9 +1882,12 @@ enum SmokeTestRunner {
                     "responseObserved": responseObserved,
                     "commandExecObserved": commandExecObserved,
                     "freshDiffObserved": freshDiffObserved,
+                    "fileListObserved": fileListObserved,
                     "isRunning": store.isRunning,
                     "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
+                    "filesCommandStatus": runStatusName(filesCommand?.status),
                     "dynamicCommandOutputPreview": String(output.prefix(1200)),
+                    "filesCommandOutputPreview": String(filesOutput.prefix(1200)),
                     "requestLogPreview": String(logText.prefix(2400))
                 ])
                 exit(ok ? 0 : 1)
@@ -12341,6 +12358,7 @@ enum SmokeTestRunner {
 
         log_path = os.environ.get("RAYTONE_DYNAMIC_TOOL_LOG")
         tool_arguments = {"includeDiffStats": True}
+        file_tool_arguments = {"path": ".", "maxEntries": 5, "includeHidden": False}
 
         def log(message):
             if not log_path:
@@ -12364,17 +12382,17 @@ enum SmokeTestRunner {
         def send_notification(method, params=None):
             send({"method": method, "params": params or {}})
 
-        def send_dynamic_tool_request():
+        def send_dynamic_tool_request(request_id, call_id, tool, arguments):
             message = {
-                "id": "dynamic-tool-smoke",
+                "id": request_id,
                 "method": "item/tool/call",
                 "params": {
                     "threadId": "thread-smoke",
                     "turnId": "turn-smoke",
-                    "callId": "call-smoke",
+                    "callId": call_id,
                     "namespace": "raytone_context",
-                    "tool": "workspace_snapshot",
-                    "arguments": tool_arguments
+                    "tool": tool,
+                    "arguments": arguments
                 }
             }
             log({"serverRequest": message})
@@ -12406,6 +12424,32 @@ enum SmokeTestRunner {
                 send_notification("serverRequest/resolved", {
                     "threadId": "thread-smoke",
                     "requestId": "dynamic-tool-smoke"
+                })
+                send_dynamic_tool_request(
+                    "dynamic-tool-files-smoke",
+                    "call-files-smoke",
+                    "list_workspace_files",
+                    file_tool_arguments,
+                )
+                continue
+            if request_id == "dynamic-tool-files-smoke" and "result" in request:
+                result = request.get("result") or {}
+                log({"dynamicToolFilesResponse": result})
+                send_notification("item/completed", {
+                    "item": {
+                        "id": "call-files-smoke",
+                        "type": "dynamicToolCall",
+                        "namespace": "raytone_context",
+                        "tool": "list_workspace_files",
+                        "arguments": file_tool_arguments,
+                        "status": "completed",
+                        "success": result.get("success"),
+                        "contentItems": result.get("contentItems") or []
+                    }
+                })
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "dynamic-tool-files-smoke"
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-smoke", "status": "completed"}
@@ -12442,6 +12486,22 @@ enum SmokeTestRunner {
                     }
                     log({"commandExecResponse": result})
                     send_result(request_id, result)
+            elif method == "fs/readDirectory":
+                params = request.get("params") or {}
+                path = params.get("path") or os.getcwd()
+                try:
+                    entries = []
+                    for entry in sorted(os.scandir(path), key=lambda item: item.name):
+                        entries.append({
+                            "fileName": entry.name,
+                            "isDirectory": entry.is_dir(follow_symlinks=False),
+                            "isFile": entry.is_file(follow_symlinks=False)
+                        })
+                    result = {"entries": entries}
+                    log({"readDirectoryResponse": result})
+                    send_result(request_id, result)
+                except Exception as exc:
+                    send_error(request_id, str(exc))
             elif method == "thread/start":
                 send_result(request_id, {
                     "thread": {
@@ -12464,7 +12524,12 @@ enum SmokeTestRunner {
                         "startedAt": 1700000000
                     }
                 })
-                send_dynamic_tool_request()
+                send_dynamic_tool_request(
+                    "dynamic-tool-smoke",
+                    "call-smoke",
+                    "workspace_snapshot",
+                    tool_arguments,
+                )
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

@@ -2182,6 +2182,32 @@ public actor CodexAppServerClient {
                     ]),
                     "required": .array([])
                 ])
+            ]),
+            .object([
+                "namespace": .string("raytone_context"),
+                "name": .string("list_workspace_files"),
+                "description": .string("通过 Codex app-server 的 fs/readDirectory 列出当前工作区内某个目录的文件。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object([
+                            "type": .string("string"),
+                            "description": .string("工作区内的相对路径，默认当前工作区根目录。也允许工作区内的绝对路径。")
+                        ]),
+                        "maxEntries": .object([
+                            "type": .string("integer"),
+                            "minimum": .number(1),
+                            "maximum": .number(200),
+                            "description": .string("最多返回多少个目录项，默认 80。")
+                        ]),
+                        "includeHidden": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否包含以点开头的隐藏文件，默认 false。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
             ])
         ]
     }

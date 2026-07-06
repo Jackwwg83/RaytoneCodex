@@ -9240,12 +9240,85 @@ final class SessionStore: ObservableObject {
             }
             return (true, workspaceSnapshotText(arguments: arguments))
         }
+        if namespace == "raytone_context", tool == "list_workspace_files" {
+            return await listWorkspaceFilesDynamicToolText(arguments: arguments)
+        }
 
         let qualifiedName = Self.dynamicToolQualifiedName(namespace: namespace, tool: tool)
         return (
             false,
             "RaytoneCodex 暂未提供动态工具 \(qualifiedName.isEmpty ? tool : qualifiedName)。客户端已按 Codex app-server 协议返回失败，避免当前轮次挂起。"
         )
+    }
+
+    private func listWorkspaceFilesDynamicToolText(arguments: JSONValue) async -> (success: Bool, text: String) {
+        guard let client = appServerClient else {
+            return (false, "Codex app-server 尚未连接，无法读取工作区目录。")
+        }
+
+        let rawPath = arguments["path"]?.stringValue ?? "."
+        guard let targetPath = Self.dynamicToolWorkspacePath(rawPath, workspacePath: workspacePath) else {
+            return (false, "路径必须位于当前工作区内：\(rawPath)")
+        }
+
+        let rawLimit = arguments["maxEntries"]?.intValue ?? 80
+        let maxEntries = min(max(rawLimit, 1), 200)
+        let includeHidden = arguments["includeHidden"]?.boolValue ?? false
+
+        do {
+            let entries = try await client.readDirectory(path: targetPath)
+            let filteredEntries = entries.filter { includeHidden || !$0.fileName.hasPrefix(".") }
+            let visibleEntries = Array(filteredEntries.prefix(maxEntries))
+            let payload: JSONValue = .object([
+                "workspacePath": .string(workspacePath),
+                "path": .string(targetPath),
+                "relativePath": .string(Self.dynamicToolRelativeWorkspacePath(targetPath, workspacePath: workspacePath)),
+                "entryCount": .number(Double(filteredEntries.count)),
+                "returnedCount": .number(Double(visibleEntries.count)),
+                "truncated": .bool(filteredEntries.count > visibleEntries.count),
+                "includeHidden": .bool(includeHidden),
+                "entries": .array(visibleEntries.map { entry in
+                    .object([
+                        "name": .string(entry.fileName),
+                        "path": .string(Self.dynamicToolRelativeWorkspacePath(entry.path, workspacePath: workspacePath)),
+                        "type": .string(entry.isDirectory ? "directory" : (entry.isFile ? "file" : "other"))
+                    ])
+                })
+            ])
+            return (true, payload.prettyJSONString)
+        } catch {
+            return (false, "fs/readDirectory 失败：\(error.localizedDescription)")
+        }
+    }
+
+    private static func dynamicToolWorkspacePath(_ rawPath: String, workspacePath: String) -> String? {
+        let workspace = canonicalPath(workspacePath)
+        let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = trimmed.isEmpty ? "." : trimmed
+        let candidate: String
+        if path == "." {
+            candidate = workspace
+        } else if path.hasPrefix("/") || path.hasPrefix("~") {
+            candidate = canonicalPath((path as NSString).expandingTildeInPath)
+        } else {
+            candidate = canonicalPath(URL(fileURLWithPath: workspace, isDirectory: true)
+                .appendingPathComponent(path)
+                .path)
+        }
+
+        guard candidate == workspace || candidate.hasPrefix(workspace + "/") else {
+            return nil
+        }
+        return candidate
+    }
+
+    private static func dynamicToolRelativeWorkspacePath(_ path: String, workspacePath: String) -> String {
+        let workspace = canonicalPath(workspacePath)
+        let normalized = canonicalPath(path)
+        if normalized == workspace {
+            return "."
+        }
+        return promptReferencePath(for: normalized, workspacePath: workspacePath)
     }
 
     private func workspaceSnapshotText(arguments: JSONValue) -> String {
