@@ -35,6 +35,8 @@ enum SmokeTestRunner {
             runApprovalCompatSmoke()
         } else if CommandLine.arguments.contains("--dynamic-tool-smoke-test") {
             runDynamicToolSmoke()
+        } else if CommandLine.arguments.contains("--auth-attestation-smoke-test") {
+            runAuthAttestationSmoke()
         } else if CommandLine.arguments.contains("--plugin-read-smoke-test") {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--skill-read-smoke-test") {
@@ -1809,6 +1811,91 @@ enum SmokeTestRunner {
                     "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
                     "dynamicCommandOutputPreview": String(output.prefix(1200)),
                     "requestLogPreview": String(logText.prefix(2400))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runAuthAttestationSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAuthAttestationSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeAuthAttestationAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-auth-attestation"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_AUTH_ATTESTATION_LOG": logURL.path
+                ]
+                store.prompt = "触发外部认证和 attestation 请求"
+
+                await store.runPrompt()
+                let deadline = Date().addingTimeInterval(8)
+                var logText = ""
+                while Date() < deadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""authRefreshError""#) &&
+                        logText.contains(#""attestationError""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let notices = store.selectedThread.items.compactMap { item -> Notice? in
+                    if case let .notice(notice) = item.kind {
+                        return notice
+                    }
+                    return nil
+                }
+                let noticeText = notices.map(\.text).joined(separator: "\n")
+                let authErrorObserved = logText.contains(#""authRefreshError""#) &&
+                    logText.contains("没有托管 ChatGPT OAuth token")
+                let attestationErrorObserved = logText.contains(#""attestationError""#) &&
+                    logText.contains("不能伪造客户端证明")
+                let ok = authErrorObserved &&
+                    attestationErrorObserved &&
+                    noticeText.contains("account/chatgptAuthTokens/refresh") == false &&
+                    noticeText.contains("ChatGPT tokens") &&
+                    noticeText.contains("attestation") &&
+                    !store.isRunning
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "authErrorObserved": authErrorObserved,
+                    "attestationErrorObserved": attestationErrorObserved,
+                    "noticeCount": notices.count,
+                    "noticePreview": String(noticeText.prefix(1200)),
+                    "isRunning": store.isRunning,
+                    "requestLogPreview": String(logText.prefix(2600))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -9448,6 +9535,116 @@ enum SmokeTestRunner {
                     }
                 })
                 send_dynamic_tool_request()
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeAuthAttestationAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_AUTH_ATTESTATION_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            send({"method": method, "params": params or {}})
+
+        def send_auth_refresh_request():
+            message = {
+                "id": "auth-refresh-smoke",
+                "method": "account/chatgptAuthTokens/refresh",
+                "params": {
+                    "reason": "unauthorized",
+                    "previousAccountId": "workspace-smoke"
+                }
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        def send_attestation_request():
+            message = {
+                "id": "attestation-smoke",
+                "method": "attestation/generate",
+                "params": {}
+            }
+            log({"serverRequest": message})
+            send(message)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id == "auth-refresh-smoke":
+                log({"authRefreshError": request.get("error"), "authRefreshResult": request.get("result")})
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "auth-refresh-smoke"
+                })
+                send_attestation_request()
+                continue
+            if request_id == "attestation-smoke":
+                log({"attestationError": request.get("error"), "attestationResult": request.get("result")})
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "attestation-smoke"
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-smoke", "status": "completed"}
+                })
+                continue
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                send_result(request_id, {
+                    "thread": {
+                        "id": "thread-smoke",
+                        "sessionId": "session-smoke",
+                        "preview": "Auth attestation smoke"
+                    },
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "read-only"
+                })
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-smoke", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-smoke",
+                        "status": "inProgress",
+                        "startedAt": 1700000000
+                    }
+                })
+                send_auth_refresh_request()
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#

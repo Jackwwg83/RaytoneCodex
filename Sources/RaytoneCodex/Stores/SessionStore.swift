@@ -6697,6 +6697,23 @@ final class SessionStore: ObservableObject {
                     arguments: arguments
                 )
             }
+        case "account/chatgptAuthTokens/refresh":
+            let reason = params?["reason"]?.stringValue ?? "unknown"
+            let previousAccountID = params?["previousAccountId"]?.stringValue ?? params?["previous_account_id"]?.stringValue
+            let message = [
+                "Codex 请求刷新外部 ChatGPT tokens，但 RaytoneCodex 当前没有托管 ChatGPT OAuth token。",
+                "原因：\(reason)",
+                previousAccountID.map { "账号：\($0)" }
+            ]
+                .compactMap { $0 }
+                .joined(separator: "\n")
+            appServerConnectionState = .loginRequired
+            runtimeCatalogStatusText = "account/chatgptAuthTokens/refresh：需要重新登录"
+            Task { await rejectAppServerRequest(requestID: id, message: message) }
+        case "attestation/generate":
+            let message = "Codex 请求生成上游 attestation，但 RaytoneCodex 没有声明 requestAttestation 能力，也不能伪造客户端证明。"
+            runtimeCatalogStatusText = "attestation/generate：未启用 attestation provider"
+            Task { await rejectAppServerRequest(requestID: id, message: message) }
         default:
             break
         }
@@ -7145,6 +7162,27 @@ final class SessionStore: ObservableObject {
             return contentText.isEmpty ? "成功：\(success)" : "成功：\(success)\n\(contentText)"
         }
         return contentText
+    }
+
+    private func rejectAppServerRequest(requestID: CodexAppServerRequestID, message: String) async {
+        do {
+            try await appServerClient?.respondError(
+                requestID: requestID,
+                message: message,
+                data: .object([
+                    "source": .string("RaytoneCodex"),
+                    "requestId": .string(requestID.description)
+                ])
+            )
+        } catch {
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+        updateSelectedThread { thread in
+            thread.items.append(TranscriptItem(kind: .notice(Notice(
+                level: .warning,
+                text: message
+            ))))
+        }
     }
 
     private func respondToDynamicToolCall(

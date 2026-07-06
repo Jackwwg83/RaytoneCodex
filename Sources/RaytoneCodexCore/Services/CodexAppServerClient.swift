@@ -3134,6 +3134,18 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func respondError(
+        requestID: CodexAppServerRequestID,
+        code: Int = -32_000,
+        message: String,
+        data: JSONValue? = nil
+    ) throws {
+        try write(CodexAppServerMessage(
+            id: requestID,
+            error: CodexAppServerRPCError(code: code, message: message, data: data)
+        ))
+    }
+
     public func stop() {
         stdoutTask?.cancel()
         stderrTask?.cancel()
