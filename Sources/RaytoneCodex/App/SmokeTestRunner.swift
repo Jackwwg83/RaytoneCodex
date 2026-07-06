@@ -85,6 +85,8 @@ enum SmokeTestRunner {
             runHookNotificationSmoke()
         } else if CommandLine.arguments.contains("--file-change-stream-smoke-test") {
             runFileChangeStreamSmoke()
+        } else if CommandLine.arguments.contains("--runtime-diagnostics-smoke-test") {
+            runRuntimeDiagnosticsSmoke()
         } else if CommandLine.arguments.contains("--hook-controls-smoke-test") {
             runHookControlsSmoke()
         } else if CommandLine.arguments.contains("--integration-pages-smoke-test") {
@@ -7187,6 +7189,118 @@ enum SmokeTestRunner {
         dispatchMain()
     }
 
+    private static func runRuntimeDiagnosticsSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexRuntimeDiagnosticsSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# Runtime diagnostics smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeRuntimeDiagnosticsAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-runtime-diagnostics"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_RUNTIME_DIAGNOSTICS_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                    store.projects[index].name = "RuntimeDiagnosticsSmoke"
+                }
+
+                store.prompt = "触发运行时诊断通知"
+                await store.runPrompt()
+
+                let deadline = Date().addingTimeInterval(8)
+                while Date() < deadline,
+                      !store.runtimeCatalogStatusText.contains("deprecationNotice") {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
+                let notices = store.selectedThread.items.compactMap { item -> Notice? in
+                    if case let .notice(notice) = item.kind { return notice }
+                    return nil
+                }
+                let noticeText = notices.map(\.text).joined(separator: "\n")
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let expectedMethods = [
+                    "configWarning",
+                    "warning",
+                    "guardianWarning",
+                    "model/rerouted",
+                    "model/verification",
+                    "turn/moderationMetadata",
+                    "windows/worldWritableWarning",
+                    "windowsSandbox/setupCompleted",
+                    "deprecationNotice"
+                ]
+                let logHasAllMethods = expectedMethods.allSatisfy { method in
+                    logText.contains(#""method":"\#(method)""#)
+                }
+                let ok = !store.isRunning &&
+                    store.selectedThread.appServerThreadID == "thread-runtime-diagnostics" &&
+                    notices.count >= expectedMethods.count &&
+                    noticeText.contains("配置文件") &&
+                    noticeText.contains("Codex 警告") &&
+                    noticeText.contains("安全审查") &&
+                    noticeText.contains("高风险网络安全活动") &&
+                    noticeText.contains("网络安全可信访问") &&
+                    noticeText.contains("安全元数据") &&
+                    noticeText.contains("Windows 路径权限警告") &&
+                    noticeText.contains("Windows 沙箱设置失败") &&
+                    noticeText.contains("旧版协议即将移除") &&
+                    store.runtimeCatalogStatusText.contains("deprecationNotice") &&
+                    store.runtimeCatalogErrors.contains(where: { $0.contains("旧版协议即将移除") }) &&
+                    logHasAllMethods
+
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
+                    "noticeCount": notices.count,
+                    "noticeText": noticeText,
+                    "runtimeCatalogStatus": store.runtimeCatalogStatusText,
+                    "runtimeCatalogErrors": store.runtimeCatalogErrors,
+                    "isRunning": store.isRunning,
+                    "logHasAllMethods": logHasAllMethods,
+                    "requestLogPreview": String(logText.prefix(2600))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
     private static func runAccountAuthSmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
@@ -9382,6 +9496,141 @@ enum SmokeTestRunner {
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-file-change", "status": "completed"}
+                })
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeRuntimeDiagnosticsAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_RUNTIME_DIAGNOSTICS_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log(payload)
+            send(payload)
+
+        def thread_payload():
+            return {
+                "id": "thread-runtime-diagnostics",
+                "sessionId": "session-runtime-diagnostics",
+                "name": "运行时诊断线程",
+                "preview": "Runtime diagnostics smoke",
+                "cwd": cwd,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000001,
+                "status": {"type": "active", "activeFlags": []},
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "workspace-write",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-runtime-diagnostics", "status": "inProgress"}
+                })
+                send_notification("turn/started", {
+                    "turn": {
+                        "id": "turn-runtime-diagnostics",
+                        "status": "inProgress",
+                        "startedAt": 1700000000,
+                    }
+                })
+                send_notification("configWarning", {
+                    "summary": "配置警告 smoke",
+                    "details": "config.toml 中的测试字段无法识别",
+                    "path": os.path.join(cwd, ".codex", "config.toml"),
+                    "range": {
+                        "start": {"line": 4, "column": 2},
+                        "end": {"line": 4, "column": 12},
+                    },
+                })
+                send_notification("warning", {
+                    "threadId": "thread-runtime-diagnostics",
+                    "message": "runtime warning smoke",
+                })
+                send_notification("guardianWarning", {
+                    "threadId": "thread-runtime-diagnostics",
+                    "message": "guardian warning smoke",
+                })
+                send_notification("model/rerouted", {
+                    "threadId": "thread-runtime-diagnostics",
+                    "turnId": "turn-runtime-diagnostics",
+                    "fromModel": "gpt-5.3-codex",
+                    "toModel": "gpt-5.2",
+                    "reason": "highRiskCyberActivity",
+                })
+                send_notification("model/verification", {
+                    "threadId": "thread-runtime-diagnostics",
+                    "turnId": "turn-runtime-diagnostics",
+                    "verifications": ["trustedAccessForCyber"],
+                })
+                send_notification("turn/moderationMetadata", {
+                    "threadId": "thread-runtime-diagnostics",
+                    "turnId": "turn-runtime-diagnostics",
+                    "metadata": {"presentation": "inline", "smoke": True},
+                })
+                send_notification("windows/worldWritableWarning", {
+                    "samplePaths": [os.path.join(cwd, "world-writable")],
+                    "extraCount": 2,
+                    "failedScan": False,
+                })
+                send_notification("windowsSandbox/setupCompleted", {
+                    "mode": "unelevated",
+                    "success": False,
+                    "error": "sandbox setup smoke failure",
+                })
+                send_notification("deprecationNotice", {
+                    "summary": "旧版协议即将移除",
+                    "details": "请迁移到 v2 app-server 通知。",
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-runtime-diagnostics", "status": "completed"}
                 })
             else:
                 send_error(request_id, f"unsupported method {method}")

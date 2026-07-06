@@ -6531,6 +6531,10 @@ final class SessionStore: ObservableObject {
             appendFileChangeOutputDelta(itemID: params?["itemId"]?.stringValue, delta: params?["delta"]?.stringValue)
         case "item/fileChange/patchUpdated":
             upsertFileChangePatch(itemID: params?["itemId"]?.stringValue, changes: params?["changes"]?.arrayValue ?? [])
+        case "warning", "guardianWarning", "deprecationNotice", "configWarning",
+             "model/rerouted", "model/verification", "turn/moderationMetadata",
+             "windows/worldWritableWarning", "windowsSandbox/setupCompleted":
+            handleRuntimeDiagnosticNotification(method: method, params: params)
         default:
             break
         }
@@ -6768,6 +6772,34 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    private func handleRuntimeDiagnosticNotification(method: String, params: JSONValue?) {
+        let diagnostic = Self.runtimeDiagnostic(method: method, params: params)
+        runtimeCatalogStatusText = "\(method)：\(diagnostic.summary)"
+        if diagnostic.level == .info {
+            runtimeCatalogErrors = []
+        } else {
+            runtimeCatalogErrors = [diagnostic.detail]
+        }
+        appendRuntimeDiagnosticNotice(
+            threadID: diagnostic.threadID,
+            level: diagnostic.level,
+            text: diagnostic.detail
+        )
+    }
+
+    private func appendRuntimeDiagnosticNotice(threadID: String?, level: Notice.Level, text: String) {
+        let notice = Notice(level: level, text: text)
+        if let threadID, !threadID.isEmpty {
+            updateThread(appServerThreadID: threadID) { thread in
+                thread.items.append(TranscriptItem(kind: .notice(notice)))
+            }
+        } else {
+            updateSelectedThread { thread in
+                thread.items.append(TranscriptItem(kind: .notice(notice)))
+            }
+        }
+    }
+
     private static func compactJSONString(_ value: JSONValue) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -6776,6 +6808,129 @@ final class SessionStore: ObservableObject {
             return value.prettyJSONString.replacingOccurrences(of: "\n", with: " ")
         }
         return text
+    }
+
+    private static func runtimeDiagnostic(
+        method: String,
+        params: JSONValue?
+    ) -> (threadID: String?, level: Notice.Level, summary: String, detail: String) {
+        let threadID = params?["threadId"]?.stringValue
+        switch method {
+        case "warning":
+            let message = params?["message"]?.stringValue ?? "Codex 发出运行时警告"
+            return (threadID, .warning, message, "Codex 警告：\(message)")
+        case "guardianWarning":
+            let message = params?["message"]?.stringValue ?? "Codex 安全审查发出警告"
+            return (threadID, .warning, message, "安全审查：\(message)")
+        case "deprecationNotice":
+            let summary = params?["summary"]?.stringValue ?? "Codex 协议弃用提醒"
+            let detail = params?["details"]?.stringValue
+            return (threadID, .warning, summary, [summary, detail].compactMap { $0 }.joined(separator: "\n"))
+        case "configWarning":
+            let summary = params?["summary"]?.stringValue ?? "Codex 配置警告"
+            var parts = [summary]
+            if let path = params?["path"]?.stringValue, !path.isEmpty {
+                parts.append("配置文件：\(Project.abbreviate(path))")
+            }
+            if let rangeText = configWarningRangeText(params?["range"]) {
+                parts.append("位置：\(rangeText)")
+            }
+            if let details = params?["details"]?.stringValue, !details.isEmpty {
+                parts.append(details)
+            }
+            return (threadID, .warning, summary, parts.joined(separator: "\n"))
+        case "model/rerouted":
+            let fromModel = params?["fromModel"]?.stringValue ?? "原模型"
+            let toModel = params?["toModel"]?.stringValue ?? "新模型"
+            let reason = modelRerouteReasonName(params?["reason"]?.stringValue)
+            let summary = "模型已改路由到 \(toModel)"
+            let detail = "Codex 已将本轮模型从 \(fromModel) 切换到 \(toModel)。\n原因：\(reason)"
+            return (threadID, .warning, summary, detail)
+        case "model/verification":
+            let verifications = params?["verifications"]?.arrayValue?.compactMap(\.stringValue) ?? []
+            let names = verifications.map(modelVerificationName)
+            let summary = names.isEmpty ? "需要模型访问验证" : "需要验证：\(names.joined(separator: "、"))"
+            return (threadID, .warning, summary, summary)
+        case "turn/moderationMetadata":
+            let preview = params?["metadata"].map(Self.compactJSONString) ?? "{}"
+            let summary = "收到本轮安全元数据"
+            let detail = "Codex 返回了本轮安全元数据：\(preview)"
+            return (threadID, .info, summary, detail)
+        case "windows/worldWritableWarning":
+            let paths = params?["samplePaths"]?.arrayValue?.compactMap(\.stringValue) ?? []
+            let extraCount = params?["extraCount"]?.intValue ?? 0
+            let failedScan = params?["failedScan"]?.boolValue ?? false
+            var parts = ["Windows 路径权限警告", "Codex 检测到 Windows 可被所有用户写入的路径。"]
+            if !paths.isEmpty {
+                parts.append("示例路径：\(paths.prefix(3).map(Project.abbreviate).joined(separator: "、"))")
+            }
+            if extraCount > 0 {
+                parts.append("另外还有 \(extraCount) 个路径。")
+            }
+            if failedScan {
+                parts.append("路径扫描未完全完成。")
+            }
+            return (threadID, .warning, "Windows 路径权限警告", parts.joined(separator: "\n"))
+        case "windowsSandbox/setupCompleted":
+            let mode = params?["mode"]?.stringValue ?? "unknown"
+            let success = params?["success"]?.boolValue ?? false
+            let error = params?["error"]?.stringValue
+            let displayMode = windowsSandboxModeName(mode)
+            if success {
+                let summary = "Windows 沙箱设置完成"
+                return (threadID, .info, summary, "\(summary)：\(displayMode)")
+            }
+            let summary = "Windows 沙箱设置失败"
+            let detail = [summary, "模式：\(displayMode)", error].compactMap { $0 }.joined(separator: "\n")
+            return (threadID, .warning, summary, detail)
+        default:
+            let detail = params.map(Self.compactJSONString) ?? "{}"
+            return (threadID, .info, method, "\(method)：\(detail)")
+        }
+    }
+
+    private static func configWarningRangeText(_ range: JSONValue?) -> String? {
+        guard let range else { return nil }
+        let startLine = range["start"]?["line"]?.intValue
+        let startColumn = range["start"]?["column"]?.intValue
+        let endLine = range["end"]?["line"]?.intValue
+        let endColumn = range["end"]?["column"]?.intValue
+        guard let startLine, let startColumn else { return nil }
+        if let endLine, let endColumn {
+            return "\(startLine):\(startColumn)-\(endLine):\(endColumn)"
+        }
+        return "\(startLine):\(startColumn)"
+    }
+
+    private static func modelRerouteReasonName(_ value: String?) -> String {
+        switch value {
+        case "highRiskCyberActivity":
+            "高风险网络安全活动"
+        case let value?:
+            value
+        case nil:
+            "未说明"
+        }
+    }
+
+    private static func modelVerificationName(_ value: String) -> String {
+        switch value {
+        case "trustedAccessForCyber":
+            "网络安全可信访问"
+        default:
+            value
+        }
+    }
+
+    private static func windowsSandboxModeName(_ value: String) -> String {
+        switch value {
+        case "elevated":
+            "管理员模式"
+        case "unelevated":
+            "非管理员模式"
+        default:
+            value
+        }
     }
 
     private static func hookEventDisplayName(_ value: String) -> String {
