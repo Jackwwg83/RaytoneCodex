@@ -135,6 +135,8 @@ enum SmokeTestRunner {
             runRealtimeSessionSmoke()
         } else if CommandLine.arguments.contains("--access-mode-smoke-test") {
             runAccessModeSmoke()
+        } else if CommandLine.arguments.contains("--new-thread-permissions-smoke-test") {
+            runNewThreadPermissionsSmoke()
         } else if CommandLine.arguments.contains("--personality-smoke-test") {
             runPersonalitySmoke()
         } else if CommandLine.arguments.contains("--model-catalog-smoke-test") {
@@ -5503,6 +5505,95 @@ enum SmokeTestRunner {
                     "codexHome": codexHome.path,
                     "error": error.localizedDescription
                 ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runNewThreadPermissionsSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexNewThreadPermissionsSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try "# New thread permissions smoke\n".write(
+                    to: workspaceURL.appendingPathComponent("README.md"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+                try fakeThreadBootstrapActionsAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                let projectID = store.selectedProject.id
+                store.workspacePath = workspaceURL.path
+                store.filePanelPath = workspaceURL.path
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.approvalsReviewer = .user
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-new-thread-permissions"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_THREAD_BOOTSTRAP_ACTIONS_LOG": logURL.path
+                ]
+                if let index = store.projects.firstIndex(where: { $0.id == projectID }) {
+                    store.projects[index].path = workspaceURL.path
+                }
+
+                store.newThread(in: projectID)
+                let inheritedSandbox = store.selectedThread.sandbox
+                let inheritedApproval = store.selectedThread.approval
+                let inheritedReviewer = store.selectedThread.approvalsReviewer
+
+                await store.startSelectedThreadCompaction()
+                await waitForStoreToSettle(store)
+
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let ok = inheritedSandbox == .readOnly &&
+                    inheritedApproval == .never &&
+                    inheritedReviewer == .user &&
+                    store.selectedThread.appServerThreadID == "thread-bootstrap-1" &&
+                    store.runtimeThreadSyncStatusText.hasPrefix("thread/compact/start") &&
+                    logText.contains(#""method":"thread/start""#) &&
+                    logText.contains(#""sandbox":"read-only""#) &&
+                    logText.contains(#""approvalPolicy":"never""#) &&
+                    logText.contains(#""approvalsReviewer":"user""#) &&
+                    logText.contains(#""method":"thread/compact/start""#)
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "inheritedSandbox": inheritedSandbox.rawValue,
+                    "inheritedApproval": inheritedApproval.rawValue,
+                    "inheritedApprovalsReviewer": inheritedReviewer.rawValue,
+                    "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
+                    "runtimeThreadSyncStatus": store.runtimeThreadSyncStatusText,
+                    "source": "newThread -> SessionStore sandbox inheritance -> thread/start",
+                    "requestLogPreview": String(logText.prefix(1800))
+                ])
+                try? fileManager.removeItem(at: rootURL)
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                try? fileManager.removeItem(at: rootURL)
                 exit(1)
             }
         }

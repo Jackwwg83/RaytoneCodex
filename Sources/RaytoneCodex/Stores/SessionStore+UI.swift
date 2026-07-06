@@ -37,7 +37,7 @@ extension SessionStore {
             projectID: projectID,
             items: [],
             model: model,
-            sandbox: .dangerFullAccess,
+            sandbox: sandbox,
             approval: approval,
             approvalsReviewer: approvalsReviewer,
             personality: personality
