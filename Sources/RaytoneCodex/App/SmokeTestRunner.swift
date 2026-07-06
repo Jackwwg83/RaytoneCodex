@@ -716,12 +716,14 @@ enum SmokeTestRunner {
 
         let targetResult = store.fileSearchResults.first { $0.path == targetURL.path }
         if let targetResult {
-            await store.openFileEntry(targetResult)
+            await store.openFilePathInPanel(targetResult.path)
         }
         let originalPreview = store.filePreview
+        let originalOpenSource = store.filePanelLastOperationSource
         await store.addPreviewedFileReferenceToPrompt()
         let promptAfterPreviewReference = store.prompt
         let statusAfterPreviewReference = store.filePanelStatusText
+        let previewReferenceSource = store.filePanelLastOperationSource
 
         await store.duplicatePreviewedFileSystemItem()
         let duplicateURL = sourceDirectory.appendingPathComponent("NeedleRuntimeFile 副本.swift")
@@ -759,9 +761,11 @@ enum SmokeTestRunner {
             originalPreview?.text.contains("fuzzy-file-search-runtime-proof") == true &&
             originalPreview?.byteCount == targetText.utf8.count &&
             originalPreview?.modifiedAt != nil &&
+            originalOpenSource == "openFilePathInPanel + fs/getMetadata + fs/readFile" &&
             promptAfterPreviewReference.contains("请参考以下文件") &&
             promptAfterPreviewReference.contains("Sources/Nested/NeedleRuntimeFile.swift") &&
             statusAfterPreviewReference.contains("已加入下次对话") &&
+            previewReferenceSource == "openFilePathInPanel + fs/getMetadata + fs/readFile" &&
             duplicateWasCreated &&
             duplicateWasRemoved &&
             createdFileExists &&
@@ -794,7 +798,8 @@ enum SmokeTestRunner {
             "matched": targetResult != nil,
             "textWasRead": originalPreview?.text.contains("fuzzy-file-search-runtime-proof") == true,
             "byteCountWasRead": originalPreview?.byteCount == targetText.utf8.count,
-            "metadataWasRead": originalPreview?.modifiedAt != nil
+            "metadataWasRead": originalPreview?.modifiedAt != nil,
+            "source": originalOpenSource
         ]
         let mutationsPayload: [String: Any] = [
             "createdFile": createdFileURL.path,
@@ -831,7 +836,7 @@ enum SmokeTestRunner {
             "previewReference": [
                 "prompt": promptAfterPreviewReference,
                 "status": statusAfterPreviewReference,
-                "source": "file panel preview + fs/readFile + addFileReferencesToPrompt"
+                "source": previewReferenceSource
             ],
             "fileMutations": mutationsPayload,
             "openedPreview": previewPayload

@@ -292,15 +292,19 @@ extension SessionStore {
         let fileSource: String
         let fileDetail: String
         if let filePreview {
-            fileSource = "fs/readFile + fs/getMetadata"
+            fileSource = filePanelLastOperationSource.isEmpty
+                ? "fs/readFile + fs/getMetadata"
+                : filePanelLastOperationSource
             fileDetail = "\(filePreview.fileName) · \(filePreview.byteCount.formatted()) 字节"
         } else if !fileSearchResults.isEmpty {
-            fileSource = fileSearchStatusText.contains("session")
-                ? "fuzzyFileSearch/session"
-                : "fuzzyFileSearch"
+            fileSource = filePanelLastOperationSource.isEmpty
+                ? (fileSearchStatusText.contains("session") ? "fuzzyFileSearch/session" : "fuzzyFileSearch")
+                : filePanelLastOperationSource
             fileDetail = "\(fileSearchResults.count) 个搜索结果"
         } else if !fileEntries.isEmpty {
-            fileSource = filePanelStatusText.contains("已监听") ? "fs/readDirectory + fs/watch" : "fs/readDirectory"
+            fileSource = filePanelLastOperationSource.isEmpty
+                ? (filePanelStatusText.contains("已监听") ? "fs/readDirectory + fs/watch" : "fs/readDirectory")
+                : filePanelLastOperationSource
             fileDetail = "\(fileEntries.count) 项 · \(Project.abbreviate(currentEnvironmentFilePanelPath))"
         } else {
             fileSource = "fs/readDirectory"

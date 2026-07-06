@@ -48,6 +48,7 @@ final class SessionStore: ObservableObject {
     @Published var fileEntries: [WorkspaceFileEntry] = []
     @Published var filePreview: FilePreview?
     @Published var filePanelStatusText = "未加载"
+    @Published var filePanelLastOperationSource = "fs/readDirectory"
     @Published var fileSearchQuery = ""
     @Published var fileSearchResults: [WorkspaceFileEntry] = []
     @Published var fileSearchStatusText = ""
@@ -2285,27 +2286,42 @@ final class SessionStore: ObservableObject {
         let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
         showInspector = true
         toolPanel = .files
+        filePanelStatusText = "正在检查路径…"
+        filePanelLastOperationSource = "fs/getMetadata"
 
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: normalizedPath, isDirectory: &isDirectory) else {
-            filePanelStatusText = "文件不存在：\(Project.abbreviate(normalizedPath))"
-            return
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let metadata = try await client.getMetadata(path: normalizedPath)
+
+            if metadata.isDirectory {
+                await loadFilePanelDirectory(normalizedPath)
+                return
+            }
+
+            guard metadata.isFile else {
+                filePanelStatusText = "无法预览：\(Project.abbreviate(normalizedPath))"
+                return
+            }
+
+            let parent = URL(fileURLWithPath: normalizedPath).deletingLastPathComponent().path
+            await loadFilePanelDirectory(parent)
+            let entry = fileEntries.first { $0.path == normalizedPath } ?? WorkspaceFileEntry(
+                name: URL(fileURLWithPath: normalizedPath).lastPathComponent,
+                path: normalizedPath,
+                isDirectory: metadata.isDirectory,
+                isFile: metadata.isFile
+            )
+            await openFileEntry(entry)
+            if filePreview?.path == normalizedPath {
+                filePanelLastOperationSource = "openFilePathInPanel + fs/getMetadata + fs/readFile"
+            }
+        } catch {
+            guard !Self.isCancellation(error) else {
+                filePanelStatusText = "打开已取消"
+                return
+            }
+            filePanelStatusText = "打开失败：\(error.localizedDescription)"
         }
-
-        if isDirectory.boolValue {
-            await loadFilePanelDirectory(normalizedPath)
-            return
-        }
-
-        let parent = URL(fileURLWithPath: normalizedPath).deletingLastPathComponent().path
-        await loadFilePanelDirectory(parent)
-        let entry = fileEntries.first { $0.path == normalizedPath } ?? WorkspaceFileEntry(
-            name: URL(fileURLWithPath: normalizedPath).lastPathComponent,
-            path: normalizedPath,
-            isDirectory: false,
-            isFile: true
-        )
-        await openFileEntry(entry)
     }
 
     func loadFilePanelDirectory(_ path: String? = nil, updateWatch: Bool = true) async {
@@ -2316,6 +2332,7 @@ final class SessionStore: ObservableObject {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             let entries = try await client.readDirectory(path: targetPath)
+            filePanelLastOperationSource = "fs/readDirectory"
             filePanelPath = targetPath
             fileEntries = entries.map {
                 WorkspaceFileEntry(
@@ -2360,6 +2377,7 @@ final class SessionStore: ObservableObject {
             let watchedPath = try await client.watchFileSystem(path: path, watchID: watchID)
             filePanelWatchID = watchID
             filePanelWatchedPath = watchedPath
+            filePanelLastOperationSource = "fs/readDirectory + fs/watch"
         } catch {
             filePanelWatchID = nil
             filePanelWatchedPath = nil
@@ -2396,6 +2414,7 @@ final class SessionStore: ObservableObject {
                     fileSearchStatusText = fileSearchResults.isEmpty
                         ? "fuzzyFileSearch/sessionCompleted：未找到匹配文件"
                         : "fuzzyFileSearch/sessionCompleted：\(fileSearchResults.count) 个匹配"
+                    filePanelLastOperationSource = "fuzzyFileSearch/session"
                     runtimeCatalogStatusText = "\(fileSearchStatusText) · \(sessionID)"
                     return
                 }
@@ -2420,6 +2439,7 @@ final class SessionStore: ObservableObject {
                 )
             }
             fileSearchStatusText = fileSearchResults.isEmpty ? "未找到匹配文件" : "\(fileSearchResults.count) 个匹配"
+            filePanelLastOperationSource = "fuzzyFileSearch"
         } catch {
             fileSearchResults = []
             fileSearchStatusText = "搜索失败：\(error.localizedDescription)"
@@ -2581,6 +2601,7 @@ final class SessionStore: ObservableObject {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             let metadata = try await client.getMetadata(path: entry.path)
             let data = try await client.readFile(path: entry.path)
+            filePanelLastOperationSource = "fs/getMetadata + fs/readFile"
             let maxBytes = 120_000
             let previewData = data.prefix(maxBytes)
             let text = String(data: previewData, encoding: .utf8)
