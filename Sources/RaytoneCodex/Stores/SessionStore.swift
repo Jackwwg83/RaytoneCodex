@@ -9625,6 +9625,9 @@ final class SessionStore: ObservableObject {
         if namespace == "raytone_context", tool == "read_workspace_file" {
             return await readWorkspaceFileDynamicToolText(arguments: arguments)
         }
+        if namespace == "raytone_browser", tool == "current_page" {
+            return browserCurrentPageDynamicToolText(arguments: arguments)
+        }
         if namespace == "raytone_mcp", tool == "read_resource" {
             return await readMCPResourceDynamicToolText(threadID: threadID, arguments: arguments)
         }
@@ -9722,6 +9725,11 @@ final class SessionStore: ObservableObject {
         } catch {
             return (false, "fs/readFile 失败：\(error.localizedDescription)")
         }
+    }
+
+    private func browserCurrentPageDynamicToolText(arguments: JSONValue) -> (success: Bool, text: String) {
+        let includeSnapshotPath = arguments["includeSnapshotPath"]?.boolValue ?? true
+        return (true, browserStateJSON(includeSnapshotPath: includeSnapshotPath).prettyJSONString)
     }
 
     private func readMCPResourceDynamicToolText(
@@ -9861,6 +9869,7 @@ final class SessionStore: ObservableObject {
             "pendingAdditions": .number(Double(pendingAdditions)),
             "pendingDeletions": .number(Double(pendingDeletions))
         ]
+        snapshot["browser"] = browserStateJSON(includeSnapshotPath: true)
 
         if includeDiffStats {
             let summary = Self.diffSummary(workspaceGitDiff?.diff ?? "")
@@ -9874,6 +9883,49 @@ final class SessionStore: ObservableObject {
         }
 
         return JSONValue.object(snapshot).prettyJSONString
+    }
+
+    private func browserStateJSON(includeSnapshotPath: Bool) -> JSONValue {
+        var state: [String: JSONValue] = [
+            "isOpen": .bool(browserURL != nil),
+            "url": .string(browserURL?.absoluteString ?? ""),
+            "title": .string(browserTitle),
+            "canGoBack": .bool(browserCanGoBack),
+            "canGoForward": .bool(browserCanGoForward),
+            "toolPanel": .string(Self.toolPanelName(toolPanel)),
+            "screenshotStatus": .string(browserScreenshotStatusText),
+            "dataStatus": .string(browserDataStatusText),
+            "hasPendingSnapshotRequest": .bool(browserSnapshotRequest != nil)
+        ]
+
+        if includeSnapshotPath {
+            state["attachedSnapshotPath"] = .string(browserAttachedSnapshotPath)
+            state["attachedSnapshotRelativePath"] = .string(
+                browserAttachedSnapshotPath.isEmpty
+                    ? ""
+                    : Self.promptReferencePath(for: browserAttachedSnapshotPath, workspacePath: workspacePath)
+            )
+        }
+        if let request = browserSnapshotRequest {
+            state["pendingSnapshotPath"] = .string(request.outputURL.path)
+        }
+
+        return .object(state)
+    }
+
+    private nonisolated static func toolPanelName(_ panel: ToolPanel) -> String {
+        switch panel {
+        case .launcher:
+            return "launcher"
+        case .browser:
+            return "browser"
+        case .files:
+            return "files"
+        case .terminal:
+            return "terminal"
+        case .sideChat:
+            return "sideChat"
+        }
     }
 
     private func upsertDynamicToolCallTranscript(

@@ -1825,6 +1825,16 @@ enum SmokeTestRunner {
                     atomically: true,
                     encoding: .utf8
                 )
+                let browserHTMLURL = workspaceURL.appendingPathComponent("browser-dynamic-tool.html")
+                try """
+                <!doctype html>
+                <html>
+                  <head><title>Raytone 浏览器动态工具</title></head>
+                  <body><h1>Raytone browser dynamic tool</h1></body>
+                </html>
+                """.write(to: browserHTMLURL, atomically: true, encoding: .utf8)
+                let browserSnapshotURL = rootURL.appendingPathComponent("browser-dynamic-tool.png")
+                try Data("raytone browser snapshot placeholder\n".utf8).write(to: browserSnapshotURL)
                 try fakeDynamicToolAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
                 try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
 
@@ -1837,6 +1847,16 @@ enum SmokeTestRunner {
                 store.appServerEnvironmentOverridesForTesting = [
                     "RAYTONE_DYNAMIC_TOOL_LOG": logURL.path
                 ]
+                store.openBrowserAddress(browserHTMLURL.path)
+                store.updateBrowserNavigationState(
+                    url: browserHTMLURL,
+                    title: "Raytone 浏览器动态工具",
+                    canGoBack: true,
+                    canGoForward: false
+                )
+                store.browserAttachedSnapshotPath = browserSnapshotURL.path
+                store.browserScreenshotStatusText = "网页截图：\(Project.abbreviate(browserSnapshotURL.path)) · 已加入下次对话图片"
+                store.browserDataStatusText = "浏览器数据保持"
                 store.prompt = "触发 Raytone 动态工具"
 
                 await store.runPrompt()
@@ -1844,7 +1864,7 @@ enum SmokeTestRunner {
                 var logText = ""
                 while Date() < deadline {
                     logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                    if logText.contains(#""dynamicToolMCPResourceResponse""#) {
+                    if logText.contains(#""dynamicToolBrowserResponse""#) {
                         break
                     }
                     try? await Task.sleep(nanoseconds: 100_000_000)
@@ -1867,21 +1887,28 @@ enum SmokeTestRunner {
                 let mcpResourceCommand = commands.last { command in
                     command.command.contains("动态工具 raytone_mcp.read_resource")
                 }
+                let browserCommand = commands.last { command in
+                    command.command.contains("动态工具 raytone_browser.current_page")
+                }
                 let output = dynamicCommand?.output ?? ""
                 let filesOutput = filesCommand?.output ?? ""
                 let readFileOutput = readFileCommand?.output ?? ""
                 let mcpToolOutput = mcpToolCommand?.output ?? ""
                 let mcpResourceOutput = mcpResourceCommand?.output ?? ""
+                let browserOutput = browserCommand?.output ?? ""
                 let normalizedOutput = output.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedFilesOutput = filesOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedReadFileOutput = readFileOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedMCPToolOutput = mcpToolOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedMCPResourceOutput = mcpResourceOutput.replacingOccurrences(of: "\\/", with: "/")
+                let normalizedBrowserOutput = browserOutput.replacingOccurrences(of: "\\/", with: "/")
                 let registeredDynamicTool = logText.contains(#""dynamicTools""#) &&
                     logText.contains(#""namespace":"raytone_context""#) &&
                     logText.contains(#""name":"workspace_snapshot""#) &&
                     logText.contains(#""name":"list_workspace_files""#) &&
                     logText.contains(#""name":"read_workspace_file""#) &&
+                    logText.contains(#""namespace":"raytone_browser""#) &&
+                    logText.contains(#""name":"current_page""#) &&
                     logText.contains(#""namespace":"raytone_mcp""#) &&
                     logText.contains(#""name":"call_tool""#) &&
                     logText.contains(#""name":"read_resource""#)
@@ -1890,12 +1917,14 @@ enum SmokeTestRunner {
                     logText.contains(#""tool":"list_workspace_files""#) &&
                     logText.contains(#""tool":"read_workspace_file""#) &&
                     logText.contains(#""tool":"call_tool""#) &&
-                    logText.contains(#""tool":"read_resource""#)
+                    logText.contains(#""tool":"read_resource""#) &&
+                    logText.contains(#""tool":"current_page""#)
                 let responseObserved = logText.contains(#""dynamicToolResponse""#) &&
                     logText.contains(#""dynamicToolFilesResponse""#) &&
                     logText.contains(#""dynamicToolReadFileResponse""#) &&
                     logText.contains(#""dynamicToolMCPToolResponse""#) &&
                     logText.contains(#""dynamicToolMCPResourceResponse""#) &&
+                    logText.contains(#""dynamicToolBrowserResponse""#) &&
                     logText.contains(#""success":true"#) &&
                     logText.contains(#""contentItems""#)
                 let commandExecObserved = logText.contains(#""method":"command/exec""#) ||
@@ -1929,6 +1958,12 @@ enum SmokeTestRunner {
                 let mcpResourceObserved = normalizedMCPResourceOutput.contains(#""requestedURI" : "raytone://dynamic/resource""#) &&
                     normalizedMCPResourceOutput.contains("Raytone dynamic MCP resource OK") &&
                     mcpResourceOutput.contains(#""contentCount" : 1"#)
+                let browserObserved = normalizedBrowserOutput.contains(#""url""#) &&
+                    normalizedBrowserOutput.contains(browserHTMLURL.path) &&
+                    normalizedBrowserOutput.contains("Raytone 浏览器动态工具") &&
+                    normalizedBrowserOutput.contains(browserSnapshotURL.path) &&
+                    browserOutput.contains(#""canGoBack" : true"#) &&
+                    browserOutput.contains(#""toolPanel" : "browser""#)
                 let ok = registeredDynamicTool &&
                     requestObserved &&
                     responseObserved &&
@@ -1941,12 +1976,15 @@ enum SmokeTestRunner {
                     fileReadObserved &&
                     mcpToolObserved &&
                     mcpResourceObserved &&
+                    browserObserved &&
                     dynamicCommand?.status == .succeeded &&
                     filesCommand?.status == .succeeded &&
                     readFileCommand?.status == .succeeded &&
                     mcpToolCommand?.status == .succeeded &&
                     mcpResourceCommand?.status == .succeeded &&
+                    browserCommand?.status == .succeeded &&
                     output.contains(#""workspacePath""#) &&
+                    output.contains(#""browser""#) &&
                     normalizedOutput.contains(workspaceURL.path) &&
                     output.contains(#""approvalPolicy""#) &&
                     !store.isRunning
@@ -1969,17 +2007,20 @@ enum SmokeTestRunner {
                     "fileReadObserved": fileReadObserved,
                     "mcpToolObserved": mcpToolObserved,
                     "mcpResourceObserved": mcpResourceObserved,
+                    "browserObserved": browserObserved,
                     "isRunning": store.isRunning,
                     "dynamicCommandStatus": runStatusName(dynamicCommand?.status),
                     "filesCommandStatus": runStatusName(filesCommand?.status),
                     "readFileCommandStatus": runStatusName(readFileCommand?.status),
                     "mcpToolCommandStatus": runStatusName(mcpToolCommand?.status),
                     "mcpResourceCommandStatus": runStatusName(mcpResourceCommand?.status),
+                    "browserCommandStatus": runStatusName(browserCommand?.status),
                     "dynamicCommandOutputPreview": String(output.prefix(1200)),
                     "filesCommandOutputPreview": String(filesOutput.prefix(1200)),
                     "readFileCommandOutputPreview": String(readFileOutput.prefix(1200)),
                     "mcpToolOutputPreview": String(mcpToolOutput.prefix(1200)),
                     "mcpResourceOutputPreview": String(mcpResourceOutput.prefix(1200)),
+                    "browserOutputPreview": String(browserOutput.prefix(1200)),
                     "requestLogPreview": String(logText.prefix(2400))
                 ])
                 exit(ok ? 0 : 1)
@@ -13776,6 +13817,7 @@ enum SmokeTestRunner {
             "server": "raytone-smoke-mcp",
             "uri": "raytone://dynamic/resource"
         }
+        browser_tool_arguments = {"includeSnapshotPath": True}
 
         def log(message):
             if not log_path:
@@ -13949,6 +13991,33 @@ enum SmokeTestRunner {
                 send_notification("serverRequest/resolved", {
                     "threadId": "thread-smoke",
                     "requestId": "dynamic-tool-mcp-resource-smoke"
+                })
+                send_dynamic_tool_request(
+                    "dynamic-tool-browser-smoke",
+                    "call-browser-smoke",
+                    "raytone_browser",
+                    "current_page",
+                    browser_tool_arguments,
+                )
+                continue
+            if request_id == "dynamic-tool-browser-smoke" and "result" in request:
+                result = request.get("result") or {}
+                log({"dynamicToolBrowserResponse": result})
+                send_notification("item/completed", {
+                    "item": {
+                        "id": "call-browser-smoke",
+                        "type": "dynamicToolCall",
+                        "namespace": "raytone_browser",
+                        "tool": "current_page",
+                        "arguments": browser_tool_arguments,
+                        "status": "completed",
+                        "success": result.get("success"),
+                        "contentItems": result.get("contentItems") or []
+                    }
+                })
+                send_notification("serverRequest/resolved", {
+                    "threadId": "thread-smoke",
+                    "requestId": "dynamic-tool-browser-smoke"
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-smoke", "status": "completed"}

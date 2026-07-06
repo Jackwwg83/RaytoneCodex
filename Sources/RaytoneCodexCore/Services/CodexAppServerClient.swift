@@ -2360,6 +2360,22 @@ public actor CodexAppServerClient {
                 ])
             ]),
             .object([
+                "namespace": .string("raytone_browser"),
+                "name": .string("current_page"),
+                "description": .string("返回 RaytoneCodex 内置浏览器当前页面、导航状态和已附加截图路径。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "includeSnapshotPath": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否返回已加入下一轮对话的浏览器截图文件路径，默认 true。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
+            ]),
+            .object([
                 "namespace": .string("raytone_mcp"),
                 "name": .string("read_resource"),
                 "description": .string("通过 Codex app-server 的 mcpServer/resource/read 读取已配置 MCP 服务器资源。"),
