@@ -53,6 +53,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimeSharedPluginCount = 0
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
     @Published var runtimeHooks: [CodexRuntimeHook] = []
+    @Published var automationEventLogText = ""
+    @Published var automationEventLogStatusText = "未读取"
     @Published var runtimeMCPServers: [CodexRuntimeMCPServer] = []
     @Published var mcpResourcePreview: CodexMCPResourceReadResult?
     @Published var mcpResourceStatusText = "未读取"
@@ -3785,6 +3787,70 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func raytoneAutomationHooks() -> [CodexRuntimeHook] {
+        runtimeHooks.filter(Self.isRaytoneAutomationHook)
+    }
+
+    func isRaytoneManagedAutomationHook(_ hook: CodexRuntimeHook) -> Bool {
+        Self.isRaytoneAutomationHook(hook)
+    }
+
+    func refreshAutomationEventLog() async {
+        automationEventLogStatusText = "正在读取事件日志…"
+        let eventURL = raytoneAutomationEventLogURL()
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            let data = try await client.readFile(path: eventURL.path)
+            automationEventLogText = String(data: data, encoding: .utf8) ?? ""
+            automationEventLogStatusText = automationEventLogText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "事件日志为空：\(Project.abbreviate(eventURL.path))"
+                : "已读取 \(automationEventLogLineCount) 条事件"
+        } catch {
+            let fallbackText = (try? String(contentsOf: eventURL, encoding: .utf8)) ?? ""
+            automationEventLogText = fallbackText
+            if fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                automationEventLogStatusText = "还没有事件：\(Project.abbreviate(eventURL.path))"
+            } else {
+                automationEventLogStatusText = "已从本地读取 \(automationEventLogLineCount) 条事件"
+            }
+        }
+    }
+
+    func removeRaytoneAutomationHookTemplate() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在移除 Raytone 自动化 hook…"
+        runtimeCatalogErrors = []
+
+        do {
+            let configURL = try ensureCodexConfigFile()
+            let existingConfig = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+            let updatedConfig = Self.removeRaytoneAutomationHookBlock(from: existingConfig)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard updatedConfig != existingConfig.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                await refreshRuntimeHooks()
+                runtimeCatalogStatusText = "没有 Raytone 自动化 hook 可移除"
+                return
+            }
+
+            try (updatedConfig + "\n").write(to: configURL, atomically: true, encoding: .utf8)
+            await refreshRuntimeHooks()
+            runtimeCatalogStatusText = "已移除 Raytone 自动化 hook：hooks/list 返回 \(runtimeHooks.count) 个钩子"
+        } catch {
+            runtimeCatalogStatusText = "移除自动化 hook 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
+    var automationEventLogLineCount: Int {
+        automationEventLogText
+            .components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .count
+    }
+
     func saveInstructions(_ instructions: String) async {
         runtimeCatalogStatusText = "正在写入 developer_instructions…"
         do {
@@ -5554,6 +5620,14 @@ final class SessionStore: ObservableObject {
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex")
             .appendingPathComponent("config.toml")
+    }
+
+    private func raytoneAutomationEventLogURL() -> URL {
+        Self.defaultCodexConfigURL(
+            overrideCodexHome: appServerEnvironmentOverridesForTesting["CODEX_HOME"]
+        )
+        .deletingLastPathComponent()
+        .appendingPathComponent("raytone-automation-events.jsonl")
     }
 
     private static func installRaytoneAutomationHookBlock(into config: String, title: String, command: String) -> String {

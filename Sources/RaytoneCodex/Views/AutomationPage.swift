@@ -17,6 +17,7 @@ struct AutomationPage: View {
                         .foregroundStyle(Theme.textPrimary)
                     templateButtons
                     hooksRuntimeCard
+                    automationEventLogCard
                     Spacer(minLength: 50)
                 }
                 .padding(.horizontal, 28)
@@ -36,6 +37,7 @@ struct AutomationPage: View {
         }
         .task {
             await store.refreshRuntimeHooks()
+            await store.refreshAutomationEventLog()
         }
         .frame(minWidth: 620)
         .background(Theme.transcript)
@@ -192,7 +194,19 @@ struct AutomationPage: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(store.runtimeHooks.prefix(5)) { hook in
-                        HookRuntimeRow(hook: hook)
+                        HookRuntimeRow(
+                            hook: hook,
+                            isRaytoneHook: store.isRaytoneManagedAutomationHook(hook),
+                            trust: {
+                                Task { await store.trustRuntimeHook(hook) }
+                            },
+                            toggleEnabled: {
+                                Task { await store.setRuntimeHookEnabled(hook, enabled: !hook.enabled) }
+                            },
+                            remove: {
+                                Task { await store.removeRaytoneAutomationHookTemplate() }
+                            }
+                        )
                     }
                 }
             }
@@ -202,6 +216,70 @@ struct AutomationPage: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 720, alignment: .leading)
+        .background(Theme.transcript)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+    }
+
+    private var automationEventLogCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(store.automationEventLogLineCount > 0 ? Theme.success : Theme.textSecondary)
+                Text("自动化事件证据")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 0)
+                Text(store.automationEventLogStatusText)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Button("刷新事件") {
+                    Task { await store.refreshAutomationEventLog() }
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button("打开目录") {
+                    store.revealCodexHomeSubfolder("")
+                }
+                .buttonStyle(ChipButtonStyle())
+            }
+
+            let lines = store.automationEventLogText
+                .components(separatedBy: .newlines)
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if lines.isEmpty {
+                Text("运行包含 UserPromptSubmit 的 Codex 对话后，这里会显示 RaytoneCodex hook 写出的 JSONL 事件。")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.fillSubtle)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(Array(lines.suffix(4).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .font(Theme.mono(11))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.fillSubtle)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             }
         }
         .padding(12)
@@ -242,49 +320,87 @@ struct AutomationPage: View {
 
 private struct HookRuntimeRow: View {
     let hook: CodexRuntimeHook
+    var isRaytoneHook: Bool = false
+    var trust: () -> Void = {}
+    var toggleEnabled: () -> Void = {}
+    var remove: () -> Void = {}
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: hook.enabled ? "checkmark.circle.fill" : "pause.circle")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(hook.enabled ? Theme.success : Theme.textTertiary)
-                .frame(width: 20)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                Image(systemName: hook.enabled ? "checkmark.circle.fill" : "pause.circle")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(hook.enabled ? Theme.success : Theme.textTertiary)
+                    .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(eventName)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(hook.handlerType)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .background(Theme.fill)
-                        .clipShape(Capsule())
-                    if hook.isManaged {
-                        Text("托管")
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(eventName)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(hook.handlerType)
                             .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(Theme.info)
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.horizontal, 6)
+                            .frame(height: 18)
+                            .background(Theme.fill)
+                            .clipShape(Capsule())
+                        if hook.isManaged {
+                            Text("托管")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(Theme.info)
+                        }
                     }
+                    Text(detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("\(sourceName) · \(trustName) · \(Project.abbreviate(hook.sourcePath))")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                Text(detail)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Text("\(sourceName) · \(trustName) · \(Project.abbreviate(hook.sourcePath))")
-                    .font(.system(size: 10.5))
+
+                Spacer(minLength: 0)
+
+                Text("\(hook.timeoutSec)s")
+                    .font(Theme.mono(10.5, weight: .medium))
                     .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
             }
 
-            Spacer(minLength: 0)
+            HStack(spacing: 8) {
+                Text(hookTrustName(hook.trustStatus))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(hookIsTrusted ? Theme.success : Theme.warning)
+                    .padding(.horizontal, 7)
+                    .frame(height: 20)
+                    .background(Theme.fill)
+                    .clipShape(Capsule())
 
-            Text("\(hook.timeoutSec)s")
-                .font(Theme.mono(10.5, weight: .medium))
-                .foregroundStyle(Theme.textTertiary)
+                if !hookIsTrusted, !hook.currentHash.isEmpty {
+                    Button("信任") {
+                        trust()
+                    }
+                    .buttonStyle(ChipButtonStyle(prominent: true))
+                }
+
+                Button(hook.enabled ? "停用" : "启用") {
+                    toggleEnabled()
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(hook.isManaged)
+
+                if isRaytoneHook {
+                    Button("移除") {
+                        remove()
+                    }
+                    .buttonStyle(ChipButtonStyle(tint: Theme.danger))
+                }
+
+                Spacer(minLength: 0)
+            }
         }
         .padding(10)
         .background(Theme.fillSubtle)
@@ -316,6 +432,21 @@ private struct HookRuntimeRow: View {
             return command
         }
         return hook.matcher ?? "无命令详情"
+    }
+
+    private var hookIsTrusted: Bool {
+        hook.trustStatus.localizedCaseInsensitiveCompare("trusted") == .orderedSame ||
+            hook.trustStatus.localizedCaseInsensitiveCompare("managed") == .orderedSame
+    }
+
+    private func hookTrustName(_ value: String) -> String {
+        switch value {
+        case "managed": "托管"
+        case "trusted": "已信任"
+        case "untrusted": "未信任"
+        case "modified": "已变更"
+        default: value
+        }
     }
 
     private var sourceName: String {

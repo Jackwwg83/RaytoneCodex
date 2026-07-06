@@ -4167,23 +4167,15 @@ enum SmokeTestRunner {
                 store.prompt = "触发 Raytone 自动化 hook，并回复 Raytone automation hook smoke OK"
                 await store.runPrompt()
                 await waitForStoreToSettle(store)
-                await store.stopAppServerForTesting()
+                await store.refreshAutomationEventLog()
 
                 let configURL = codexHomeURL.appendingPathComponent("config.toml")
                 let eventURL = codexHomeURL.appendingPathComponent("raytone-automation-events.jsonl")
-                let configText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let configTextBeforeRemoval = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
                 let eventText = (try? String(contentsOf: eventURL, encoding: .utf8)) ?? ""
                 let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
                 let hooks = store.runtimeHooks
-                let raytoneHooks = hooks.filter { hook in
-                    let normalizedEvent = hook.eventName
-                        .unicodeScalars
-                        .filter { CharacterSet.alphanumerics.contains($0) }
-                        .map { String($0).lowercased() }
-                        .joined()
-                    return normalizedEvent == "userpromptsubmit" &&
-                        hook.command?.contains("raytone-automation-events.jsonl") == true
-                }
+                let raytoneHooks = store.raytoneAutomationHooks()
                 let agentMessages = store.selectedThread.items.compactMap { item -> String? in
                     if case let .agentMessage(text) = item.kind { return text }
                     return nil
@@ -4192,19 +4184,37 @@ enum SmokeTestRunner {
                 let hookTrustStatus = raytoneHook?.trustStatus ?? ""
                 let hookTrusted = hookTrustStatus.localizedCaseInsensitiveCompare("trusted") == .orderedSame ||
                     hookTrustStatus.localizedCaseInsensitiveCompare("managed") == .orderedSame
+                let eventLogStatus = store.automationEventLogStatusText
+                let eventLogLineCount = store.automationEventLogLineCount
+                let eventLogText = store.automationEventLogText
+
+                await store.removeRaytoneAutomationHookTemplate()
+                let hooksAfterRemoval = store.runtimeHooks
+                let raytoneHooksAfterRemoval = store.raytoneAutomationHooks()
+                let configTextAfterRemoval = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+                let removalStatus = store.runtimeCatalogStatusText
+                let removalErrors = store.runtimeCatalogErrors
+                await store.stopAppServerForTesting()
+
                 let ok = store.runtimeSnapshot.executable != nil &&
                     !store.isRunning &&
-                    configText.contains("[features]") &&
-                    configText.contains("hooks = true") &&
-                    configText.contains("UserPromptSubmit") &&
-                    configText.contains("raytone-automation-events.jsonl") &&
+                    configTextBeforeRemoval.contains("[features]") &&
+                    configTextBeforeRemoval.contains("hooks = true") &&
+                    configTextBeforeRemoval.contains("UserPromptSubmit") &&
+                    configTextBeforeRemoval.contains("raytone-automation-events.jsonl") &&
                     raytoneHooks.count == 1 &&
                     hookTrusted &&
+                    eventLogLineCount >= 1 &&
+                    eventLogText.contains("\"source\":\"RaytoneCodex\"") &&
                     eventText.contains("\"source\":\"RaytoneCodex\"") &&
                     eventText.contains("\"template\":\"项目监控\"") &&
                     eventText.contains("\"event\":\"UserPromptSubmit\"") &&
                     requestLog.contains("/v1/responses") &&
-                    agentMessages.contains("Raytone automation hook smoke OK")
+                    agentMessages.contains("Raytone automation hook smoke OK") &&
+                    raytoneHooksAfterRemoval.isEmpty &&
+                    !configTextAfterRemoval.contains("BEGIN RaytoneCodex automation hooks") &&
+                    !configTextAfterRemoval.contains("raytone-automation-events.jsonl") &&
+                    removalErrors.isEmpty
 
                 mockServer?.stop()
                 emitJSON([
@@ -4216,13 +4226,32 @@ enum SmokeTestRunner {
                     "codexHome": codexHomeURL.path,
                     "mockResponsesBaseURL": mockServer?.baseURL ?? "",
                     "configPath": configURL.path,
-                    "configText": configText,
+                    "configTextBeforeRemoval": configTextBeforeRemoval,
+                    "configTextAfterRemoval": configTextAfterRemoval,
                     "eventPath": eventURL.path,
                     "eventText": eventText,
+                    "eventLogStatus": eventLogStatus,
+                    "eventLogLineCount": eventLogLineCount,
+                    "eventLogText": eventLogText,
                     "hookCount": hooks.count,
                     "raytoneHookCount": raytoneHooks.count,
                     "raytoneHookTrusted": hookTrusted,
+                    "hookCountAfterRemoval": hooksAfterRemoval.count,
+                    "raytoneHookCountAfterRemoval": raytoneHooksAfterRemoval.count,
                     "hooks": hooks.map { hook in
+                        [
+                            "key": hook.key,
+                            "eventName": hook.eventName,
+                            "handlerType": hook.handlerType,
+                            "command": hook.command ?? "",
+                            "source": hook.source,
+                            "sourcePath": hook.sourcePath,
+                            "enabled": hook.enabled,
+                            "trustStatus": hook.trustStatus,
+                            "currentHash": hook.currentHash
+                        ] as [String: Any]
+                    },
+                    "hooksAfterRemoval": hooksAfterRemoval.map { hook in
                         [
                             "key": hook.key,
                             "eventName": hook.eventName,
@@ -4237,8 +4266,8 @@ enum SmokeTestRunner {
                     },
                     "agentMessages": agentMessages,
                     "mockRequestLogPreview": String(requestLog.prefix(1200)),
-                    "status": store.runtimeCatalogStatusText,
-                    "errors": store.runtimeCatalogErrors
+                    "status": removalStatus,
+                    "errors": removalErrors
                 ])
                 exit(ok ? 0 : 1)
             } catch {
