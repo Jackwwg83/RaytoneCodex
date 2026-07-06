@@ -127,6 +127,12 @@ struct PluginsPage: View {
         selectedTab == .plugins ? ["全部", "已安装", "未安装"] : ["全部", "已启用", "已停用"]
     }
 
+    private var runtimeSkillExtraRootsText: String {
+        store.runtimeSkillExtraRoots
+            .map(Project.abbreviate)
+            .joined(separator: "、")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -186,6 +192,16 @@ struct PluginsPage: View {
                     stateFilter = "全部"
                     Task { await store.createLocalSkillTemplate() }
                 }
+                Button("添加运行时技能根目录…") {
+                    selectedTab = .skills
+                    stateFilter = "全部"
+                    store.promptAddRuntimeSkillExtraRoot()
+                }
+                Button("清除运行时技能根目录") {
+                    selectedTab = .skills
+                    Task { await store.setRuntimeSkillExtraRoots(paths: []) }
+                }
+                .disabled(store.runtimeSkillExtraRoots.isEmpty)
                 Divider()
                 Button("添加插件市场源…") {
                     store.promptAddPluginMarketplace()
@@ -370,6 +386,14 @@ struct PluginsPage: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
+            }
+
+            if !store.runtimeSkillExtraRoots.isEmpty {
+                Text("运行时技能根：\(runtimeSkillExtraRootsText)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
             if let installResult = store.runtimePluginInstallResult {

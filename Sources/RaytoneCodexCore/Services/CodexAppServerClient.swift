@@ -2266,6 +2266,12 @@ public actor CodexAppServerClient {
         return Self.skillCatalog(from: result)
     }
 
+    public func setSkillExtraRoots(_ extraRoots: [String]) async throws {
+        _ = try await request(method: "skills/extraRoots/set", params: .object([
+            "extraRoots": .array(extraRoots.map(JSONValue.string))
+        ]))
+    }
+
     public func setSkillEnabled(_ skill: CodexRuntimeSkill, enabled: Bool) async throws {
         _ = try await request(method: "skills/config/write", params: .object([
             "path": .string(skill.path),

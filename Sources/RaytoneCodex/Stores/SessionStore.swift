@@ -70,6 +70,7 @@ final class SessionStore: ObservableObject {
     @Published var runtimePluginInstallResult: CodexRuntimePluginInstallResult?
     @Published var runtimeSharedPluginCount = 0
     @Published var runtimeSkills: [CodexRuntimeSkill] = []
+    @Published var runtimeSkillExtraRoots: [String] = []
     @Published var runtimeSkillPreview: CodexRuntimeSkill?
     @Published var runtimeSkillPreviewText = ""
     @Published var runtimeSkillPreviewStatusText = "未读取"
@@ -5079,6 +5080,76 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    func promptAddRuntimeSkillExtraRoot() {
+        let panel = NSOpenPanel()
+        panel.title = "选择运行时技能根目录"
+        panel.message = "选择包含技能子目录的 skills 根目录。RaytoneCodex 会通过 skills/extraRoots/set 挂载到当前 Codex app-server 进程。"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = URL(fileURLWithPath: workspacePath)
+
+        if panel.runModal() == .OK {
+            let selectedPaths = panel.urls.map(\.path)
+            Task { await addRuntimeSkillExtraRoots(selectedPaths) }
+        }
+    }
+
+    @discardableResult
+    func addRuntimeSkillExtraRoots(_ paths: [String]) async -> Bool {
+        await setRuntimeSkillExtraRoots(paths: runtimeSkillExtraRoots + paths)
+    }
+
+    @discardableResult
+    func setRuntimeSkillExtraRoots(paths: [String]) async -> Bool {
+        let roots = Self.uniqueCanonicalPaths(paths)
+        if roots.isEmpty && isRunning {
+            runtimeCatalogStatusText = "当前有运行中的轮次，暂不能清除运行时技能根"
+            return false
+        }
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在调用 skills/extraRoots/set…"
+        runtimeCatalogErrors = []
+        defer { runtimeCatalogIsRefreshing = false }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            try await client.setSkillExtraRoots(roots)
+            runtimeSkillExtraRoots = roots
+
+            let listClient: CodexAppServerClient
+            if roots.isEmpty {
+                await stopAppServerConnectionForRuntimeSkillRootChange()
+                listClient = try await ensureAppServerClient(useProviderConfiguration: false)
+            } else {
+                listClient = client
+            }
+
+            let catalog = try await listClient.listSkills(cwds: [workspacePath], forceReload: true)
+            runtimeSkills = catalog.skills
+            runtimeCatalogErrors = catalog.errors
+            let rootText = roots.isEmpty ? "已清除" : "\(roots.count) 个根"
+            runtimeCatalogStatusText = "skills/extraRoots/set：\(rootText) · skills/list \(runtimeSkills.count) 个技能"
+            return true
+        } catch {
+            runtimeCatalogStatusText = "skills/extraRoots/set 失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+            return false
+        }
+    }
+
+    private func stopAppServerConnectionForRuntimeSkillRootChange() async {
+        if let client = appServerClient {
+            await client.stop()
+        }
+        appServerClient = nil
+        appServerEventsTask?.cancel()
+        appServerEventsTask = nil
+        appServerEnvironmentKey = nil
+        appServerItemIDs.removeAll()
+        resetFilePanelWatch()
+    }
+
     func readRuntimePluginDetail(_ plugin: CodexRuntimePlugin) async {
         runtimeCatalogIsRefreshing = true
         runtimePluginDetailStatusText = "正在读取 \(plugin.displayName)…"
@@ -6131,6 +6202,9 @@ final class SessionStore: ObservableObject {
         }
 
         try await client.initialize()
+        if !runtimeSkillExtraRoots.isEmpty {
+            try await client.setSkillExtraRoots(runtimeSkillExtraRoots)
+        }
         let version = runtimeSnapshot.version?.isEmpty == false ? runtimeSnapshot.version! : "app-server"
         appServerConnectionState = .connected(version: version)
         return client
@@ -8927,6 +9001,17 @@ final class SessionStore: ObservableObject {
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path
+    }
+
+    static func uniqueCanonicalPaths(_ paths: [String]) -> [String] {
+        var seen = Set<String>()
+        return paths.compactMap { path in
+            let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let normalized = canonicalPath(trimmed)
+            guard seen.insert(normalized).inserted else { return nil }
+            return normalized
+        }
     }
 
     private static func runStatus(from value: String?) -> RunStatus {

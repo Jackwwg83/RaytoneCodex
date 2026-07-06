@@ -43,6 +43,8 @@ enum SmokeTestRunner {
             runPluginReadSmoke()
         } else if CommandLine.arguments.contains("--skill-read-smoke-test") {
             runSkillReadSmoke()
+        } else if CommandLine.arguments.contains("--skill-extra-roots-smoke-test") {
+            runSkillExtraRootsSmoke()
         } else if CommandLine.arguments.contains("--plugin-scaffold-smoke-test") {
             runPluginScaffoldSmoke()
         } else if CommandLine.arguments.contains("--plugin-install-response-smoke-test") {
@@ -2239,6 +2241,114 @@ enum SmokeTestRunner {
                     "runtimeVersion": "",
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runSkillExtraRootsSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexSkillExtraRootsSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let extraSkillsRootURL = rootURL.appendingPathComponent("runtime-skills", isDirectory: true)
+            let skillURL = extraSkillsRootURL.appendingPathComponent("raytone-extra-root-skill/SKILL.md")
+            let marker = "RAYTONE_SKILL_EXTRA_ROOTS_MARKER"
+            let skillText = """
+            ---
+            name: raytone-extra-root-skill
+            description: Runtime extra roots smoke skill.
+            ---
+
+            # Raytone Extra Roots Skill
+
+            \(marker)
+            """
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try fileManager.createDirectory(
+                    at: skillURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try skillText.write(to: skillURL, atomically: true, encoding: .utf8)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
+
+                fputs("skill-extra-roots-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("skill-extra-roots-smoke: setRuntimeSkillExtraRoots\n", stderr)
+                let setOK = await store.setRuntimeSkillExtraRoots(paths: [extraSkillsRootURL.path])
+                let setStatus = store.runtimeCatalogStatusText
+                let extraRootsAfterSet = store.runtimeSkillExtraRoots
+                let discovered = store.runtimeSkills.first { $0.name == "raytone-extra-root-skill" }
+                let discoveredBeforeClear = discovered != nil
+                if let discovered {
+                    _ = await store.readRuntimeSkillPreview(discovered)
+                }
+                let preview = store.runtimeSkillPreviewText
+                let previewStatus = store.runtimeSkillPreviewStatusText
+
+                fputs("skill-extra-roots-smoke: clearRuntimeSkillExtraRoots\n", stderr)
+                let clearOK = await store.setRuntimeSkillExtraRoots(paths: [])
+                let removedAfterClear = !store.runtimeSkills.contains { $0.name == "raytone-extra-root-skill" }
+                let clearStatus = store.runtimeCatalogStatusText
+
+                await store.stopAppServerForTesting()
+
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    setOK &&
+                    clearOK &&
+                    discoveredBeforeClear &&
+                    preview.contains(marker) &&
+                    previewStatus.hasPrefix("fs/readFile") &&
+                    extraRootsAfterSet == [SessionStore.canonicalPath(extraSkillsRootURL.path)] &&
+                    removedAfterClear &&
+                    store.runtimeSkillExtraRoots.isEmpty
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "extraSkillsRoot": extraSkillsRootURL.path,
+                    "skillPath": skillURL.path,
+                    "setOK": setOK,
+                    "clearOK": clearOK,
+                    "discoveredBeforeClear": discoveredBeforeClear,
+                    "removedAfterClear": removedAfterClear,
+                    "setStatus": setStatus,
+                    "clearStatus": clearStatus,
+                    "extraRootsAfterSet": extraRootsAfterSet,
+                    "previewStatus": previewStatus,
+                    "previewContainsMarker": preview.contains(marker),
+                    "preview": String(preview.prefix(600)),
+                    "source": "skills/extraRoots/set + skills/list + fs/readFile"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspaceURL.path,
+                    "codexHome": codexHomeURL.path,
+                    "extraSkillsRoot": extraSkillsRootURL.path,
+                    "skillPath": skillURL.path,
                     "error": error.localizedDescription
                 ])
                 exit(1)
