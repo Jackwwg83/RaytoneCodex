@@ -533,7 +533,7 @@ wait_for_window_for_pid() {
 }
 
 run_ui_smoke() {
-  local app_pid="" window_info window_id window_width window_height screenshot_size cli_version runtime_path
+  local app_pid="" window_info window_id window_width window_height screenshot_size cli_version runtime_path settle_seconds
 
   cleanup_ui_smoke() {
     if [[ -n "$app_pid" ]]; then
@@ -633,7 +633,13 @@ run_ui_smoke() {
 
   # Give SwiftUI tasks that inspect the bundled CLI and app-server catalog
   # enough time to update visible panels before the screenshot is captured.
-  sleep "${RAYTONE_CODEX_UI_SETTLE_SECONDS:-8}"
+  settle_seconds="${RAYTONE_CODEX_UI_SETTLE_SECONDS:-8}"
+  case "${UI_SCREEN:-}" in
+    home|start|new-thread|hero)
+      settle_seconds="${RAYTONE_CODEX_UI_SETTLE_SECONDS:-18}"
+      ;;
+  esac
+  sleep "$settle_seconds"
   if window_info="$(window_info_for_pid "$app_pid" 2>/dev/null)"; then
     eval "$window_info"
     window_id="${WINDOW_ID:-$window_id}"

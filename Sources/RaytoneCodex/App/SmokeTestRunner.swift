@@ -4631,13 +4631,10 @@ enum SmokeTestRunner {
             fputs("integration-pages-smoke: refreshRuntime\n", stderr)
             await store.refreshRuntime()
 
-            fputs("integration-pages-smoke: refreshIntegrationRuntime\n", stderr)
-            await store.refreshIntegrationRuntime(forceRefetchApps: false)
+            fputs("integration-pages-smoke: refreshNewThreadHeroRuntime\n", stderr)
+            await store.refreshNewThreadHeroRuntime()
             let integrationStatus = store.runtimeCatalogStatusText
             let integrationErrors = store.runtimeCatalogErrors
-
-            fputs("integration-pages-smoke: loadFilePanelDirectory\n", stderr)
-            await store.loadFilePanelDirectory(workspacePath)
             let fileConnectionCount = store.workspaceFileConnectionCount
 
             fputs("integration-pages-smoke: refreshWorkspaceWorktrees\n", stderr)
@@ -4694,6 +4691,8 @@ enum SmokeTestRunner {
                 "mcpServerCount": store.runtimeMCPServers.count,
                 "homeConnectionCards": [
                     "source": "app/list + mcpServerStatus/list + files/readDirectory",
+                    "status": store.homeConnectionStatusText,
+                    "refreshed": store.homeConnectionsRefreshedAt != nil,
                     "messaging": [
                         "connected": store.messagingConnectionCount > 0,
                         "count": store.messagingConnectionCount,

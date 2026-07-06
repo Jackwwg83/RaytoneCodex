@@ -16,8 +16,11 @@ struct RaytoneCodexApp: App {
                 .preferredColorScheme(sessionStore.preferredColorScheme)
                 .task {
                     await sessionStore.refreshRuntime()
-                    await sessionStore.refreshRuntimeThreads()
                     sessionStore.applyStartupScreenIfNeeded()
+                    if SessionStore.startupScreenUsesNewThreadHero {
+                        await sessionStore.refreshNewThreadHeroRuntime()
+                    }
+                    await sessionStore.refreshRuntimeThreads()
                 }
         }
         .windowStyle(.hiddenTitleBar)

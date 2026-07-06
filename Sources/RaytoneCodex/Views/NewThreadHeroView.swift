@@ -26,13 +26,10 @@ struct NewThreadHeroView: View {
         .frame(maxWidth: .infinity, minHeight: 620)
         .background(Theme.transcript)
         .task {
-            await store.refreshWorkspaceBranches()
-            if store.fileEntries.isEmpty {
-                await store.loadFilePanelDirectory(store.workspacePath)
+            guard !SessionStore.startupScreenUsesNewThreadHero else {
+                return
             }
-            if store.runtimeMCPServers.isEmpty {
-                await store.refreshRuntimeMCPServers()
-            }
+            await store.refreshNewThreadHeroRuntime()
         }
     }
 

@@ -98,6 +98,8 @@ final class SessionStore: ObservableObject {
     @Published var runtimeCatalogStatusText = "未刷新"
     @Published var runtimeCatalogErrors: [String] = []
     @Published var runtimeCatalogIsRefreshing = false
+    @Published var homeConnectionsRefreshedAt: Date?
+    @Published var homeConnectionStatusText = "未刷新"
     @Published var lastMentionInputPreview: [[String: String]] = []
     @Published var pendingLocalImagePaths: [String] = []
     @Published var lastLocalImageInputPreview: [String] = []
@@ -370,6 +372,15 @@ final class SessionStore: ObservableObject {
     static var startupScreenDisablesBottomPanel: Bool {
         switch startupScreenIdentifier {
         case "home-compact", "compact-composer", "bottom-panel-off":
+            true
+        default:
+            false
+        }
+    }
+
+    static var startupScreenUsesNewThreadHero: Bool {
+        switch startupScreenIdentifier {
+        case "home", "start", "new-thread", "hero", "home-compact", "compact-composer", "bottom-panel-off", "access", "access-popover":
             true
         default:
             false
@@ -3200,6 +3211,18 @@ final class SessionStore: ObservableObject {
         }
 
         runtimeCatalogIsRefreshing = false
+    }
+
+    func refreshNewThreadHeroRuntime() async {
+        homeConnectionStatusText = "正在读取新对话连接状态…"
+
+        await refreshWorkspaceBranches()
+        await refreshIntegrationRuntime(forceRefetchApps: false)
+        await loadFilePanelDirectory(workspacePath)
+
+        homeConnectionsRefreshedAt = Date()
+        let errorText = runtimeCatalogErrors.isEmpty ? "" : " · \(runtimeCatalogErrors.count) 个提示"
+        homeConnectionStatusText = "app/list \(runtimeApps.count) 个 · MCP \(runtimeMCPServers.count) 个 · 文件 \(workspaceFileConnectionCount) 个\(errorText)"
     }
 
     func resetCodexMemory() async {

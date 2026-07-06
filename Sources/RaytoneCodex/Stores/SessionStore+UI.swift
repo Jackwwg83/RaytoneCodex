@@ -43,8 +43,7 @@ extension SessionStore {
             route = .thread
             toolPanel = .launcher
             Task {
-                await refreshWorkspaceBranches()
-                await loadFilePanelDirectory(project.path)
+                await refreshNewThreadHeroRuntime()
             }
             return
         }
@@ -52,8 +51,7 @@ extension SessionStore {
         newThread(in: projectID)
         filePanelPath = project.path
         Task {
-            await refreshWorkspaceBranches()
-            await loadFilePanelDirectory(project.path)
+            await refreshNewThreadHeroRuntime()
         }
     }
 
@@ -338,21 +336,48 @@ extension SessionStore {
     }
 
     var messagingConnectionSubtitle: String {
-        messagingConnectionCount > 0
-            ? "已连接 \(messagingConnectionCount) 个消息来源"
-            : "未发现已授权消息连接"
+        if messagingConnectionCount > 0 {
+            return "已连接 \(messagingConnectionCount) 个消息来源"
+        }
+        if runtimeCatalogIsRefreshing {
+            return "正在读取集成状态"
+        }
+        if homeConnectionsRefreshedAt == nil {
+            return "等待读取消息连接"
+        }
+        if runtimeApps.isEmpty && runtimeMCPServers.isEmpty && !runtimeCatalogErrors.isEmpty {
+            return "集成状态读取失败"
+        }
+        return "未发现已授权消息连接"
     }
 
     var emailConnectionSubtitle: String {
-        emailConnectionCount > 0
-            ? "已连接 \(emailConnectionCount) 个电子邮件来源"
-            : "未发现已授权邮件连接"
+        if emailConnectionCount > 0 {
+            return "已连接 \(emailConnectionCount) 个电子邮件来源"
+        }
+        if runtimeCatalogIsRefreshing {
+            return "正在读取集成状态"
+        }
+        if homeConnectionsRefreshedAt == nil {
+            return "等待读取邮件连接"
+        }
+        if runtimeApps.isEmpty && runtimeMCPServers.isEmpty && !runtimeCatalogErrors.isEmpty {
+            return "集成状态读取失败"
+        }
+        return "未发现已授权邮件连接"
     }
 
     var workspaceFileConnectionSubtitle: String {
-        workspaceFileConnectionCount > 0
-            ? "已读取 \(workspaceFileConnectionCount) 个工作区文件"
-            : "正在读取工作区文件"
+        if workspaceFileConnectionCount > 0 {
+            return "已读取 \(workspaceFileConnectionCount) 个工作区文件"
+        }
+        if filePanelStatusText.hasPrefix("读取失败") {
+            return "文件读取失败"
+        }
+        if filePanelStatusText == "未加载" {
+            return "等待读取工作区文件"
+        }
+        return "正在读取工作区文件"
     }
 
     var chronicleRuntimeAvailable: Bool {
