@@ -4205,6 +4205,11 @@ enum SmokeTestRunner {
                     model: editedModel
                 )
                 try store.saveProviderAPIKey("raytone-smoke-key", providerID: providerID)
+                let keychainReadBackMatches =
+                    try RaytoneKeychainService.readPassword(account: providerID) == "raytone-smoke-key"
+                let hasSavedProviderAPIKey = store.providers
+                    .first(where: { $0.id == providerID })
+                    .map { store.hasProviderAPIKey($0) } ?? false
                 await store.refreshRuntime()
                 await store.testProviderConnection(providerID: providerID)
                 let directUsageResponse = try await postProviderUsageSmokeRequest(
@@ -4229,12 +4234,19 @@ enum SmokeTestRunner {
                 let persistedProvider = store.runtimeConfig?.raytoneProviders.first { $0.id == providerID }
                 let providerUsage = store.providerUsage
                 let cachedProviderUsage = store.providerUsageByProviderID[providerID]
+                let rawKeyAbsentFromConfigs =
+                    !codexConfigText.contains("raytone-smoke-key") &&
+                    !proxyConfigText.contains("raytone-smoke-key") &&
+                    !persistedConfigText.contains("raytone-smoke-key")
                 let agentMessages = store.selectedThread.items.compactMap { item -> String? in
                     if case let .agentMessage(text) = item.kind { return text }
                     return nil
                 }
                 let syncedModels = [editedModel, "smoke-secondary-model"]
-                let ok = store.runtimeSnapshot.executable != nil &&
+                let ok = keychainReadBackMatches &&
+                    hasSavedProviderAPIKey &&
+                    rawKeyAbsentFromConfigs &&
+                    store.runtimeSnapshot.executable != nil &&
                     store.selectedProviderID == providerID &&
                     store.providerConnectionStatusText.contains("上游已验证") &&
                     store.providerConnectionBaseURL.contains("127.0.0.1") &&
@@ -4286,10 +4298,12 @@ enum SmokeTestRunner {
 
                 await store.stopAppServerForTesting()
                 try? RaytoneKeychainService.deletePassword(account: providerID)
+                let keychainDeleted = (try? RaytoneKeychainService.readPassword(account: providerID)) == nil
+                let smokeOK = finalOK && keychainDeleted
                 server.stop()
 
                 emitJSON([
-                    "ok": finalOK,
+                    "ok": smokeOK,
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
@@ -4304,6 +4318,10 @@ enum SmokeTestRunner {
                     "usageStatus": store.providerUsageStatusText,
                     "directUsageResponse": directUsageResponse,
                     "chatCompletionRequestCount": chatCompletionRequestCount,
+                    "keychainReadBackMatches": keychainReadBackMatches,
+                    "hasSavedProviderAPIKey": hasSavedProviderAPIKey,
+                    "keychainDeleted": keychainDeleted,
+                    "rawKeyAbsentFromConfigs": rawKeyAbsentFromConfigs,
                     "agentMessages": agentMessages,
                     "syncedModels": store.selectedProvider.models,
                     "providerUsage": providerUsage.map { usage in
@@ -4351,7 +4369,7 @@ enum SmokeTestRunner {
                     "codexConfigText": codexConfigText,
                     "proxyConfigText": proxyConfigText
                 ])
-                exit(finalOK ? 0 : 1)
+                exit(smokeOK ? 0 : 1)
             } catch {
                 await store.stopAppServerForTesting()
                 try? RaytoneKeychainService.deletePassword(account: providerID)
