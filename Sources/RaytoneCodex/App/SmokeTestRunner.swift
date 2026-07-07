@@ -9316,41 +9316,211 @@ enum SmokeTestRunner {
 
     private static func runUsageActivitySmoke() {
         Task { @MainActor in
-            let store = SessionStore()
-            let buckets = (1...14).map { day in
-                CodexRuntimeTokenUsageBucket(
-                    startDate: String(format: "2026-07-%02d", day),
-                    tokens: day
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexUsageActivitySmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeUsageActivityAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-usage-activity"
                 )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_USAGE_ACTIVITY_LOG": logURL.path
+                ]
+
+                await store.refreshUsageBillingRuntime()
+                let billingStatus = store.runtimeCatalogStatusText
+                let billingErrors = store.runtimeCatalogErrors
+                let daily = store.tokenUsageActivityValues(scale: "每日")
+                let weekly = store.tokenUsageActivityValues(scale: "每周")
+                let cumulative = store.tokenUsageActivityValues(scale: "累计")
+                let summary = store.runtimeProfileShareSummary()
+                let shareStatus = await store.copyRuntimeProfileShareSummary()
+                let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                await store.stopAppServerForTesting()
+
+                let methodsObserved = [
+                    "account/read",
+                    "account/usage/read",
+                    "account/rateLimits/read"
+                ].allSatisfy { method in
+                    logText.contains(#""method":"\#(method)""#)
+                }
+                let firstBucket = store.runtimeRateLimits?.buckets.first
+                let ok = store.runtimeSnapshot.executable != nil &&
+                    methodsObserved &&
+                    billingErrors.isEmpty &&
+                    store.runtimeAccount?.kind == "chatgpt" &&
+                    store.runtimeAccount?.email == "usage-smoke@example.com" &&
+                    store.runtimeAccount?.planType == "plus" &&
+                    store.runtimeTokenUsage?.lifetimeTokens == 105 &&
+                    store.runtimeTokenUsage?.peakDailyTokens == 14 &&
+                    daily == Array(1...14) &&
+                    weekly == [28, 77] &&
+                    cumulative == [28, 105] &&
+                    firstBucket?.name == "Primary Model" &&
+                    firstBucket?.planType == "plus" &&
+                    firstBucket?.primary?.usedPercent == 0.25 &&
+                    store.providerUsageStatusText == "OpenAI 用量来自 account/usage/read" &&
+                    billingStatus.contains("usage-smoke@example.com") &&
+                    billingStatus.contains("105") &&
+                    summary.contains("usage-smoke@example.com") &&
+                    summary.contains("累计 Token：105") &&
+                    summary.contains("速率限制桶：1") &&
+                    shareStatus.contains("已复制分享摘要") &&
+                    clipboard.contains("来源：account/read + account/usage/read + account/rateLimits/read")
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspaceURL.path,
+                    "requestLog": logURL.path,
+                    "methodsObserved": methodsObserved,
+                    "billingStatus": billingStatus,
+                    "billingErrors": billingErrors,
+                    "account": [
+                        "kind": store.runtimeAccount?.kind ?? "",
+                        "email": store.runtimeAccount?.email ?? "",
+                        "planType": store.runtimeAccount?.planType ?? ""
+                    ] as [String: Any],
+                    "daily": daily,
+                    "weekly": weekly,
+                    "cumulative": cumulative,
+                    "lifetimeTokens": store.runtimeTokenUsage?.lifetimeTokens ?? 0,
+                    "rateLimitBuckets": store.runtimeRateLimits?.buckets.map { bucket in
+                        [
+                            "id": bucket.id,
+                            "name": bucket.name,
+                            "planType": bucket.planType ?? "",
+                            "primaryUsedPercent": bucket.primary?.usedPercent ?? 0,
+                            "secondaryWindowMinutes": bucket.secondary?.windowMinutes ?? 0
+                        ] as [String: Any]
+                    } ?? [],
+                    "providerUsageStatus": store.providerUsageStatusText,
+                    "shareStatus": shareStatus,
+                    "clipboardPreview": redactedProfileSharePreview(String(clipboard.prefix(360))),
+                    "source": "fake Codex app-server account/read + account/usage/read + account/rateLimits/read"
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
             }
-            store.runtimeTokenUsage = CodexRuntimeTokenUsage(
-                lifetimeTokens: buckets.map(\.tokens).reduce(0, +),
-                peakDailyTokens: buckets.map(\.tokens).max(),
-                longestRunningTurnSec: 42,
-                currentStreakDays: 14,
-                longestStreakDays: 14,
-                dailyBuckets: buckets
-            )
-
-            let daily = store.tokenUsageActivityValues(scale: "每日")
-            let weekly = store.tokenUsageActivityValues(scale: "每周")
-            let cumulative = store.tokenUsageActivityValues(scale: "累计")
-            let ok = daily == Array(1...14) &&
-                weekly == [28, 77] &&
-                cumulative == [28, 105]
-
-            emitJSON([
-                "ok": ok,
-                "source": "synthetic CodexRuntimeTokenUsage.dailyBuckets",
-                "daily": daily,
-                "weekly": weekly,
-                "cumulative": cumulative,
-                "lifetimeTokens": store.runtimeTokenUsage?.lifetimeTokens ?? 0
-            ])
-            exit(ok ? 0 : 1)
         }
 
         dispatchMain()
+    }
+
+    private static var fakeUsageActivityAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_USAGE_ACTIVITY_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        daily_buckets = [
+            {"startDate": f"2026-07-{day:02d}", "tokens": day}
+            for day in range(1, 15)
+        ]
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "account/read":
+                send_result(request_id, {
+                    "account": {
+                        "type": "chatgpt",
+                        "email": "usage-smoke@example.com",
+                        "planType": "plus",
+                    },
+                    "requiresOpenaiAuth": False,
+                })
+            elif method == "account/usage/read":
+                send_result(request_id, {
+                    "summary": {
+                        "lifetimeTokens": 105,
+                        "peakDailyTokens": 14,
+                        "longestRunningTurnSec": 42,
+                        "currentStreakDays": 14,
+                        "longestStreakDays": 14,
+                    },
+                    "dailyUsageBuckets": daily_buckets,
+                })
+            elif method == "account/rateLimits/read":
+                send_result(request_id, {
+                    "rateLimitsByLimitId": {
+                        "primary": {
+                            "limitId": "primary",
+                            "limitName": "Primary Model",
+                            "planType": "plus",
+                            "rateLimitReachedType": None,
+                            "credits": {"balance": "123.5"},
+                            "individualLimit": {"used": "6.5"},
+                            "primary": {
+                                "usedPercent": 0.25,
+                                "windowDurationMins": 300,
+                                "resetsAt": 1783303700,
+                            },
+                            "secondary": {
+                                "usedPercent": 0.1,
+                                "windowDurationMins": 10080,
+                                "resetsAt": "2026-07-07T00:00:00Z",
+                            },
+                        }
+                    }
+                })
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
     }
 
     private static func runSampleDataGateSmoke() {
