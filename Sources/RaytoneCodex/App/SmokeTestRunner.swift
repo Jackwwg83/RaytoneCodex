@@ -6600,6 +6600,27 @@ enum SmokeTestRunner {
                 "command": forwardCommand?.action == .forward ? "forward" : "missing"
             ]
 
+            let reloadTokenBefore = store.browserReloadToken
+            store.reloadBrowserPanel()
+            let reloadState: [String: Any] = [
+                "tokenChanged": store.browserReloadToken != reloadTokenBefore,
+                "url": store.browserURL?.path ?? "",
+                "title": store.browserTitle
+            ]
+
+            store.newBrowserTab()
+            let newTabState: [String: Any] = [
+                "urlCleared": store.browserURL == nil,
+                "title": store.browserTitle,
+                "canGoBack": store.browserCanGoBack,
+                "canGoForward": store.browserCanGoForward,
+                "toolPanel": store.toolPanel == .browser ? "browser" : "other",
+                "snapshotCleared": store.browserSnapshotRequest == nil &&
+                    store.browserAttachedSnapshotPath.isEmpty &&
+                    store.browserScreenshotStatusText.isEmpty &&
+                    store.browserDataStatusText.isEmpty
+            ]
+
             let ok = initialState["title"] as? String == "第一页" &&
                 initialState["canGoBack"] as? Bool == false &&
                 initialState["canGoForward"] as? Bool == false &&
@@ -6612,14 +6633,23 @@ enum SmokeTestRunner {
                 addressBarState["url"] as? String == localHTMLURL.path &&
                 addressBarState["title"] as? String == "address-bar.html" &&
                 addressBrowserFactOK &&
-                (addressBarState["dataStatus"] as? String)?.contains("fs/getMetadata：已确认地址栏本地文件") == true
+                (addressBarState["dataStatus"] as? String)?.contains("fs/getMetadata：已确认地址栏本地文件") == true &&
+                reloadState["tokenChanged"] as? Bool == true &&
+                newTabState["urlCleared"] as? Bool == true &&
+                newTabState["title"] as? String == "浏览器" &&
+                newTabState["canGoBack"] as? Bool == false &&
+                newTabState["canGoForward"] as? Bool == false &&
+                newTabState["toolPanel"] as? String == "browser" &&
+                newTabState["snapshotCleared"] as? Bool == true
             emitJSON([
                 "ok": ok,
                 "addressBrowserFactOK": addressBrowserFactOK,
                 "addressBar": addressBarState,
                 "initial": initialState,
                 "afterBack": afterBackState,
-                "afterForward": afterForwardState
+                "afterForward": afterForwardState,
+                "reload": reloadState,
+                "newTab": newTabState
             ])
             exit(ok ? 0 : 1)
         }
@@ -6683,21 +6713,25 @@ enum SmokeTestRunner {
         Task { @MainActor in
             let store = SessionStore()
             store.workspacePath = workspacePath
-            await store.openBrowserSample()
-            store.captureBrowserPanelScreenshot()
+            await store.openBrowserSampleAndCapture()
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             let request = store.browserSnapshotRequest
             let ok = store.browserURL != nil &&
                 request != nil &&
                 request?.outputURL.path.contains("/screenshots/raytonecodex-browser-") == true &&
+                store.route == .thread &&
+                store.toolPanel == .browser &&
                 store.browserScreenshotStatusText == "正在截取网页…" &&
                 store.browserDataStatusText.contains("fs/getMetadata + fs/readFile") &&
                 store.browserDataStatusText.contains("browser-sample.html")
 
             emitJSON([
                 "ok": ok,
-                "scope": "snapshot-request-only",
+                "scope": "openBrowserSampleAndCapture-request-only",
                 "workspacePath": workspacePath,
                 "browserURL": store.browserURL?.path ?? "",
+                "route": store.route == .thread ? "thread" : "other",
+                "toolPanel": store.toolPanel == .browser ? "browser" : "other",
                 "status": store.browserScreenshotStatusText,
                 "browserDataStatusText": store.browserDataStatusText,
                 "snapshotRequestID": request?.id.uuidString ?? "",
