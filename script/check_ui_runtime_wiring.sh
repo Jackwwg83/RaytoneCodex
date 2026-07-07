@@ -67,7 +67,25 @@ for pane in settings_cases:
     require(f"settings pane {pane}", f"case .{pane}", text["settings"])
 
 settings_runtime = {
-    "general": ["refreshRuntimeCatalog", "saveRuntimeWorkMode", "saveRuntimeShowInMenuBar", "diagnoseWorkspaceRuntime", "--runtime-diagnostics-smoke-test"],
+    "general": [
+        "refreshRuntimeCatalog",
+        "saveRuntimeWorkMode",
+        "collaborationMode/list",
+        "thread/settings/update",
+        "saveRuntimeShowInMenuBar",
+        "saveRuntimeShowBottomPanel",
+        "saveRuntimePreventSleepWhileRunning",
+        "saveRuntimeTerminalPosition",
+        "saveRuntimeOpenTarget",
+        "saveRuntimeLanguage",
+        "saveRuntimeServiceTier",
+        "diagnoseWorkspaceRuntime",
+        "--work-mode-smoke-test",
+        "--desktop-settings-smoke-test",
+        "--open-target-smoke-test",
+        "--prevent-sleep-smoke-test",
+        "--runtime-diagnostics-smoke-test",
+    ],
     "modelsProviders": ["model/list", "modelProvider/capabilities/read", "RaytoneKeychainService", "RaytoneProxyService", "continueProviderOnboardingWithOpenAI", "继续使用 OpenAI", "--model-catalog-smoke-test", "--model-provider-capabilities-smoke-test", "--provider-sidecar-smoke-test", "--provider-onboarding-smoke-test", "--provider-unauthorized-smoke-test"],
     "profile": [
         "account/read",
