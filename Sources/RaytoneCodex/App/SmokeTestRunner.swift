@@ -12802,6 +12802,7 @@ enum SmokeTestRunner {
             let workspaceURL = URL(fileURLWithPath: baseWorkspacePath)
                 .appendingPathComponent(".build/raytone-branch-switch-smoke-\(UUID().uuidString)", isDirectory: true)
             let targetBranch = "raytone-branch-smoke"
+            let createdBranch = "raytone-created-branch-smoke"
 
             do {
                 try FileManager.default.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
@@ -12842,17 +12843,31 @@ enum SmokeTestRunner {
                 fputs("branch-switch-smoke: checkoutWorkspaceBranch\n", stderr)
                 await store.checkoutWorkspaceBranch(targetBranch)
 
-                let gitBranchResult = try runProcess(["git", "branch", "--show-current"], cwd: workspaceURL)
-                let actualBranch = gitBranchResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                let checkoutBranchResult = try runProcess(["git", "branch", "--show-current"], cwd: workspaceURL)
+                let actualCheckoutBranch = checkoutBranchResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                let branchesAfterCheckout = store.workspaceBranches
+                let projectBranchAfterCheckout = store.selectedProject.branch ?? ""
+                let statusAfterCheckout = store.workspaceBranchStatusText
+
+                fputs("branch-switch-smoke: createWorkspaceBranch\n", stderr)
+                await store.createWorkspaceBranch(createdBranch)
+
+                let createdBranchResult = try runProcess(["git", "branch", "--show-current"], cwd: workspaceURL)
+                let actualCreatedBranch = createdBranchResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 let finalBranches = store.workspaceBranches
                 let finalBranch = store.selectedProject.branch ?? ""
                 let ok = store.runtimeSnapshot.executable != nil &&
                     initialBranch == "main" &&
                     initialBranches.contains("main") &&
                     initialBranches.contains(targetBranch) &&
-                    actualBranch == targetBranch &&
-                    finalBranch == targetBranch &&
+                    actualCheckoutBranch == targetBranch &&
+                    projectBranchAfterCheckout == targetBranch &&
+                    branchesAfterCheckout.contains(targetBranch) &&
+                    actualCreatedBranch == createdBranch &&
+                    finalBranch == createdBranch &&
                     finalBranches.contains(targetBranch) &&
+                    finalBranches.contains(createdBranch) &&
+                    statusAfterCheckout.contains("Git 分支") &&
                     store.workspaceBranchStatusText.contains("Git 分支")
 
                 emitJSON([
@@ -12861,11 +12876,16 @@ enum SmokeTestRunner {
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspaceURL.path,
-                    "source": "NewThreadHero branch pill -> SessionStore.checkoutWorkspaceBranch -> command/exec git switch",
+                    "source": "Environment branch menu/plus -> checkoutWorkspaceBranch + createWorkspaceBranch -> command/exec git switch",
                     "initialBranch": initialBranch,
                     "initialBranches": initialBranches,
                     "targetBranch": targetBranch,
-                    "actualGitBranch": actualBranch,
+                    "actualCheckoutBranch": actualCheckoutBranch,
+                    "projectBranchAfterCheckout": projectBranchAfterCheckout,
+                    "branchesAfterCheckout": branchesAfterCheckout,
+                    "statusAfterCheckout": statusAfterCheckout,
+                    "createdBranch": createdBranch,
+                    "actualCreatedBranch": actualCreatedBranch,
                     "selectedProjectBranch": finalBranch,
                     "finalBranches": finalBranches,
                     "branchStatus": store.workspaceBranchStatusText,
