@@ -7536,6 +7536,9 @@ final class SessionStore: ObservableObject {
         if provider.kind == .openAI {
             return true
         }
+        if !provider.requiresAPIKey {
+            return true
+        }
         if let key = providerAPIKey(providerID: provider.id),
            !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
@@ -7633,16 +7636,23 @@ final class SessionStore: ObservableObject {
                 markProviderUnauthorized(provider, status: status, body: body)
             default:
                 providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
-                providerConnectionDetailText = provider.apiKeyEnvironmentName.map { "Keychain 或 \($0)" } ?? "Keychain"
+                providerConnectionDetailText = providerCredentialRequirementText(provider)
                 runtimeCatalogStatusText = providerConnectionStatusText
                 runtimeCatalogErrors = [error.localizedDescription]
             }
         } catch {
             providerConnectionStatusText = "测试失败：\(error.localizedDescription)"
-            providerConnectionDetailText = provider.apiKeyEnvironmentName.map { "Keychain 或 \($0)" } ?? "Keychain"
+            providerConnectionDetailText = providerCredentialRequirementText(provider)
             runtimeCatalogStatusText = providerConnectionStatusText
             runtimeCatalogErrors = [error.localizedDescription]
         }
+    }
+
+    private func providerCredentialRequirementText(_ provider: RaytoneProviderConfiguration) -> String {
+        guard provider.requiresAPIKey else {
+            return "该 Provider 不需要 Key；请确认本地服务已启动且支持 /v1/models"
+        }
+        return provider.apiKeyEnvironmentName.map { "Keychain 或 \($0)" } ?? "Keychain"
     }
 
     private func syncProviderModelsFromUpstream(providerID: String, upstreamModels: [String]) -> Int {
@@ -7692,7 +7702,9 @@ final class SessionStore: ObservableObject {
             providerOnboardingPresented = false
             return
         }
-        let hasThirdPartyKey = sidecarProviders.contains { hasProviderAPIKey($0) }
+        let hasThirdPartyKey = sidecarProviders.contains { provider in
+            provider.requiresAPIKey && hasProviderAPIKey(provider)
+        }
         providerOnboardingPresented = !hasThirdPartyKey
         providerOnboardingStatusText = providerOnboardingPresented ? "请选择模型提供方" : "已检测到模型提供方密钥"
     }
@@ -7778,7 +7790,7 @@ final class SessionStore: ObservableObject {
                 providerOnboardingStatusText = "密钥保存失败：\(error.localizedDescription)"
                 return false
             }
-        } else if !hasProviderAPIKey(provider) {
+        } else if provider.requiresAPIKey && !hasProviderAPIKey(provider) {
             providerOnboardingStatusText = "\(provider.displayName) 需要接口密钥"
             return false
         }
@@ -7840,7 +7852,8 @@ final class SessionStore: ObservableObject {
             "baseURL": .string(provider.baseURL),
             "model": .string(provider.model),
             "models": .array(provider.models.map(JSONValue.string)),
-            "kind": .string(provider.kind.rawValue)
+            "kind": .string(provider.kind.rawValue),
+            "requiresAPIKey": .bool(provider.requiresAPIKey)
         ]
         if let apiKeyEnvironmentName = provider.apiKeyEnvironmentName {
             object["apiKeyEnvironmentName"] = .string(apiKeyEnvironmentName)
@@ -8163,10 +8176,15 @@ final class SessionStore: ObservableObject {
             throw RaytoneProxyServiceError.launchFailed(detail)
         }
 
-        let keychainKey = try? RaytoneKeychainService.readPassword(account: provider.id)
-        let environmentKey = provider.apiKeyEnvironmentName.flatMap { ProcessInfo.processInfo.environment[$0] }
-        guard let apiKey = keychainKey ?? environmentKey,
-              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let keychainKey = (try? RaytoneKeychainService.readPassword(account: provider.id))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let environmentKey = provider.apiKeyEnvironmentName
+            .flatMap { ProcessInfo.processInfo.environment[$0] }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiKey = [keychainKey, environmentKey]
+            .compactMap { $0 }
+            .first { !$0.isEmpty }
+        guard apiKey != nil || !provider.requiresAPIKey else {
             appServerConnectionState = .providerKeyMissing(provider.displayName)
             sidecarStatusText = "缺少 \(provider.displayName) Key"
             throw RaytoneProxyServiceError.missingAPIKey(provider.displayName)

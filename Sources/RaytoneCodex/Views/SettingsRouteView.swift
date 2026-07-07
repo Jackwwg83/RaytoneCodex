@@ -1088,7 +1088,11 @@ struct SettingsRouteView: View {
             store.selectProvider(provider.id)
             providerAPIKeyDraft = ""
             syncProviderEndpointDrafts(provider)
-            providerStatusMessage = store.hasProviderAPIKey(provider) ? "Key 已就绪" : "未配置"
+            if provider.requiresAPIKey {
+                providerStatusMessage = store.hasProviderAPIKey(provider) ? "Key 已就绪" : "未配置"
+            } else {
+                providerStatusMessage = "无需 Key，请测试本地端点"
+            }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: provider.usesSidecar ? "shippingbox" : "sparkles")
@@ -1134,7 +1138,7 @@ struct SettingsRouteView: View {
                             .foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: 0)
-                    statusBadge(store.hasProviderAPIKey(provider) ? "可用" : "缺少 Key", ok: store.hasProviderAPIKey(provider))
+                    statusBadge(providerCredentialBadgeText(provider), ok: store.hasProviderAPIKey(provider))
                 }
                 .padding(.bottom, 12)
 
@@ -1232,29 +1236,39 @@ struct SettingsRouteView: View {
                 .padding(.top, 8)
 
                 if provider.usesSidecar {
-                    SettingsValueRow(title: "API Key", description: "保存到 macOS Keychain，不写入 sidecar TOML") {
-                        SecureField(store.hasProviderAPIKey(provider) ? "已保存" : "粘贴 API Key", text: $providerAPIKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12))
-                            .frame(width: 210)
+                    if provider.requiresAPIKey {
+                        SettingsValueRow(title: "API Key", description: "保存到 macOS Keychain，不写入 sidecar TOML") {
+                            SecureField(store.hasProviderAPIKey(provider) ? "已保存" : "粘贴 API Key", text: $providerAPIKeyDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12))
+                                .frame(width: 210)
+                        }
+                    } else {
+                        SettingsValueRow(title: "API Key", description: "本地 OpenAI 兼容服务不需要鉴权时可留空") {
+                            Text("无需 Key")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.success)
+                        }
                     }
                     HStack(spacing: 8) {
-                        Button("保存 Key") {
-                            do {
-                                try store.saveProviderAPIKey(providerAPIKeyDraft, providerID: provider.id)
-                                providerAPIKeyDraft = ""
-                                providerStatusMessage = "Key 已保存"
-                            } catch {
-                                providerStatusMessage = error.localizedDescription
+                        if provider.requiresAPIKey {
+                            Button("保存 Key") {
+                                do {
+                                    try store.saveProviderAPIKey(providerAPIKeyDraft, providerID: provider.id)
+                                    providerAPIKeyDraft = ""
+                                    providerStatusMessage = "Key 已保存"
+                                } catch {
+                                    providerStatusMessage = error.localizedDescription
+                                }
                             }
+                            .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                            .disabled(providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
-                        .disabled(providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         Button("测试连接") {
                             do {
                                 let draft = providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !draft.isEmpty {
+                                if provider.requiresAPIKey && !draft.isEmpty {
                                     try store.saveProviderAPIKey(draft, providerID: provider.id)
                                     providerAPIKeyDraft = ""
                                 }
@@ -1292,6 +1306,13 @@ struct SettingsRouteView: View {
         providerEndpointDraftProviderID = provider.id
         providerBaseURLDraft = provider.baseURL
         providerModelDraft = provider.model
+    }
+
+    private func providerCredentialBadgeText(_ provider: RaytoneProviderConfiguration) -> String {
+        if !provider.requiresAPIKey {
+            return "无需 Key"
+        }
+        return store.hasProviderAPIKey(provider) ? "可用" : "缺少 Key"
     }
 
     private func statusBadge(_ text: String, ok: Bool) -> some View {

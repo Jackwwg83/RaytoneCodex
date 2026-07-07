@@ -119,16 +119,22 @@ struct ProviderOnboardingView: View {
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 0)
-                    statusBadge(store.hasProviderAPIKey(provider) ? "密钥已保存" : "需要密钥", ok: store.hasProviderAPIKey(provider))
+                    statusBadge(providerCredentialBadgeText(provider), ok: store.hasProviderAPIKey(provider))
                 }
 
                 VStack(alignment: .leading, spacing: 12) {
                     field("基础地址", text: $baseURL, prompt: "https://api.example.com/v1", mono: true)
                     field("模型", text: $model, prompt: provider.model, mono: true)
-                    SecureField(store.hasProviderAPIKey(provider) ? "已保存，可留空继续使用" : "粘贴接口密钥", text: $apiKey)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12.5))
-                    Text("密钥保存到 macOS 钥匙串；本地代理的临时配置只引用环境变量，不把明文写入 TOML。")
+                    if provider.requiresAPIKey {
+                        SecureField(store.hasProviderAPIKey(provider) ? "已保存，可留空继续使用" : "粘贴接口密钥", text: $apiKey)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12.5))
+                    } else {
+                        Text("该 Provider 不需要 API Key；请确认本地 OpenAI 兼容服务已启动。")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                    Text(provider.requiresAPIKey ? "密钥保存到 macOS 钥匙串；本地代理的临时配置只引用环境变量，不把明文写入 TOML。" : "raytone-proxy 会直接访问本地端点，不发送 Authorization 头。")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -209,7 +215,18 @@ struct ProviderOnboardingView: View {
         baseURL = provider.baseURL
         model = provider.model
         apiKey = ""
-        store.providerOnboardingStatusText = store.hasProviderAPIKey(provider) ? "密钥已就绪，可以测试连接" : "请输入接口密钥后测试连接"
+        if provider.requiresAPIKey {
+            store.providerOnboardingStatusText = store.hasProviderAPIKey(provider) ? "密钥已就绪，可以测试连接" : "请输入接口密钥后测试连接"
+        } else {
+            store.providerOnboardingStatusText = "无需接口密钥，请直接测试本地端点"
+        }
+    }
+
+    private func providerCredentialBadgeText(_ provider: RaytoneProviderConfiguration) -> String {
+        if !provider.requiresAPIKey {
+            return "无需密钥"
+        }
+        return store.hasProviderAPIKey(provider) ? "密钥已保存" : "需要密钥"
     }
 
     private func field(_ title: String, text: Binding<String>, prompt: String, mono: Bool = false) -> some View {

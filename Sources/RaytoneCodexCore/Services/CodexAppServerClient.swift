@@ -4841,6 +4841,7 @@ public actor CodexAppServerClient {
             models: object["models"]?.arrayValue?.compactMap(\.stringValue) ?? [model],
             kind: kind,
             apiKeyEnvironmentName: object["apiKeyEnvironmentName"]?.stringValue ?? object["api_key_environment_name"]?.stringValue,
+            requiresAPIKey: object["requiresAPIKey"]?.boolValue ?? object["requires_api_key"]?.boolValue ?? true,
             reasoning: reasoningSettings(from: object["reasoning"])
         )
     }

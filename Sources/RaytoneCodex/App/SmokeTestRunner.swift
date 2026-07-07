@@ -4747,8 +4747,9 @@ enum SmokeTestRunner {
                 await store.stopAppServerForTesting()
                 try? RaytoneKeychainService.deletePassword(account: providerID)
                 let keychainDeleted = (try? RaytoneKeychainService.readPassword(account: providerID)) == nil
-                let smokeOK = finalOK && keychainDeleted
                 server.stop()
+                let localNoKeyResult = try await runLocalNoKeyProviderSidecarSmoke(workspacePath: workspacePath)
+                let smokeOK = finalOK && keychainDeleted && ((localNoKeyResult["ok"] as? Bool) == true)
 
                 emitJSON([
                     "ok": smokeOK,
@@ -4815,7 +4816,8 @@ enum SmokeTestRunner {
                     "upstreamVerified": upstreamVerified,
                     "upstreamRequestLog": upstreamRequestLog,
                     "codexConfigText": codexConfigText,
-                    "proxyConfigText": proxyConfigText
+                    "proxyConfigText": proxyConfigText,
+                    "localNoKeyProvider": localNoKeyResult
                 ])
                 exit(smokeOK ? 0 : 1)
             } catch {
@@ -4838,6 +4840,123 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    @MainActor
+    private static func runLocalNoKeyProviderSidecarSmoke(workspacePath: String) async throws -> [String: Any] {
+        let providerID = "local-no-key-\(UUID().uuidString.prefix(8))"
+        let model = "local-smoke-model"
+        let secondaryModel = "local-secondary-model"
+        let codexHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexLocalNoKeyProviderSmoke-\(UUID().uuidString)", isDirectory: true)
+        let server = try startMockModelsServer(models: [model, secondaryModel])
+        let store = SessionStore()
+        store.workspacePath = workspacePath
+
+        do {
+            try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+            store.appServerEnvironmentOverridesForTesting = [
+                "CODEX_HOME": codexHome.path
+            ]
+            let baseURL = "\(server.baseURL)/v1"
+            store.providers.append(RaytoneProviderConfiguration(
+                id: providerID,
+                displayName: "Local No-Key Smoke",
+                baseURL: baseURL,
+                model: model,
+                models: [model],
+                kind: .chatCompletionsSidecar,
+                requiresAPIKey: false
+            ))
+
+            await store.saveProviderEndpoint(providerID: providerID, baseURL: baseURL, model: model)
+            let hasProviderCredential = store.providers
+                .first(where: { $0.id == providerID })
+                .map { store.hasProviderAPIKey($0) } ?? false
+            let keychainMissing = (try? RaytoneKeychainService.readPassword(account: providerID)) == nil
+            await store.refreshRuntime()
+            await store.testProviderConnection(providerID: providerID)
+            let directUsageResponse = try await postProviderUsageSmokeRequest(
+                sidecarBaseURL: store.providerConnectionBaseURL,
+                model: model
+            )
+            store.prompt = "请回复 Raytone provider usage smoke OK，验证本地无 Key Provider。"
+            await store.runPrompt()
+            await waitForStoreToSettle(store)
+            await store.refreshSelectedProviderUsage()
+
+            let codexConfigText = (try? String(
+                contentsOfFile: store.providerConnectionCodexConfigPath,
+                encoding: .utf8
+            )) ?? ""
+            let proxyConfigText = (try? String(
+                contentsOfFile: store.providerConnectionProxyConfigPath,
+                encoding: .utf8
+            )) ?? ""
+            let upstreamRequestLog = (try? String(contentsOf: server.requestLogURL, encoding: .utf8)) ?? ""
+            let chatCompletionRequestCount =
+                upstreamRequestLog.components(separatedBy: "\"path\":\"/v1/chat/completions\"").count - 1 +
+                upstreamRequestLog.components(separatedBy: "\"path\":\"\\/v1\\/chat\\/completions\"").count - 1
+            let upstreamModelsVerified =
+                upstreamRequestLog.contains("\"path\":\"/v1/models\"") ||
+                upstreamRequestLog.contains("\"path\":\"\\/v1\\/models\"")
+            let upstreamHadNoAuthorization =
+                upstreamRequestLog.contains("\"authorization\":\"\"") &&
+                !upstreamRequestLog.localizedCaseInsensitiveContains("Bearer ")
+            let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                if case let .agentMessage(text) = item.kind { return text }
+                return nil
+            }
+            let usage = store.providerUsage
+            let ok = hasProviderCredential &&
+                keychainMissing &&
+                store.selectedProviderID == providerID &&
+                store.providerConnectionStatusText.contains("上游已验证") &&
+                store.providerConnectionDetailText.contains("/v1/models") &&
+                store.providerConnectionDetailText.contains("2 个模型") &&
+                store.selectedProvider.models == [model, secondaryModel] &&
+                codexConfigText.contains("model_provider = \"raytone-\(providerID)\"") &&
+                codexConfigText.contains("requires_openai_auth = false") &&
+                proxyConfigText.contains("requires_api_key = false") &&
+                !proxyConfigText.contains("api_key_env") &&
+                directUsageResponse.contains("\"total_tokens\":18") &&
+                agentMessages.contains("Raytone provider usage smoke OK") &&
+                chatCompletionRequestCount >= 2 &&
+                upstreamModelsVerified &&
+                upstreamHadNoAuthorization &&
+                usage?.provider == providerID &&
+                usage?.model == model &&
+                (usage?.successfulResponses ?? 0) >= 2 &&
+                (usage?.totalTokens ?? 0) >= 36
+
+            await store.stopAppServerForTesting()
+            server.stop()
+            return [
+                "ok": ok,
+                "providerID": providerID,
+                "baseURL": baseURL,
+                "model": model,
+                "status": store.providerConnectionStatusText,
+                "detail": store.providerConnectionDetailText,
+                "sidecar": store.sidecarStatusText,
+                "hasProviderCredential": hasProviderCredential,
+                "keychainMissing": keychainMissing,
+                "chatCompletionRequestCount": chatCompletionRequestCount,
+                "upstreamModelsVerified": upstreamModelsVerified,
+                "upstreamHadNoAuthorization": upstreamHadNoAuthorization,
+                "usageRequests": usage?.requests ?? 0,
+                "usageSuccessfulResponses": usage?.successfulResponses ?? 0,
+                "usageTotalTokens": usage?.totalTokens ?? 0,
+                "codexConfigPath": store.providerConnectionCodexConfigPath,
+                "proxyConfigPath": store.providerConnectionProxyConfigPath,
+                "upstreamRequestLog": upstreamRequestLog,
+                "proxyConfigText": proxyConfigText
+            ]
+        } catch {
+            await store.stopAppServerForTesting()
+            server.stop()
+            throw error
+        }
     }
 
     private static func runProviderOnboardingSmoke() {

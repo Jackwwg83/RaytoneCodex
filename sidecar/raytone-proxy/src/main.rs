@@ -137,6 +137,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         "provider": state.runtime.provider.id,
         "model": state.runtime.model,
         "hasApiKey": state.runtime.api_key.is_some(),
+        "requiresApiKey": state.runtime.requires_api_key,
         "baseUrl": state.runtime.base_url,
     }))
 }
@@ -169,18 +170,19 @@ async fn upstream_health(State(state): State<AppState>) -> Response {
 }
 
 async fn check_upstream_models(state: &AppState) -> Result<Value, ProxyError> {
-    let Some(api_key) = state.runtime.api_key.as_deref() else {
+    if state.runtime.requires_api_key && state.runtime.api_key.is_none() {
         return Err(ProxyError::AuthError(format!(
             "provider '{}' has no API key",
             state.runtime.provider.id
         )));
-    };
+    }
 
     let models_url = build_upstream_models_url(&state.runtime.base_url);
-    let upstream = state
-        .client
-        .get(&models_url)
-        .bearer_auth(api_key)
+    let mut request = state.client.get(&models_url);
+    if let Some(api_key) = state.runtime.api_key.as_deref() {
+        request = request.bearer_auth(api_key);
+    }
+    let upstream = request
         .send()
         .await
         .map_err(|error| ProxyError::ForwardFailed(error.to_string()))?;
@@ -249,7 +251,7 @@ async fn forward_responses(
     }
     record_usage_request(&state.usage).await;
 
-    let Some(api_key) = state.runtime.api_key.as_deref() else {
+    if state.runtime.requires_api_key && state.runtime.api_key.is_none() {
         record_usage_failure(
             &state.usage,
             format!("provider '{}' has no API key", state.runtime.provider.id),
@@ -259,7 +261,7 @@ async fn forward_responses(
             "provider '{}' has no API key",
             state.runtime.provider.id
         )));
-    };
+    }
 
     let restored = state.history.enrich_request(body).await;
     if restored > 0 {
@@ -274,14 +276,14 @@ async fn forward_responses(
     apply_codex_chat_upstream_model(&state.runtime.provider, &mut chat_body);
 
     let upstream_url = build_upstream_url(&state.runtime.base_url, "chat/completions");
-    let upstream = match state
+    let mut request = state
         .client
         .post(upstream_url)
-        .bearer_auth(api_key)
-        .json(&chat_body)
-        .send()
-        .await
-    {
+        .json(&chat_body);
+    if let Some(api_key) = state.runtime.api_key.as_deref() {
+        request = request.bearer_auth(api_key);
+    }
+    let upstream = match request.send().await {
         Ok(upstream) => upstream,
         Err(error) => {
             let message = error.to_string();
