@@ -240,6 +240,7 @@ page_runtime_tokens = {
         "skills/list",
         "plugin/read",
         "plugin/install",
+        "plugin/uninstall",
         "plugin/share/save",
         "plugin/share/checkout",
         "skills/config/write",

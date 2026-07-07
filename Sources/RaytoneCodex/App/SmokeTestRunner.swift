@@ -3340,13 +3340,33 @@ enum SmokeTestRunner {
                 let opened = result.appsNeedingAuth.first.map {
                     store.openPluginInstallAuthURL($0, openExternal: false)
                 } ?? false
-                let integrationOK = store.runtimeSnapshot.executable != nil &&
+                let installStatusAfterAuth = store.runtimeCatalogStatusText
+                let installedManifestExistsAfterInstall = fileManager.fileExists(atPath: installedManifestURL.path)
+                let installIntegrationOK = store.runtimeSnapshot.executable != nil &&
                     !installedBefore &&
                     refreshedPlugin?.installed == true &&
                     liveResult?.authPolicy == "ON_USE" &&
                     liveResult?.appsNeedingAuth.isEmpty == true &&
-                    fileManager.fileExists(atPath: installedManifestURL.path) &&
-                    store.runtimeCatalogStatusText.contains("打开 alpha 授权链接")
+                    installedManifestExistsAfterInstall &&
+                    installStatusAfterAuth.contains("打开 alpha 授权链接")
+                var uninstalledAfter = false
+                var uninstallStatus = "未执行卸载"
+                var installedManifestExistsAfterUninstall = installedManifestExistsAfterInstall
+                if let refreshedPlugin {
+                    fputs("plugin-install-response-smoke: togglePluginInstallation uninstall\n", stderr)
+                    await store.togglePluginInstallation(refreshedPlugin)
+                    let afterUninstallPlugin = store.runtimePlugins.first {
+                        $0.name == pluginName && $0.marketplaceName == marketplaceName
+                    }
+                    uninstalledAfter = afterUninstallPlugin?.installed == false
+                    uninstallStatus = store.runtimeCatalogStatusText
+                    installedManifestExistsAfterUninstall = fileManager.fileExists(atPath: installedManifestURL.path)
+                }
+                let uninstallIntegrationOK = uninstalledAfter &&
+                    store.runtimePluginInstallResult == nil &&
+                    !installedManifestExistsAfterUninstall &&
+                    uninstallStatus.hasPrefix("plugin/uninstall")
+                let integrationOK = installIntegrationOK && uninstallIntegrationOK
                 let ok = parseOK &&
                     integrationOK &&
                     opened &&
@@ -3370,8 +3390,12 @@ enum SmokeTestRunner {
                     "liveInstallResult": pluginInstallPayload(liveResult),
                     "installedBefore": installedBefore,
                     "installedAfter": refreshedPlugin?.installed ?? false,
+                    "uninstalledAfter": uninstalledAfter,
                     "installedManifest": installedManifestURL.path,
-                    "installedManifestExists": fileManager.fileExists(atPath: installedManifestURL.path),
+                    "installedManifestExistsAfterInstall": installedManifestExistsAfterInstall,
+                    "installedManifestExistsAfterUninstall": installedManifestExistsAfterUninstall,
+                    "installStatusAfterAuth": installStatusAfterAuth,
+                    "uninstallStatus": uninstallStatus,
                     "openedAuthURL": opened,
                     "lastOpenedRuntimeAppInstallURL": store.lastOpenedRuntimeAppInstallURL,
                     "status": store.runtimeCatalogStatusText,
