@@ -616,6 +616,7 @@ plugin_skill_dynamic_runtime_tokens = [
     "CodexRuntimeScaffoldResult",
     "togglePluginInstallation",
     "runtimePluginInstallResult",
+    "useFeaturedPluginInComposer",
     "openPluginInstallAuthURL",
     "PluginInstallResponse",
     "pluginInstallResult(from:",
@@ -750,6 +751,7 @@ for route, tokens in route_tokens.items():
 page_runtime_tokens = {
     "plugins page": [
         "refreshRuntimeCatalog",
+        "useFeaturedPluginInComposer",
         "plugin/list",
         "skills/list",
         "plugin/read",

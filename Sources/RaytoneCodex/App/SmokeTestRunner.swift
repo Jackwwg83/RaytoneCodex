@@ -2729,6 +2729,11 @@ enum SmokeTestRunner {
                     workspaceURL: workspaceURL
                 )
                 let remoteSkillOK = remoteSkillSmoke["remoteSkillOK"] as? Bool == true
+                let featuredFallbackSmoke = await runFeaturedPluginFallbackSmoke(
+                    rootURL: rootURL,
+                    workspaceURL: workspaceURL
+                )
+                let featuredFallbackOK = featuredFallbackSmoke["featuredFallbackOK"] as? Bool == true
                 let ok = store.runtimeSnapshot.executable != nil &&
                     plugin.installed &&
                     plugin.enabled &&
@@ -2747,7 +2752,8 @@ enum SmokeTestRunner {
                     trialPrompt.contains("MCP：demo") &&
                     trialPrompt.contains("钩子：preToolUse") &&
                     trialMentionPath == plugin.mentionPath &&
-                    remoteSkillOK
+                    remoteSkillOK &&
+                    featuredFallbackOK
 
                 await store.stopAppServerForTesting()
                 var payload: [String: Any] = [
@@ -2789,6 +2795,7 @@ enum SmokeTestRunner {
                     } ?? []
                 ]
                 payload["remoteSkillSmoke"] = remoteSkillSmoke
+                payload["featuredFallbackSmoke"] = featuredFallbackSmoke
                 emitJSON(payload)
                 exit(ok ? 0 : 1)
             } catch {
@@ -2892,6 +2899,62 @@ enum SmokeTestRunner {
                 "remoteSkillOK": false,
                 "requestLog": logURL.path,
                 "error": error.localizedDescription
+            ]
+        }
+    }
+
+    @MainActor
+    private static func runFeaturedPluginFallbackSmoke(
+        rootURL: URL,
+        workspaceURL: URL
+    ) async -> [String: Any] {
+        let scriptURL = rootURL.appendingPathComponent("fake-featured-plugin-codex")
+        let logURL = rootURL.appendingPathComponent("featured-plugin-requests.jsonl")
+
+        do {
+            try fakeMarketplaceAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+            let store = SessionStore()
+            store.workspacePath = workspaceURL.path
+            store.runtimeSnapshot = CodexRuntimeSnapshot(
+                executable: CodexExecutable(url: scriptURL, source: .environment),
+                version: "fake-featured-plugin"
+            )
+            store.appServerEnvironmentOverridesForTesting = [
+                "RAYTONE_MARKETPLACE_LOG": logURL.path
+            ]
+
+            let usedPlugin = await store.useFeaturedPluginInComposer()
+            let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+            let prompt = store.prompt
+            let featuredFallbackOK = !usedPlugin &&
+                store.route == .thread &&
+                store.toolPanel == .launcher &&
+                store.runtimePlugins.isEmpty &&
+                prompt.contains("plugin/list 返回 0 个插件") &&
+                prompt.contains("skills/list 返回 0 个技能") &&
+                store.runtimeCatalogStatusText.contains("plugin/list + skills/list") &&
+                logText.contains(#""method":"plugin/list""#) &&
+                logText.contains(#""method":"plugin/share/list""#) &&
+                logText.contains(#""method":"skills/list""#)
+
+            await store.stopAppServerForTesting()
+            return [
+                "featuredFallbackOK": featuredFallbackOK,
+                "usedPlugin": usedPlugin,
+                "route": "\(store.route)",
+                "toolPanel": "\(store.toolPanel)",
+                "status": store.runtimeCatalogStatusText,
+                "promptPreview": String(prompt.prefix(700)),
+                "requestLog": logURL.path,
+                "requestLogPreview": String(logText.prefix(1600))
+            ]
+        } catch {
+            return [
+                "featuredFallbackOK": false,
+                "error": error.localizedDescription,
+                "requestLog": logURL.path
             ]
         }
     }

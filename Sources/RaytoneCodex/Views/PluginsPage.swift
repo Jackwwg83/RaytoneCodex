@@ -336,11 +336,7 @@ struct PluginsPage: View {
                 .shadow(color: Theme.border.opacity(0.28), radius: 16, x: 0, y: 8)
 
                 Button("在对话中试用") {
-                    if let plugin = store.runtimePlugins.first(where: { $0.installed && $0.enabled }) {
-                        Task { await store.usePluginInComposer(plugin) }
-                    } else {
-                        store.route = .thread
-                    }
+                    Task { await store.useFeaturedPluginInComposer() }
                 }
                 .buttonStyle(ChipButtonStyle(prominent: true))
             }

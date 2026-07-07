@@ -6810,6 +6810,44 @@ final class SessionStore: ObservableObject {
         return detail != nil
     }
 
+    @discardableResult
+    func useFeaturedPluginInComposer() async -> Bool {
+        if runtimePlugins.isEmpty && runtimeSkills.isEmpty {
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+        }
+
+        if let plugin = runtimePlugins.first(where: { $0.installed && $0.enabled })
+            ?? runtimePlugins.first(where: \.enabled)
+            ?? runtimePlugins.first {
+            return await usePluginInComposer(plugin)
+        }
+
+        let skillSummary = runtimeSkills.prefix(4)
+            .map { "\($0.displayName)（\($0.enabled ? "启用" : "停用")）" }
+            .joined(separator: "、")
+        let errorSummary = runtimeCatalogErrors.prefix(3).joined(separator: "；")
+        var lines = [
+            "请基于当前 Codex app-server 插件运行时状态，帮我为这个项目安装或创建一个可用插件。",
+            "",
+            "运行时来源：plugin/list 返回 0 个插件；plugin/share/list 返回 \(runtimeSharedPluginCount) 个共享插件；skills/list 返回 \(runtimeSkills.count) 个技能。",
+            "当前工作区：\(workspacePath)"
+        ]
+        if !skillSummary.isEmpty {
+            lines.append("已发现技能：\(skillSummary)")
+        }
+        if !errorSummary.isEmpty {
+            lines.append("运行时提示：\(errorSummary)")
+        }
+        lines.append("请先读取当前仓库结构和 Codex 插件/技能规范，再给出最小可验证方案；如果需要写入文件，说明将调用的路径、命令和回滚方法。")
+
+        prompt = lines.joined(separator: "\n")
+        route = .thread
+        toolPanel = .launcher
+        runtimePluginDetailStatusText = "plugin/list + skills/list：未发现可试用插件，已准备创建/安装插件请求"
+        runtimeCatalogStatusText = runtimePluginDetailStatusText
+        return false
+    }
+
     private static func pluginTrialPrompt(for plugin: CodexRuntimePlugin, detail: CodexRuntimePluginDetail?) -> String {
         let activePlugin = detail?.plugin ?? plugin
         var lines = [
