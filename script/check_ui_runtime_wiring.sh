@@ -352,6 +352,7 @@ permission_runtime_tokens = [
     "saveRuntimeSandboxMode",
     "saveRuntimeApprovalsReviewer",
     "saveRuntimeDefaultPermissions",
+    "saveRuntimePersonality",
     "writeConfigValue",
     "approval_policy",
     "approvals_reviewer",

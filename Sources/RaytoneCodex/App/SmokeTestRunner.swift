@@ -7218,7 +7218,7 @@ enum SmokeTestRunner {
     private static func runPersonalitySmoke() {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
-        Task {
+        Task { @MainActor in
             let service = CodexCLIService()
             let runtime = await service.inspectRuntime()
             guard let executable = runtime.executable else {
@@ -7285,7 +7285,9 @@ enum SmokeTestRunner {
                 eventTask.cancel()
                 await client.stop()
 
-                let ok = notification["personality"] == CodexPersonality.pragmatic.rawValue
+                let storeEvidence = await runPersonalityStoreSmoke(workspacePath: workspacePath)
+                let storeOK = storeEvidence["ok"] as? Bool == true
+                let ok = notification["personality"] == CodexPersonality.pragmatic.rawValue && storeOK
                 emitJSON([
                     "ok": ok,
                     "runtimeSource": runtime.executable?.source.rawValue ?? "none",
@@ -7296,7 +7298,8 @@ enum SmokeTestRunner {
                     "threadID": serverThread.id,
                     "requestedInitialPersonality": CodexPersonality.friendly.rawValue,
                     "requestedUpdatedPersonality": CodexPersonality.pragmatic.rawValue,
-                    "notification": notification
+                    "notification": notification,
+                    "store": storeEvidence
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -7404,6 +7407,102 @@ enum SmokeTestRunner {
         }
 
         dispatchMain()
+    }
+
+    @MainActor
+    private static func runPersonalityStoreSmoke(workspacePath: String) async -> [String: Any] {
+        let fileManager = FileManager.default
+        let rootURL = fileManager.temporaryDirectory
+            .appendingPathComponent("RaytoneCodexPersonalityStoreSmoke-\(UUID().uuidString)", isDirectory: true)
+        let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+        let logURL = rootURL.appendingPathComponent("requests.jsonl")
+        let scriptURL = rootURL.appendingPathComponent("fake-codex")
+
+        do {
+            try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+            try "# Personality store smoke\n".write(
+                to: workspaceURL.appendingPathComponent("README.md"),
+                atomically: true,
+                encoding: .utf8
+            )
+            try fakePersonalityStoreAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+            let store = SessionStore()
+            store.workspacePath = workspaceURL.path
+            store.filePanelPath = workspaceURL.path
+            store.runtimeSnapshot = CodexRuntimeSnapshot(
+                executable: CodexExecutable(url: scriptURL, source: .environment),
+                version: "fake-personality-store"
+            )
+            store.appServerEnvironmentOverridesForTesting = [
+                "RAYTONE_PERSONALITY_STORE_LOG": logURL.path
+            ]
+            if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                store.projects[index].path = workspaceURL.path
+                store.projects[index].name = "PersonalityStoreSmoke"
+            }
+
+            store.prompt = "初始化个性化设置 smoke"
+            await store.runPrompt()
+            await waitForStoreToSettle(store)
+
+            let threadID = store.selectedThread.appServerThreadID ?? ""
+            await store.saveRuntimePersonality(.pragmatic)
+
+            let deadline = Date().addingTimeInterval(8)
+            var logText = ""
+            while Date() < deadline {
+                logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                if logText.contains(#""method":"thread/settings/update""#),
+                   logText.contains(#""personality":"pragmatic""#),
+                   logText.contains(#""method":"thread/settings/updated""#),
+                   store.runtimeCatalogStatusText.contains("thread/settings/updated") {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+
+            let settingsRequest = jsonLineObjects(from: logText).first {
+                ($0["method"] as? String) == "thread/settings/update"
+            } ?? [:]
+            let params = settingsRequest["params"] as? [String: Any] ?? [:]
+            let statusText = store.runtimeCatalogStatusText
+            let selectedPersonality = store.selectedThread.personality.rawValue
+            await store.stopAppServerForTesting()
+
+            let ok = threadID == "thread-personality-store" &&
+                params["threadId"] as? String == threadID &&
+                params["personality"] as? String == CodexPersonality.pragmatic.rawValue &&
+                selectedPersonality == CodexPersonality.pragmatic.rawValue &&
+                statusText.contains("thread/settings/updated") &&
+                logText.contains(#""method":"thread/settings/updated""#)
+
+            return [
+                "ok": ok,
+                "requestedWorkspacePath": workspacePath,
+                "workspacePath": workspaceURL.path,
+                "fakeExecutable": scriptURL.path,
+                "requestLog": logURL.path,
+                "threadID": threadID,
+                "requestMethod": settingsRequest["method"] as? String ?? "",
+                "requestThreadID": params["threadId"] as? String ?? "",
+                "requestPersonality": params["personality"] as? String ?? "",
+                "selectedThreadPersonality": selectedPersonality,
+                "statusText": statusText,
+                "requestLogPreview": String(logText.prefix(2200))
+            ]
+        } catch {
+            return [
+                "ok": false,
+                "requestedWorkspacePath": workspacePath,
+                "workspacePath": workspaceURL.path,
+                "fakeExecutable": scriptURL.path,
+                "requestLog": logURL.path,
+                "error": error.localizedDescription
+            ]
+        }
     }
 
     private static func runThreadLifecycleSmoke() {
@@ -14420,6 +14519,116 @@ enum SmokeTestRunner {
                 send_notification("thread/unarchived", {"threadId": "thread-life"})
             elif method == "thread/list":
                 send_result(request_id, thread_list(params))
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakePersonalityStoreAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_PERSONALITY_STORE_LOG")
+        cwd = os.getcwd()
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send(message):
+            sys.stdout.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_result(request_id, result):
+            send({"id": request_id, "result": result})
+
+        def send_error(request_id, message):
+            send({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            })
+
+        def send_notification(method, params=None):
+            payload = {"method": method, "params": params or {}}
+            log({"notification": payload})
+            send(payload)
+
+        def thread_payload():
+            return {
+                "id": "thread-personality-store",
+                "sessionId": "session-personality-store",
+                "name": "个性化设置线程",
+                "preview": "设置页个性化 smoke",
+                "cwd": cwd,
+                "archived": False,
+                "createdAt": 1700000000,
+                "updatedAt": 1700000042,
+                "modelProvider": "mock_provider",
+                "source": {"type": "local"},
+                "gitInfo": {
+                    "branch": "main",
+                    "sha": "abcdef1234567890",
+                    "originUrl": "https://example.invalid/raytone.git",
+                },
+                "memoryMode": "enabled",
+                "status": {"type": "idle"},
+            }
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "thread/start":
+                cwd = params.get("cwd") or cwd
+                send_result(request_id, {
+                    "thread": thread_payload(),
+                    "approvalPolicy": "on-request",
+                    "approvalsReviewer": "user",
+                    "sandbox": "danger-full-access",
+                })
+                send_notification("thread/started", {"thread": thread_payload()})
+            elif method == "turn/start":
+                send_result(request_id, {
+                    "turn": {"id": "turn-personality-store", "status": "inProgress"}
+                })
+                send_notification("item/agent_message/delta", {
+                    "threadId": "thread-personality-store",
+                    "turnId": "turn-personality-store",
+                    "itemId": "agent-personality-store",
+                    "delta": "个性化设置 smoke 已初始化",
+                })
+                send_notification("item/agent_message/completed", {
+                    "threadId": "thread-personality-store",
+                    "turnId": "turn-personality-store",
+                    "itemId": "agent-personality-store",
+                    "text": "个性化设置 smoke 已初始化",
+                })
+                send_notification("turn/completed", {
+                    "turn": {"id": "turn-personality-store", "status": "completed"},
+                })
+            elif method == "thread/settings/update":
+                personality = params.get("personality") or ""
+                send_result(request_id, {})
+                send_notification("thread/settings/updated", {
+                    "threadId": params.get("threadId") or "thread-personality-store",
+                    "threadSettings": {
+                        "personality": personality,
+                    },
+                })
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
