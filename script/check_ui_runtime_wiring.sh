@@ -79,6 +79,7 @@ settings_runtime = {
         "--account-auth-smoke-test",
         "--account-api-key-smoke-test",
         "--profile-share-smoke-test",
+        "--feedback-upload-smoke-test",
     ],
     "appearance": ["saveRuntimeAppearance", "--desktop-settings-smoke-test"],
     "configuration": [
@@ -113,8 +114,10 @@ settings_runtime = {
     "usageBilling": [
         "account/usage/read",
         "account/rateLimits/read",
+        "account/sendAddCreditsNudgeEmail",
         "raytone-proxy /usage",
         "refreshUsageBillingRuntime",
+        "--add-credits-nudge-smoke-test",
         "--usage-activity-smoke-test",
         "--provider-sidecar-smoke-test",
     ],
