@@ -289,8 +289,12 @@ tool_panels = {
         "fs/copy",
         "fs/remove",
         "fuzzyFileSearch",
+        "handleFileSystemChanged",
         "addPreviewedFileReferenceToPrompt",
+        "WatchedRuntimeFile.txt",
+        "--tools-smoke-test",
         "--file-search-smoke-test",
+        "--file-change-stream-smoke-test",
     ],
     "terminal": [
         "TerminalToolPanel",
