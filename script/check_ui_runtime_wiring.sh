@@ -818,6 +818,35 @@ if missing_runner_smokes:
         "missing": ", ".join(missing_runner_smokes),
     })
 
+client_request_methods = set(re.findall(r'request\(method: "([^"]+)"', text["client"]))
+runtime_evidence_text = "\n".join(
+    body
+    for name, body in text.items()
+    if name not in {"client", "wiring"}
+)
+client_only_legacy_methods = {
+    "process/writeStdin",
+    "process/kill",
+    "process/resizePty",
+}
+unreferenced_client_methods = sorted(
+    method for method in client_request_methods
+    if method not in runtime_evidence_text
+)
+unreferenced_actionable_methods = [
+    method for method in unreferenced_client_methods
+    if method not in client_only_legacy_methods
+]
+legacy_client_only_methods = [
+    method for method in unreferenced_client_methods
+    if method in client_only_legacy_methods
+]
+if unreferenced_actionable_methods:
+    failures.append({
+        "surface": "app-server UI runtime evidence",
+        "missing": ", ".join(unreferenced_actionable_methods),
+    })
+
 result = {
     "ok": not failures,
     "settingsPanes": len(settings_cases),
@@ -827,6 +856,9 @@ result = {
     "smokeTestFlags": len(smoke_test_flags),
     "wiringSmokeFlags": len(wiring_smoke_flags),
     "runnerSmokeFlags": len(runner_smoke_flags),
+    "clientRuntimeMethods": len(client_request_methods),
+    "unreferencedClientMethods": unreferenced_actionable_methods,
+    "legacyClientOnlyMethods": legacy_client_only_methods,
     "checkedFiles": len(files),
     "failures": failures,
 }
