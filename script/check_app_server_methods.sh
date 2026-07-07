@@ -6,6 +6,8 @@ STABLE_ROOT_SCHEMA="$ROOT_DIR/Schemas/codex_app_server_protocol.schemas.json"
 EXPERIMENTAL_ROOT_SCHEMA="$ROOT_DIR/Schemas/experimental/codex_app_server_protocol.schemas.json"
 STABLE_SCHEMA="$ROOT_DIR/Schemas/codex_app_server_protocol.v2.schemas.json"
 EXPERIMENTAL_SCHEMA="$ROOT_DIR/Schemas/experimental/codex_app_server_protocol.v2.schemas.json"
+STABLE_SPLIT_SCHEMA_DIR="$ROOT_DIR/Schemas/v2"
+EXPERIMENTAL_SPLIT_SCHEMA_DIR="$ROOT_DIR/Schemas/experimental/v2"
 SWIFT_CLIENT="$ROOT_DIR/Sources/RaytoneCodexCore/Services/CodexAppServerClient.swift"
 SESSION_STORE="$ROOT_DIR/Sources/RaytoneCodex/Stores/SessionStore.swift"
 
@@ -78,6 +80,32 @@ while IFS= read -r method; do
   fi
 done <"$tmp_dir/server_requests"
 
+check_split_schema_titles() {
+  local root_schema="$1"
+  local split_dir="$2"
+  local output="$3"
+
+  : >"$output"
+  [[ -d "$split_dir" ]] || return 0
+
+  while IFS= read -r file; do
+    local title
+    title="$(jq -r '.title // empty' "$file")"
+    if [[ -z "$title" ]]; then
+      printf '%s:<missing title>\n' "${file#$ROOT_DIR/}" >>"$output"
+      continue
+    fi
+    if ! jq -e --arg title "$title" '.definitions[$title] != null' "$root_schema" >/dev/null; then
+      printf '%s:%s\n' "${file#$ROOT_DIR/}" "$title" >>"$output"
+    fi
+  done < <(find "$split_dir" -maxdepth 1 -type f -name '*.json' | sort)
+}
+
+check_split_schema_titles "$STABLE_SCHEMA" "$STABLE_SPLIT_SCHEMA_DIR" "$tmp_dir/stale_stable_split_schemas"
+check_split_schema_titles "$EXPERIMENTAL_SCHEMA" "$EXPERIMENTAL_SPLIT_SCHEMA_DIR" "$tmp_dir/stale_experimental_split_schemas"
+cat "$tmp_dir/stale_stable_split_schemas" "$tmp_dir/stale_experimental_split_schemas" \
+  >"$tmp_dir/stale_split_schemas"
+
 stable_count="$(wc -l <"$tmp_dir/stable_methods" | tr -d ' ')"
 experimental_count="$(wc -l <"$tmp_dir/experimental_methods" | tr -d ' ')"
 schema_count="$(wc -l <"$tmp_dir/allowed_methods" | tr -d ' ')"
@@ -88,6 +116,7 @@ notification_count="$(wc -l <"$tmp_dir/server_notifications" | tr -d ' ')"
 unhandled_notification_count="$(wc -l <"$tmp_dir/unhandled_notifications" | tr -d ' ')"
 server_request_count="$(wc -l <"$tmp_dir/server_requests" | tr -d ' ')"
 unhandled_server_request_count="$(wc -l <"$tmp_dir/unhandled_server_requests" | tr -d ' ')"
+stale_split_schema_count="$(wc -l <"$tmp_dir/stale_split_schemas" | tr -d ' ')"
 
 if [[ "$swift_not_in_schema_count" != "0" ]]; then
   echo "Swift app-server methods missing from generated schemas:" >&2
@@ -105,13 +134,18 @@ if [[ "$unhandled_server_request_count" != "0" ]]; then
   echo "Generated server requests not referenced by SessionStore:" >&2
   cat "$tmp_dir/unhandled_server_requests" >&2
 fi
+if [[ "$stale_split_schema_count" != "0" ]]; then
+  echo "Split schema files not present in matching generated root schema:" >&2
+  cat "$tmp_dir/stale_split_schemas" >&2
+fi
 
 if [[ "$swift_not_in_schema_count" != "0" ||
       "$schema_not_in_swift_count" != "0" ||
       "$unhandled_notification_count" != "0" ||
-      "$unhandled_server_request_count" != "0" ]]; then
-  echo "{\"ok\":false,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":$swift_not_in_schema_count,\"schemaNotInSwift\":$schema_not_in_swift_count,\"serverNotifications\":$notification_count,\"unhandledNotifications\":$unhandled_notification_count,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":$unhandled_server_request_count}"
+      "$unhandled_server_request_count" != "0" ||
+      "$stale_split_schema_count" != "0" ]]; then
+  echo "{\"ok\":false,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":$swift_not_in_schema_count,\"schemaNotInSwift\":$schema_not_in_swift_count,\"serverNotifications\":$notification_count,\"unhandledNotifications\":$unhandled_notification_count,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":$unhandled_server_request_count,\"staleSplitSchemas\":$stale_split_schema_count}"
   exit 1
 fi
 
-echo "{\"ok\":true,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":0,\"schemaNotInSwift\":0,\"clientAllowlisted\":1,\"serverNotifications\":$notification_count,\"unhandledNotifications\":0,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":0}"
+echo "{\"ok\":true,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":0,\"schemaNotInSwift\":0,\"clientAllowlisted\":1,\"serverNotifications\":$notification_count,\"unhandledNotifications\":0,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":0,\"staleSplitSchemas\":0}"
