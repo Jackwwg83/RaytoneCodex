@@ -138,7 +138,7 @@ settings_runtime = {
         "--personality-smoke-test",
         "--realtime-voices-smoke-test",
     ],
-    "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")", "commandSurfaceShortcuts", "CommandSurfaceShortcut", "turn/start", "turn/interrupt", "thread/archive", "fs/readDirectory", "command/exec", "config/read", "--command-surface-smoke-test"],
+    "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")", "CommandGroup(replacing: .help)", "commandSurfaceShortcuts", "CommandSurfaceShortcut", "turn/start", "turn/interrupt", "thread/archive", "fs/readDirectory", "command/exec", "config/read", "diagnoseWorkspaceRuntime", "--command-surface-smoke-test"],
     "usageBilling": [
         "account/usage/read",
         "account/rateLimits/read",
@@ -798,7 +798,9 @@ menu_runtime_tokens = [
     "--command-surface-smoke-test",
     "CommandGroup(replacing: .appSettings)",
     "CommandGroup(replacing: .newItem)",
+    "CommandGroup(replacing: .help)",
     "CommandMenu(\"工具\")",
+    "diagnoseWorkspaceRuntime",
     "deleteThread(",
     "thread/name/set",
     "thread/fork",

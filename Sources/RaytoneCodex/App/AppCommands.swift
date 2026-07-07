@@ -90,6 +90,12 @@ struct AppCommands: Commands {
 
         // 帮助
         CommandGroup(replacing: .help) {
+            Button("运行时诊断") {
+                Task { await store.diagnoseWorkspaceRuntime() }
+            }
+
+            Divider()
+
             Button("RaytoneCodex 帮助") {
                 if let url = URL(string: "https://github.com/openai/codex") {
                     NSWorkspace.shared.open(url)

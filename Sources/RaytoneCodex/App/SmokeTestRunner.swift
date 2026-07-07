@@ -10401,6 +10401,16 @@ enum SmokeTestRunner {
                     store.fileEntries.contains { $0.name == "README.md" } &&
                     store.filePanelLastOperationSource.contains("fs/readDirectory")
 
+                await store.diagnoseWorkspaceRuntime()
+                let diagnosticRun = store.terminalRuns.last { run in
+                    run.command.contains("--version") && run.command.contains("app-server --help")
+                }
+                let diagnosticCommandOK = diagnosticRun?.command.contains("app-server --help") == true &&
+                    diagnosticRun?.output.localizedCaseInsensitiveContains("app-server") == true &&
+                    diagnosticRun?.exitCode == 0 &&
+                    diagnosticRun?.status == .succeeded &&
+                    store.runtimeCatalogStatusText.contains("command/exec")
+
                 let deletedThreadID = store.selectedThreadID
                 let threadCountBeforeDelete = store.threads.count
                 let deleteShortcutAvailableBeforeDelete = store.commandSurfaceShortcuts.first { $0.id == "delete-thread" }?.isAvailable == true
@@ -10427,6 +10437,7 @@ enum SmokeTestRunner {
                     terminalCommandOK &&
                     sideChatCommandOK &&
                     fileCommandOK &&
+                    diagnosticCommandOK &&
                     deleteCommandOK
 
                 emitJSON([
@@ -10458,6 +10469,9 @@ enum SmokeTestRunner {
                     "terminalCommandOK": terminalCommandOK,
                     "sideChatCommandOK": sideChatCommandOK,
                     "fileCommandOK": fileCommandOK,
+                    "diagnosticCommandOK": diagnosticCommandOK,
+                    "diagnosticCommand": diagnosticRun?.command ?? "",
+                    "diagnosticOutputPreview": String((diagnosticRun?.output ?? "").prefix(600)),
                     "deleteCommandOK": deleteCommandOK,
                     "route": "\(store.route)",
                     "toolPanel": "\(store.toolPanel)",
@@ -10465,7 +10479,7 @@ enum SmokeTestRunner {
                     "filePanelStatus": store.filePanelStatusText,
                     "filePanelSource": store.filePanelLastOperationSource,
                     "fileEntries": store.fileEntries.map(\.name),
-                    "source": "AppCommands/MenuBarExtra surface -> SessionStore + fs/readDirectory"
+                    "source": "AppCommands/MenuBarExtra surface -> SessionStore + fs/readDirectory + command/exec diagnostics"
                 ])
                 exit(ok ? 0 : 1)
             } catch {
