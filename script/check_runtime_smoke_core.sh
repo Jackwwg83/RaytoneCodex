@@ -21,6 +21,8 @@ default_cases=(
   mcp-tool-smoke
   mcp-login-smoke
   mcp-elicitation-smoke
+  browser-navigation-smoke
+  browser-snapshot-input-smoke
   file-search-smoke
   home-connection-actions-smoke
   side-chat-injection-smoke
