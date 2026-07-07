@@ -15,6 +15,8 @@ default_cases=(
   catalog-smoke
   plugin-read-smoke
   skill-read-smoke
+  automation-smoke
+  automation-hook-smoke
   file-search-smoke
   home-connection-actions-smoke
   side-chat-injection-smoke
