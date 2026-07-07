@@ -399,6 +399,50 @@ composer_runtime_tokens = [
 for token in composer_runtime_tokens:
     require("composer input runtime", token)
 
+event_stream_runtime_tokens = [
+    "ServerEvent",
+    "AsyncStream<ServerEvent>",
+    "handleAppServerEvent",
+    "handleAppServerNotification",
+    "handleAppServerRequest",
+    "serverRequest/resolved",
+    "thread/increment_elicitation",
+    "thread/decrement_elicitation",
+    "process/outputDelta",
+    "process/exited",
+    "item/commandExecution/outputDelta",
+    "item/commandExecution/terminalInteraction",
+    "item/autoApprovalReview/started",
+    "item/autoApprovalReview/completed",
+    "rawResponseItem/completed",
+    "item/plan/delta",
+    "item/reasoning/summaryTextDelta",
+    "item/mcpToolCall/progress",
+    "thread/realtime/transcript/delta",
+    "thread/realtime/outputAudio/delta",
+    "thread/tokenUsage/updated",
+    "mcpServer/elicitation/request",
+    "respondMcpElicitation",
+    "item/tool/requestUserInput",
+    "respondToolUserInput",
+    "account/chatgptAuthTokens/refresh",
+    "attestation/generate",
+    "rejectAppServerRequest",
+    "turn/interrupt",
+    "interruptRunningTurn",
+    "thread/approveGuardianDeniedAction",
+    "approveGuardianDeniedAction",
+    "--app-server-notification-smoke-test",
+    "--process-stream-smoke-test",
+    "--mcp-elicitation-smoke-test",
+    "--tool-user-input-smoke-test",
+    "--auth-attestation-smoke-test",
+    "--guardian-denial-approve-smoke-test",
+    "--interrupt-smoke-test",
+]
+for token in event_stream_runtime_tokens:
+    require("app-server event stream", token)
+
 dynamic_tools = [
     ("raytone_context", "workspace_snapshot", "dynamicToolResponse"),
     ("raytone_context", "list_workspace_files", "dynamicToolFilesResponse"),
