@@ -360,6 +360,45 @@ permission_runtime_tokens = [
 for token in permission_runtime_tokens:
     require("permissions and access mode", token)
 
+composer_runtime_tokens = [
+    "runPromptWithAppServer",
+    "inputMentions(in:",
+    "previewInputMentions",
+    "addFileReferencesToPrompt",
+    "addImageReferencesToPrompt",
+    "chooseImagesForPrompt",
+    "pendingLocalImagePaths",
+    "consumePendingLocalImages",
+    "lastLocalImageInputPreview",
+    '"input": Self.userInputItems(',
+    '"type": .string("mention")',
+    '"type": .string("localImage")',
+    "turn/start",
+    "turn/steer",
+    "review/start",
+    "startReview",
+    "handleSlashCommand",
+    "runSlashShellCommand",
+    "detectedTestCommand",
+    "runCommitMessageGeneration",
+    "runPullRequestSummaryGeneration",
+    "config/batchWrite",
+    "command/exec",
+    "useRuntimeAppInComposer",
+    "useRuntimeAppSnapshotPromptInComposer",
+    "mentionInTurnStart",
+    "snapshotMentionInTurnStart",
+    "--local-image-input-smoke-test",
+    "--mention-smoke-test",
+    "--app-mention-config-smoke-test",
+    "--app-mention-turn-smoke-test",
+    "--file-mention-turn-smoke-test",
+    "--review-smoke-test",
+    "--slash-smoke-test",
+]
+for token in composer_runtime_tokens:
+    require("composer input runtime", token)
+
 dynamic_tools = [
     ("raytone_context", "workspace_snapshot", "dynamicToolResponse"),
     ("raytone_context", "list_workspace_files", "dynamicToolFilesResponse"),
