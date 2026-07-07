@@ -11,6 +11,13 @@ json_escape() {
 default_cases=(
   model-config-smoke
   config-write-smoke
+  reasoning-config-smoke
+  instructions-config-smoke
+  service-tier-smoke
+  memory-settings-smoke
+  desktop-settings-smoke
+  open-target-smoke
+  prevent-sleep-smoke
   access-mode-smoke
   new-thread-permissions-smoke
   default-permissions-smoke
@@ -21,6 +28,9 @@ default_cases=(
   auth-attestation-smoke
   provider-sidecar-smoke
   model-provider-capabilities-smoke
+  model-catalog-smoke
+  provider-onboarding-smoke
+  provider-unauthorized-smoke
   external-agent-config-smoke
   usage-activity-smoke
   account-auth-smoke
@@ -31,6 +41,10 @@ default_cases=(
   add-credits-nudge-smoke
   feedback-upload-smoke
   settings-project-smoke
+  settings-scene-smoke
+  runtime-pages-smoke
+  command-surface-smoke
+  sample-data-gate-smoke
   experimental-features-smoke
   catalog-smoke
   plugin-read-smoke
@@ -43,6 +57,8 @@ default_cases=(
   automation-smoke
   automation-hook-smoke
   hook-notification-smoke
+  app-mention-config-smoke
+  app-list-updated-smoke
   file-change-stream-smoke
   runtime-diagnostics-smoke
   app-server-notification-smoke
@@ -72,12 +88,20 @@ default_cases=(
   thread-metadata-smoke
   thread-memory-mode-smoke
   work-mode-smoke
+  project-switch-smoke
+  workspace-switch-smoke
+  branch-switch-smoke
+  worktree-switch-smoke
   realtime-voices-smoke
   realtime-session-smoke
+  runtime-environment-smoke
+  connection-recovery-smoke
   home-connection-actions-smoke
   remote-control-smoke
   remote-control-mode-smoke
   remote-control-revoke-smoke
+  personality-smoke
+  windows-sandbox-smoke
   side-chat-injection-smoke
   thread-shell-command-smoke
   dynamic-tool-smoke
