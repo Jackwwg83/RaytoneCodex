@@ -143,6 +143,26 @@ struct RaytoneCodexCoreChecks {
             prompt: "Core protocol prompt",
             options: options
         )
+        try await client.spawnProcess(
+            ["/bin/cat"],
+            processHandle: "process-core-check",
+            cwd: workspace,
+            tty: true,
+            streamStdin: true,
+            streamStdoutStderr: true,
+            rows: 24,
+            cols: 80
+        )
+        try await client.writeProcessInput(
+            processHandle: "process-core-check",
+            data: Data("stdin core\n".utf8)
+        )
+        try await client.resizeProcessPty(
+            processHandle: "process-core-check",
+            rows: 40,
+            cols: 120
+        )
+        try await client.killProcess(processHandle: "process-core-check")
         try await Task.sleep(nanoseconds: 200_000_000)
         await client.stop()
 
@@ -157,9 +177,17 @@ struct RaytoneCodexCoreChecks {
         try check(messages.containsMethod("initialized"), "Expected initialized notification")
         let threadStart = try require(messages.firstMessage(method: "thread/start"), "Expected thread/start request")
         let turnStart = try require(messages.firstMessage(method: "turn/start"), "Expected turn/start request")
+        let processSpawn = try require(messages.firstMessage(method: "process/spawn"), "Expected process/spawn request")
+        let processInput = try require(messages.firstMessage(method: "process/writeStdin"), "Expected process/writeStdin request")
+        let processResize = try require(messages.firstMessage(method: "process/resizePty"), "Expected process/resizePty request")
+        let processKill = try require(messages.firstMessage(method: "process/kill"), "Expected process/kill request")
 
         try check(threadStart["jsonrpc"] == nil, "App-server JSONL must not include a jsonrpc field")
         try check(turnStart["jsonrpc"] == nil, "App-server JSONL must not include a jsonrpc field")
+        try check(processSpawn["jsonrpc"] == nil, "App-server JSONL must not include a jsonrpc field")
+        try check(processInput["jsonrpc"] == nil, "App-server JSONL must not include a jsonrpc field")
+        try check(processResize["jsonrpc"] == nil, "App-server JSONL must not include a jsonrpc field")
+        try check(processKill["jsonrpc"] == nil, "App-server JSONL must not include a jsonrpc field")
         let threadParams = try require(threadStart["params"] as? [String: Any], "Expected thread/start params")
         let dynamicTools = try require(threadParams["dynamicTools"] as? [[String: Any]], "Expected dynamic tools")
         try check(
@@ -176,6 +204,34 @@ struct RaytoneCodexCoreChecks {
         try check(sandboxPolicy["type"] as? String == "dangerFullAccess", "Expected app-server sandbox policy")
         let input = try require(turnParams["input"] as? [[String: Any]], "Expected turn input array")
         try check(input.first?["text"] as? String == "Core protocol prompt", "Expected prompt text in turn input")
+
+        let spawnParams = try require(processSpawn["params"] as? [String: Any], "Expected process/spawn params")
+        try check(spawnParams["processHandle"] as? String == "process-core-check", "Expected process handle")
+        try check(spawnParams["cwd"] as? String == workspace.path, "Expected process cwd")
+        try check(spawnParams["tty"] as? Bool == true, "Expected PTY spawn")
+        try check(spawnParams["streamStdin"] as? Bool == true, "Expected streaming stdin")
+        try check(spawnParams["streamStdoutStderr"] as? Bool == true, "Expected streaming stdout/stderr")
+        try check((spawnParams["command"] as? [String]) == ["/bin/cat"], "Expected process command argv")
+        let spawnSize = try require(spawnParams["size"] as? [String: Any], "Expected process PTY size")
+        try check(jsonInt(spawnSize["rows"]) == 24, "Expected initial PTY rows")
+        try check(jsonInt(spawnSize["cols"]) == 80, "Expected initial PTY cols")
+
+        let inputParams = try require(processInput["params"] as? [String: Any], "Expected process/writeStdin params")
+        try check(inputParams["processHandle"] as? String == "process-core-check", "Expected stdin process handle")
+        try check(inputParams["closeStdin"] as? Bool == false, "Expected stdin to remain open")
+        try check(
+            inputParams["deltaBase64"] as? String == Data("stdin core\n".utf8).base64EncodedString(),
+            "Expected base64 stdin payload"
+        )
+
+        let resizeParams = try require(processResize["params"] as? [String: Any], "Expected process/resizePty params")
+        try check(resizeParams["processHandle"] as? String == "process-core-check", "Expected resize process handle")
+        let resizeSize = try require(resizeParams["size"] as? [String: Any], "Expected resize PTY size")
+        try check(jsonInt(resizeSize["rows"]) == 40, "Expected resized PTY rows")
+        try check(jsonInt(resizeSize["cols"]) == 120, "Expected resized PTY cols")
+
+        let killParams = try require(processKill["params"] as? [String: Any], "Expected process/kill params")
+        try check(killParams["processHandle"] as? String == "process-core-check", "Expected killed process handle")
     }
 
     private static func quotesArgumentsWithWhitespace() throws {
@@ -214,6 +270,13 @@ struct RaytoneCodexCoreChecks {
                 }
                 return object
             }
+    }
+
+    private static func jsonInt(_ value: Any?) -> Int? {
+        if let value = value as? Int {
+            return value
+        }
+        return (value as? NSNumber)?.intValue
     }
 
     private static let fakeAppServerScript = """
@@ -266,6 +329,14 @@ with open(log_path, "a", encoding="utf-8") as log:
                 "id": request_id,
                 "result": {"turn": {"id": "turn-core-check", "status": "inProgress"}}
             })
+        elif method == "process/spawn":
+            write({"id": request_id, "result": {"processHandle": "process-core-check"}})
+        elif method == "process/writeStdin":
+            write({"id": request_id, "result": {}})
+        elif method == "process/resizePty":
+            write({"id": request_id, "result": {}})
+        elif method == "process/kill":
+            write({"id": request_id, "result": {}})
         else:
             write({
                 "id": request_id,
