@@ -755,6 +755,9 @@ enum SmokeTestRunner {
         }
         let watchedResult = store.fileEntries.first { $0.path == watchedFileURL.path }
         let statusAfterWatch = store.filePanelStatusText
+        await store.loadFilePanelDirectory(docsDirectory.path)
+        let sourceAfterWatchReplacement = store.filePanelLastOperationSource
+        let statusAfterWatchReplacement = store.filePanelStatusText
 
         store.fileSearchQuery = "NeedleRuntime"
         await store.searchWorkspaceFiles()
@@ -834,7 +837,9 @@ enum SmokeTestRunner {
             mutationPreview?.byteCount == 0 &&
             fileFactUsesRuntimeSource &&
             watchedStatus.contains("已监听") &&
-            watchedResult?.name == "WatchedRuntimeFile.txt"
+            watchedResult?.name == "WatchedRuntimeFile.txt" &&
+            sourceAfterWatchReplacement.contains("fs/unwatch") &&
+            store.fileSearchStatusText.contains("fuzzyFileSearch/sessionStop")
 
         let resultsPayload = store.fileSearchResults.prefix(8).map { result in
             [
@@ -892,6 +897,8 @@ enum SmokeTestRunner {
             "initialFilePanelStatus": watchedStatus,
             "watchedFileObserved": watchedResult?.path ?? "",
             "filePanelStatusAfterWatch": statusAfterWatch,
+            "filePanelStatusAfterWatchReplacement": statusAfterWatchReplacement,
+            "sourceAfterWatchReplacement": sourceAfterWatchReplacement,
             "fileEntriesPreview": Array(store.fileEntries.map(\.name).prefix(12)),
             "searchStatus": store.fileSearchStatusText,
             "resultCount": store.fileSearchResults.count,

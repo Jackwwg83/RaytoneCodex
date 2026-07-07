@@ -2790,6 +2790,7 @@ final class SessionStore: ObservableObject {
             return
         }
 
+        let replacedWatch = filePanelWatchID != nil
         if let oldWatchID = filePanelWatchID {
             try? await client.unwatchFileSystem(watchID: oldWatchID)
         }
@@ -2799,7 +2800,9 @@ final class SessionStore: ObservableObject {
             let watchedPath = try await client.watchFileSystem(path: path, watchID: watchID)
             filePanelWatchID = watchID
             filePanelWatchedPath = watchedPath
-            filePanelLastOperationSource = "fs/readDirectory + fs/watch"
+            filePanelLastOperationSource = replacedWatch
+                ? "fs/readDirectory + fs/unwatch + fs/watch"
+                : "fs/readDirectory + fs/watch"
         } catch {
             filePanelWatchID = nil
             filePanelWatchedPath = nil
@@ -2828,22 +2831,23 @@ final class SessionStore: ObservableObject {
                 try await client.updateFuzzyFileSearchSession(sessionID: sessionID, query: query)
                 fileSearchStatusText = "fuzzyFileSearch/sessionUpdate：等待结果…"
                 let completed = await waitForFuzzyFileSearchSession(sessionID: sessionID, timeout: 8)
-                try? await client.stopFuzzyFileSearchSession(sessionID: sessionID)
+                let stopped = await stopFuzzyFileSearchSessionIfPossible(sessionID: sessionID, client: client)
+                let stopSuffix = stopped ? " + fuzzyFileSearch/sessionStop" : ""
                 ignoredFileSearchSessionIDs.insert(sessionID)
                 activeFileSearchSessionID = nil
                 if completed {
                     fileSearchIsRunning = false
                     fileSearchStatusText = fileSearchResults.isEmpty
-                        ? "fuzzyFileSearch/sessionCompleted：未找到匹配文件"
-                        : "fuzzyFileSearch/sessionCompleted：\(fileSearchResults.count) 个匹配"
+                        ? "fuzzyFileSearch/sessionCompleted\(stopSuffix)：未找到匹配文件"
+                        : "fuzzyFileSearch/sessionCompleted\(stopSuffix)：\(fileSearchResults.count) 个匹配"
                     filePanelLastOperationSource = "fuzzyFileSearch/session"
                     runtimeCatalogStatusText = "\(fileSearchStatusText) · \(sessionID)"
                     return
                 }
                 fileSearchIsRunning = false
                 fileSearchStatusText = fileSearchResults.isEmpty
-                    ? "fuzzyFileSearch/sessionUpdate：等待超时，未收到匹配"
-                    : "fuzzyFileSearch/sessionUpdate：等待超时，保留 \(fileSearchResults.count) 个匹配"
+                    ? "fuzzyFileSearch/sessionUpdate\(stopSuffix)：等待超时，未收到匹配"
+                    : "fuzzyFileSearch/sessionUpdate\(stopSuffix)：等待超时，保留 \(fileSearchResults.count) 个匹配"
                 return
             } catch {
                 ignoredFileSearchSessionIDs.insert(sessionID)
@@ -2899,11 +2903,20 @@ final class SessionStore: ObservableObject {
         fileSearchIsRunning = false
     }
 
-    private func stopFuzzyFileSearchSessionIfPossible(sessionID: String) async {
-        guard let client = appServerClient else {
-            return
+    @discardableResult
+    private func stopFuzzyFileSearchSessionIfPossible(
+        sessionID: String,
+        client existingClient: CodexAppServerClient? = nil
+    ) async -> Bool {
+        guard let client = existingClient ?? appServerClient else {
+            return false
         }
-        try? await client.stopFuzzyFileSearchSession(sessionID: sessionID)
+        do {
+            try await client.stopFuzzyFileSearchSession(sessionID: sessionID)
+            return true
+        } catch {
+            return false
+        }
     }
 
     func openParentDirectoryInFilePanel() async {
