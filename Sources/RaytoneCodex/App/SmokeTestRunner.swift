@@ -10349,6 +10349,7 @@ enum SmokeTestRunner {
                 let initialDeleteUnavailable = initialShortcuts.first { $0.id == "delete-thread" }?.isAvailable == false
                 let initialRuntimeSourcesOK = initialShortcuts.contains { $0.id == "files" && $0.source == "fs/readDirectory" } &&
                     initialShortcuts.contains { $0.id == "terminal" && $0.source == "command/exec" } &&
+                    initialShortcuts.contains { $0.id == "runtime-diagnostics" && $0.source == "command/exec" } &&
                     initialShortcuts.contains { $0.id == "settings" && $0.source.contains("config/read") }
 
                 store.prompt = "Raytone command surface smoke"
@@ -10427,6 +10428,12 @@ enum SmokeTestRunner {
                     promptReadyShortcutOK &&
                     runningShortcutOK &&
                     deleteShortcutEnabledAfterThreadGrowth
+                let diagnosticsShortcutVisible = initialShortcuts.contains {
+                    $0.id == "runtime-diagnostics" &&
+                        $0.title == "运行时诊断" &&
+                        $0.shortcut == "帮助菜单" &&
+                        $0.source == "command/exec"
+                }
 
                 let ok = commandSurfaceSnapshotOK &&
                     settingsCommandOK &&
@@ -10437,6 +10444,7 @@ enum SmokeTestRunner {
                     terminalCommandOK &&
                     sideChatCommandOK &&
                     fileCommandOK &&
+                    diagnosticsShortcutVisible &&
                     diagnosticCommandOK &&
                     deleteCommandOK
 
@@ -10448,6 +10456,7 @@ enum SmokeTestRunner {
                     "initialRunUnavailable": initialRunUnavailable,
                     "initialDeleteUnavailable": initialDeleteUnavailable,
                     "initialRuntimeSourcesOK": initialRuntimeSourcesOK,
+                    "diagnosticsShortcutVisible": diagnosticsShortcutVisible,
                     "promptReadyShortcutOK": promptReadyShortcutOK,
                     "runningShortcutOK": runningShortcutOK,
                     "deleteShortcutAvailableBeforeDelete": deleteShortcutAvailableBeforeDelete,

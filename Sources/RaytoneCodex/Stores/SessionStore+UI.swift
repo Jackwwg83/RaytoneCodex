@@ -335,6 +335,14 @@ extension SessionStore {
                 isAvailable: runtimeDependencyReady
             ),
             CommandSurfaceShortcut(
+                id: "runtime-diagnostics",
+                title: "运行时诊断",
+                shortcut: "帮助菜单",
+                detail: "通过终端面板运行当前 Codex CLI 的版本和 app-server 帮助诊断",
+                source: "command/exec",
+                isAvailable: runtimeDependencyReady
+            ),
+            CommandSurfaceShortcut(
                 id: "settings",
                 title: "设置",
                 shortcut: "⌘,",
