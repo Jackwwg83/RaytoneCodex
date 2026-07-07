@@ -16,6 +16,8 @@ default_cases=(
   default-permissions-smoke
   auto-review-smoke
   provider-sidecar-smoke
+  model-provider-capabilities-smoke
+  external-agent-config-smoke
   usage-activity-smoke
   account-auth-smoke
   account-device-code-smoke
@@ -24,6 +26,8 @@ default_cases=(
   profile-share-smoke
   add-credits-nudge-smoke
   feedback-upload-smoke
+  settings-project-smoke
+  experimental-features-smoke
   catalog-smoke
   plugin-read-smoke
   skill-read-smoke
@@ -34,6 +38,7 @@ default_cases=(
   mcp-login-smoke
   mcp-elicitation-smoke
   browser-navigation-smoke
+  browser-clear-data-smoke
   browser-snapshot-input-smoke
   file-search-smoke
   local-image-input-smoke
@@ -43,7 +48,14 @@ default_cases=(
   review-smoke
   terminal-stream-smoke
   terminal-resize-smoke
+  thread-memory-mode-smoke
+  work-mode-smoke
+  realtime-voices-smoke
+  realtime-session-smoke
   home-connection-actions-smoke
+  remote-control-smoke
+  remote-control-mode-smoke
+  remote-control-revoke-smoke
   side-chat-injection-smoke
   thread-shell-command-smoke
   dynamic-tool-smoke
