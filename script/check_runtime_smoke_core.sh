@@ -10,6 +10,8 @@ json_escape() {
 
 default_cases=(
   model-config-smoke
+  provider-sidecar-smoke
+  usage-activity-smoke
   file-search-smoke
   home-connection-actions-smoke
   side-chat-injection-smoke
