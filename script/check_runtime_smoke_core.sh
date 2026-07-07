@@ -17,6 +17,10 @@ default_cases=(
   skill-read-smoke
   automation-smoke
   automation-hook-smoke
+  mcp-resource-smoke
+  mcp-tool-smoke
+  mcp-login-smoke
+  mcp-elicitation-smoke
   file-search-smoke
   home-connection-actions-smoke
   side-chat-injection-smoke
