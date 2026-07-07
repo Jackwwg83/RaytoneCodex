@@ -787,6 +787,16 @@ sample_data_guard = [
 for token in sample_data_guard:
     require("sample data gating", token)
 
+functional_smoke_report_tokens = [
+    "raytonecodex-functional-smoke.json",
+    '"reportPath"',
+    '"caseCount"',
+    '"stdout"',
+    '"stderr"',
+]
+for token in functional_smoke_report_tokens:
+    require("functional smoke evidence report", token, text["runner"])
+
 empty_button_matches = re.findall(r"Button\s*(?:\([^)]*\))?\s*\{\s*\}", all_text)
 if empty_button_matches:
     failures.append({"surface": "interactive controls", "missing": f"found {len(empty_button_matches)} empty Button closures"})
