@@ -10270,6 +10270,24 @@ enum SmokeTestRunner {
                     "CODEX_HOME": codexHomeURL.path
                 ]
 
+                let initialShortcuts = store.commandSurfaceShortcuts
+                let initialRunUnavailable = initialShortcuts.first { $0.id == "run" }?.isAvailable == false
+                let initialDeleteUnavailable = initialShortcuts.first { $0.id == "delete-thread" }?.isAvailable == false
+                let initialRuntimeSourcesOK = initialShortcuts.contains { $0.id == "files" && $0.source == "fs/readDirectory" } &&
+                    initialShortcuts.contains { $0.id == "terminal" && $0.source == "command/exec" } &&
+                    initialShortcuts.contains { $0.id == "settings" && $0.source.contains("config/read") }
+
+                store.prompt = "Raytone command surface smoke"
+                let promptReadyShortcutOK = store.commandSurfaceShortcuts.first { $0.id == "run" }.map {
+                    $0.isAvailable && $0.source == "turn/start"
+                } ?? false
+                store.isRunning = true
+                let runningShortcutOK = store.commandSurfaceShortcuts.first { $0.id == "run" }.map {
+                    $0.isAvailable && $0.title == "停止" && $0.source == "turn/interrupt"
+                } ?? false
+                store.isRunning = false
+                store.prompt = ""
+
                 store.route = .settings
                 store.settingsPane = .general
                 let settingsCommandOK = store.route == .settings && store.settingsPane == .general
@@ -10311,14 +10329,23 @@ enum SmokeTestRunner {
 
                 let deletedThreadID = store.selectedThreadID
                 let threadCountBeforeDelete = store.threads.count
+                let deleteShortcutAvailableBeforeDelete = store.commandSurfaceShortcuts.first { $0.id == "delete-thread" }?.isAvailable == true
                 store.deleteThread(deletedThreadID)
                 let deleteCommandOK = threadCountBeforeDelete > store.threads.count &&
                     !store.threads.contains { $0.id == deletedThreadID }
+                let deleteShortcutEnabledAfterThreadGrowth = initialDeleteUnavailable && deleteShortcutAvailableBeforeDelete
 
                 await store.stopAppServerForTesting()
                 try? fileManager.removeItem(at: temporaryRoot)
 
-                let ok = settingsCommandOK &&
+                let commandSurfaceSnapshotOK = initialRunUnavailable &&
+                    initialRuntimeSourcesOK &&
+                    promptReadyShortcutOK &&
+                    runningShortcutOK &&
+                    deleteShortcutEnabledAfterThreadGrowth
+
+                let ok = commandSurfaceSnapshotOK &&
+                    settingsCommandOK &&
                     newConversationOK &&
                     projectNewThreadOK &&
                     inspectorCommandOK &&
@@ -10332,6 +10359,23 @@ enum SmokeTestRunner {
                     "ok": ok,
                     "workspacePath": workspaceURL.path,
                     "codexHomePath": codexHomeURL.path,
+                    "commandSurfaceSnapshotOK": commandSurfaceSnapshotOK,
+                    "initialRunUnavailable": initialRunUnavailable,
+                    "initialDeleteUnavailable": initialDeleteUnavailable,
+                    "initialRuntimeSourcesOK": initialRuntimeSourcesOK,
+                    "promptReadyShortcutOK": promptReadyShortcutOK,
+                    "runningShortcutOK": runningShortcutOK,
+                    "deleteShortcutAvailableBeforeDelete": deleteShortcutAvailableBeforeDelete,
+                    "deleteShortcutEnabledAfterThreadGrowth": deleteShortcutEnabledAfterThreadGrowth,
+                    "commandSurfaceShortcuts": initialShortcuts.map { shortcut in
+                        [
+                            "id": shortcut.id,
+                            "title": shortcut.title,
+                            "shortcut": shortcut.shortcut,
+                            "source": shortcut.source,
+                            "isAvailable": shortcut.isAvailable
+                        ] as [String: Any]
+                    },
                     "settingsCommandOK": settingsCommandOK,
                     "newConversationOK": newConversationOK,
                     "projectNewThreadOK": projectNewThreadOK,

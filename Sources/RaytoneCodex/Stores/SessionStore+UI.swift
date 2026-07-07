@@ -264,6 +264,87 @@ extension SessionStore {
         pendingChanges.reduce(0) { $0 + $1.deletions }
     }
 
+    var commandSurfaceShortcuts: [CommandSurfaceShortcut] {
+        let promptReady = !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let canRunOrStop = isRunning || promptReady
+        let runSource = isRunning ? "turn/interrupt" : "turn/start"
+
+        return [
+            CommandSurfaceShortcut(
+                id: "new-thread",
+                title: "新建对话",
+                shortcut: "⌘N",
+                detail: "创建本地线程；第一次发送时调用 thread/start",
+                source: "SessionStore.resetThread + thread/start",
+                isAvailable: true
+            ),
+            CommandSurfaceShortcut(
+                id: "run",
+                title: isRunning ? "停止" : "运行",
+                shortcut: "⌘↩",
+                detail: isRunning ? "中断当前 Codex turn" : "发送 Composer 内容到 Codex app-server",
+                source: runSource,
+                isAvailable: canRunOrStop
+            ),
+            CommandSurfaceShortcut(
+                id: "refresh-runtime",
+                title: "刷新运行时",
+                shortcut: "⌘R",
+                detail: "重新检测内置 Codex CLI 并刷新 app-server 状态",
+                source: "codex --version + app-server initialize",
+                isAvailable: true
+            ),
+            CommandSurfaceShortcut(
+                id: "delete-thread",
+                title: "删除对话",
+                shortcut: "⌘⌫",
+                detail: "归档当前 Codex 线程并从本地列表移除",
+                source: "thread/archive",
+                isAvailable: threads.count > 1
+            ),
+            CommandSurfaceShortcut(
+                id: "toggle-tools",
+                title: "切换工具面板",
+                shortcut: "⌥⌘I",
+                detail: "显示或隐藏右侧工具面板",
+                source: "SessionStore.showInspector",
+                isAvailable: true
+            ),
+            CommandSurfaceShortcut(
+                id: "files",
+                title: "文件",
+                shortcut: "⌘P",
+                detail: "打开文件工具并读取工作区目录",
+                source: "fs/readDirectory",
+                isAvailable: runtimeDependencyReady
+            ),
+            CommandSurfaceShortcut(
+                id: "browser",
+                title: "浏览器",
+                shortcut: "⌘T",
+                detail: "打开内置 WKWebView 浏览器面板",
+                source: "WKWebView + fs/getMetadata",
+                isAvailable: true
+            ),
+            CommandSurfaceShortcut(
+                id: "terminal",
+                title: "终端",
+                shortcut: "⌃`",
+                detail: "打开终端面板，命令通过 Codex app-server 执行",
+                source: "command/exec",
+                isAvailable: runtimeDependencyReady
+            ),
+            CommandSurfaceShortcut(
+                id: "settings",
+                title: "设置",
+                shortcut: "⌘,",
+                detail: "进入设置页并读取当前运行时配置",
+                source: "SettingsRouteView + config/read",
+                isAvailable: true
+            )
+        ]
+    }
+
     /// Command executions in the selected thread.
     var commandRuns: [CommandRun] {
         selectedThread.items.compactMap {

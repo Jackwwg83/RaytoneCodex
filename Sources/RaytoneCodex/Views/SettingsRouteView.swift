@@ -2174,17 +2174,13 @@ struct SettingsRouteView: View {
 
     private var keyboardShortcutsPane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            paneTitle("键盘快捷键", subtitle: "来自 RaytoneCodex 原生命令菜单，和顶部菜单保持一致")
+            paneTitle("键盘快捷键", subtitle: "来自 RaytoneCodex 原生命令菜单；状态和背后的 Codex runtime 路径实时同步")
 
             SettingsCard {
                 VStack(alignment: .leading, spacing: 12) {
-                    shortcutRow("新建对话", "⌘N", "创建本地线程并切回主对话")
-                    shortcutRow("运行", "⌘↩", "发送 Composer 内容到 Codex app-server")
-                    shortcutRow("刷新运行时", "⌘R", "重新检测内置 Codex CLI")
-                    shortcutRow("删除对话", "⌘⌫", "归档当前 Codex 线程并从列表移除")
-                    shortcutRow("切换工具面板", "⌥⌘I", "显示或隐藏右侧工具面板")
-                    shortcutRow("文件 / 浏览器 / 终端", "⌘P / ⌘T / ⌃`", "打开对应工具")
-                    shortcutRow("设置", "⌘,", "进入设置页")
+                    ForEach(store.commandSurfaceShortcuts) { shortcut in
+                        shortcutRow(shortcut)
+                    }
                 }
             }
         }
@@ -3194,23 +3190,31 @@ struct SettingsRouteView: View {
         }
     }
 
-    private func shortcutRow(_ title: String, _ shortcut: String, _ detail: String) -> some View {
+    private func shortcutRow(_ shortcut: CommandSurfaceShortcut) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(shortcut.title)
                     .font(.system(size: 12.5, weight: .semibold))
-                Text(detail)
+                Text(shortcut.detail)
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textSecondary)
+                Text("来源：\(shortcut.source)")
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer(minLength: 0)
-            Text(shortcut)
-                .font(Theme.mono(12))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                .background(Theme.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            HStack(spacing: 8) {
+                statusBadge(shortcut.isAvailable ? "可用" : "暂不可用", ok: shortcut.isAvailable)
+                Text(shortcut.shortcut)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
         }
     }
 

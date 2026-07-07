@@ -138,7 +138,7 @@ settings_runtime = {
         "--personality-smoke-test",
         "--realtime-voices-smoke-test",
     ],
-    "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")", "--command-surface-smoke-test"],
+    "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")", "commandSurfaceShortcuts", "CommandSurfaceShortcut", "turn/start", "turn/interrupt", "thread/archive", "fs/readDirectory", "command/exec", "config/read", "--command-surface-smoke-test"],
     "usageBilling": [
         "account/usage/read",
         "account/rateLimits/read",
