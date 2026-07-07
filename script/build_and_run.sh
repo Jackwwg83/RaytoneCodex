@@ -492,6 +492,7 @@ import Foundation
 let targetPID = Int(CommandLine.arguments[1]) ?? -1
 let options = CGWindowListOption(arrayLiteral: [.optionOnScreenOnly, .excludeDesktopElements])
 let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+var bestWindow: (number: Int, width: CGFloat, height: CGFloat)?
 
 for window in windows {
     guard (window[kCGWindowOwnerPID as String] as? Int) == targetPID else {
@@ -503,9 +504,22 @@ for window in windows {
           let height = bounds["Height"] as? CGFloat else {
         continue
     }
-    print("WINDOW_ID=\(number)")
-    print("WINDOW_WIDTH=\(Int(width))")
-    print("WINDOW_HEIGHT=\(Int(height))")
+    guard width > 0, height > 0 else {
+        continue
+    }
+    if let current = bestWindow {
+        if width * height > current.width * current.height {
+            bestWindow = (number, width, height)
+        }
+    } else {
+        bestWindow = (number, width, height)
+    }
+}
+
+if let bestWindow {
+    print("WINDOW_ID=\(bestWindow.number)")
+    print("WINDOW_WIDTH=\(Int(bestWindow.width))")
+    print("WINDOW_HEIGHT=\(Int(bestWindow.height))")
     exit(0)
 }
 
@@ -532,8 +546,20 @@ wait_for_window_for_pid() {
   return 1
 }
 
+activate_app_for_pid() {
+  /usr/bin/swift - "$1" <<'SWIFT' >/dev/null 2>&1 || true
+import AppKit
+import Foundation
+
+let targetPID = pid_t(Int(CommandLine.arguments[1]) ?? -1)
+NSRunningApplication(processIdentifier: targetPID)?
+    .activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+SWIFT
+}
+
 run_ui_smoke() {
   local app_pid="" window_info window_id window_width window_height screenshot_size cli_version runtime_path settle_seconds
+  local launched_unsigned_staged_app=0
 
   cleanup_ui_smoke() {
     if [[ -n "${app_pid:-}" ]]; then
@@ -551,6 +577,42 @@ run_ui_smoke() {
     fi
   }
   trap cleanup_ui_smoke RETURN
+
+  fallback_to_development_binary_for_ui_smoke() {
+    local reason="$1"
+
+    echo "$reason; falling back to direct development binary." >&2
+    kill "$app_pid" >/dev/null 2>&1 || true
+    wait "$app_pid" >/dev/null 2>&1 || true
+    app_pid="$(run_development_binary_for_smoke)"
+    runtime_path="$(local_cli_for_verification)"
+    launched_unsigned_staged_app=0
+    activate_app_for_pid "$app_pid"
+
+    if ! window_info="$(wait_for_window_for_pid "$app_pid")"; then
+      if ! ps -p "$app_pid" >/dev/null 2>&1; then
+        echo "$APP_NAME exited before its UI window appeared." >&2
+      else
+        echo "No onscreen $APP_NAME window was found for PID $app_pid." >&2
+      fi
+      cat "$LAUNCH_LOG" >&2 || true
+      return 1
+    fi
+
+    eval "$window_info"
+    window_id="${WINDOW_ID:-}"
+    window_width="${WINDOW_WIDTH:-0}"
+    window_height="${WINDOW_HEIGHT:-0}"
+  }
+
+  capture_ui_smoke_screenshot() {
+    activate_app_for_pid "$app_pid"
+    sleep 0.5
+    if /usr/sbin/screencapture -x -l "$window_id" "$UI_SMOKE_SCREENSHOT"; then
+      return 0
+    fi
+    return 1
+  }
 
   mkdir -p "$SCREENSHOT_DIR"
   rm -f "$UI_SMOKE_SCREENSHOT"
@@ -601,6 +663,7 @@ run_ui_smoke() {
     if wait_for_app; then
       app_pid="$(first_app_pid)"
       runtime_path="$APP_RESOURCES/codex"
+      launched_unsigned_staged_app=1
     else
       echo "LaunchServices did not keep the unsigned staged app running; falling back to direct development binary." >&2
       echo "Launching the SwiftUI binary with the staged local CLI from $DEV_CLI." >&2
@@ -608,15 +671,20 @@ run_ui_smoke() {
       runtime_path="$(local_cli_for_verification)"
     fi
   fi
+  activate_app_for_pid "$app_pid"
 
   if ! window_info="$(wait_for_window_for_pid "$app_pid")"; then
-    if ! ps -p "$app_pid" >/dev/null 2>&1; then
-      echo "$APP_NAME exited before its UI window appeared." >&2
+    if [[ "$launched_unsigned_staged_app" == "1" ]]; then
+      fallback_to_development_binary_for_ui_smoke "Unsigned staged app stayed alive but did not expose a UI window" || return 1
     else
-      echo "No onscreen $APP_NAME window was found for PID $app_pid." >&2
+      if ! ps -p "$app_pid" >/dev/null 2>&1; then
+        echo "$APP_NAME exited before its UI window appeared." >&2
+      else
+        echo "No onscreen $APP_NAME window was found for PID $app_pid." >&2
+      fi
+      cat "$LAUNCH_LOG" >&2 || true
+      return 1
     fi
-    cat "$LAUNCH_LOG" >&2 || true
-    return 1
   fi
   eval "$window_info"
 
@@ -651,11 +719,27 @@ run_ui_smoke() {
     window_height="${WINDOW_HEIGHT:-$window_height}"
   fi
 
-  /usr/sbin/screencapture -x -l "$window_id" "$UI_SMOKE_SCREENSHOT"
+  if ! capture_ui_smoke_screenshot; then
+    if [[ "$launched_unsigned_staged_app" == "1" ]]; then
+      fallback_to_development_binary_for_ui_smoke "Unsigned staged app window could not be captured" || return 1
+      sleep "$settle_seconds"
+      capture_ui_smoke_screenshot
+    else
+      return 1
+    fi
+  fi
   screenshot_size="$(/usr/bin/stat -f '%z' "$UI_SMOKE_SCREENSHOT")"
   if [[ "$screenshot_size" -lt 100000 ]]; then
-    echo "UI screenshot is unexpectedly small: $screenshot_size bytes." >&2
-    return 1
+    if [[ "$launched_unsigned_staged_app" == "1" ]]; then
+      fallback_to_development_binary_for_ui_smoke "Unsigned staged app screenshot is unexpectedly small: $screenshot_size bytes" || return 1
+      sleep "$settle_seconds"
+      capture_ui_smoke_screenshot
+      screenshot_size="$(/usr/bin/stat -f '%z' "$UI_SMOKE_SCREENSHOT")"
+    fi
+    if [[ "$screenshot_size" -lt 100000 ]]; then
+      echo "UI screenshot is unexpectedly small: $screenshot_size bytes." >&2
+      return 1
+    fi
   fi
 
   cli_version="$("$runtime_path" --version | tr -d '\r')"
