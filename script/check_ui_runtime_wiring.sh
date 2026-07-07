@@ -320,6 +320,46 @@ for panel, tokens in tool_panels.items():
     for token in tokens:
         require(f"tool panel {panel}", token)
 
+permission_runtime_tokens = [
+    "AccessModeControl",
+    "AccessModePopover",
+    "chooseAccessMode",
+    "syncSelectedThreadExecutionSettings",
+    "updateThreadExecutionSettings",
+    "thread/settings/update",
+    'params["approvalPolicy"] = .string(approvalPolicy.appServerValue)',
+    'params["approvalsReviewer"] = .string(approvalsReviewer.rawValue)',
+    'params["sandboxPolicy"] = sandbox.appServerSandboxPolicy',
+    '"approvalPolicy": .string(options.approvalPolicy.appServerValue)',
+    '"approvalsReviewer": .string(options.approvalsReviewer.rawValue)',
+    '"sandbox": .string(options.sandbox.rawValue)',
+    '"sandboxPolicy": options.sandbox.appServerSandboxPolicy',
+    "saveRuntimeApprovalPolicy",
+    "saveRuntimeSandboxMode",
+    "saveRuntimeApprovalsReviewer",
+    "saveRuntimeDefaultPermissions",
+    "writeConfigValue",
+    "approval_policy",
+    "approvals_reviewer",
+    "sandbox_mode",
+    "default_permissions",
+    "item/permissions/requestApproval",
+    "execCommandApproval",
+    "applyPatchApproval",
+    "respondPermissionsApproval",
+    "respondApproval",
+    "respondLegacyApproval",
+    "pendingApprovalResponseKinds",
+    "approved_for_session",
+    "--access-mode-smoke-test",
+    "--new-thread-permissions-smoke-test",
+    "--approval-compat-smoke-test",
+    "--default-permissions-smoke-test",
+    "--auto-review-smoke-test",
+]
+for token in permission_runtime_tokens:
+    require("permissions and access mode", token)
+
 dynamic_tools = [
     ("raytone_context", "workspace_snapshot", "dynamicToolResponse"),
     ("raytone_context", "list_workspace_files", "dynamicToolFilesResponse"),
