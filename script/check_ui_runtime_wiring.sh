@@ -34,6 +34,7 @@ files = {
     "smoke": root / "Sources/RaytoneCodex/App/SmokeTestRunner.swift",
     "onboarding": root / "Sources/RaytoneCodex/Views/ProviderOnboardingView.swift",
     "runner": root / "script/build_and_run.sh",
+    "wiring": root / "script/check_ui_runtime_wiring.sh",
 }
 
 missing_files = [str(path.relative_to(root)) for path in files.values() if not path.exists()]
@@ -783,12 +784,31 @@ empty_button_matches = re.findall(r"Button\s*(?:\([^)]*\))?\s*\{\s*\}", all_text
 if empty_button_matches:
     failures.append({"surface": "interactive controls", "missing": f"found {len(empty_button_matches)} empty Button closures"})
 
+smoke_test_flags = set(re.findall(r'"(--[A-Za-z0-9-]+-smoke-test)"', text["smoke"]))
+wiring_smoke_flags = set(re.findall(r'"(--[A-Za-z0-9-]+-smoke-test)"', text["wiring"]))
+runner_smoke_flags = set(re.findall(r"--[A-Za-z0-9-]+-smoke-test", text["runner"]))
+missing_wiring_smokes = sorted(smoke_test_flags - wiring_smoke_flags)
+missing_runner_smokes = sorted(smoke_test_flags - runner_smoke_flags)
+if missing_wiring_smokes:
+    failures.append({
+        "surface": "smoke runtime coverage",
+        "missing": ", ".join(missing_wiring_smokes),
+    })
+if missing_runner_smokes:
+    failures.append({
+        "surface": "smoke runner coverage",
+        "missing": ", ".join(missing_runner_smokes),
+    })
+
 result = {
     "ok": not failures,
     "settingsPanes": len(settings_cases),
     "toolPanels": len(tool_panel_cases),
     "dynamicTools": len(dynamic_tools),
     "settingsRuntimeSpecs": len(settings_runtime),
+    "smokeTestFlags": len(smoke_test_flags),
+    "wiringSmokeFlags": len(wiring_smoke_flags),
+    "runnerSmokeFlags": len(runner_smoke_flags),
     "checkedFiles": len(files),
     "failures": failures,
 }
