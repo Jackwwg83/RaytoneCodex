@@ -3666,10 +3666,60 @@ enum SmokeTestRunner {
                 .appendingPathComponent("RaytoneCodexMarketplaceSmoke-\(UUID().uuidString)", isDirectory: true)
             let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
             let codexHomeURL = rootURL.appendingPathComponent("codex-home", isDirectory: true)
+            let marketplaceLogURL = rootURL.appendingPathComponent("marketplace-requests.jsonl")
+            let marketplaceScriptURL = rootURL.appendingPathComponent("fake-marketplace-codex")
 
             do {
                 try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
                 try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                try fakeMarketplaceAppServerScript.write(to: marketplaceScriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: marketplaceScriptURL.path)
+
+                let marketplaceStore = SessionStore()
+                marketplaceStore.workspacePath = workspaceURL.path
+                marketplaceStore.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: marketplaceScriptURL, source: .environment),
+                    version: "fake-marketplace"
+                )
+                marketplaceStore.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_MARKETPLACE_LOG": marketplaceLogURL.path
+                ]
+
+                fputs("marketplace-upgrade-smoke: marketplace/add\n", stderr)
+                let addResult = await marketplaceStore.addPluginMarketplace(
+                    source: "Jackwwg83/raytone-marketplace-smoke",
+                    refName: "main",
+                    sparsePaths: ["marketplace.json", "plugins"]
+                )
+                let addStatus = marketplaceStore.runtimeCatalogStatusText
+                fputs("marketplace-upgrade-smoke: marketplace/remove\n", stderr)
+                let removeResult = await marketplaceStore.removePluginMarketplace(name: "raytone-market")
+                let removeStatus = marketplaceStore.runtimeCatalogStatusText
+
+                let marketplaceDeadline = Date().addingTimeInterval(4)
+                var marketplaceLogText = ""
+                while Date() < marketplaceDeadline {
+                    marketplaceLogText = (try? String(contentsOf: marketplaceLogURL, encoding: .utf8)) ?? ""
+                    if marketplaceLogText.contains(#""method":"marketplace/add""#) &&
+                        marketplaceLogText.contains(#""method":"marketplace/remove""#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                let addRequestOK = marketplaceLogText.contains(#""method":"marketplace/add""#) &&
+                    marketplaceLogText.contains(#""source":"Jackwwg83/raytone-marketplace-smoke""#) &&
+                    marketplaceLogText.contains(#""refName":"main""#) &&
+                    marketplaceLogText.contains(#""sparsePaths":["marketplace.json","plugins"]"#)
+                let removeRequestOK = marketplaceLogText.contains(#""method":"marketplace/remove""#) &&
+                    marketplaceLogText.contains(#""marketplaceName":"raytone-market""#)
+                let marketplaceCrudOK = addResult?.marketplaceName == "raytone-market" &&
+                    addResult?.alreadyAdded == false &&
+                    removeResult?.marketplaceName == "raytone-market" &&
+                    addStatus.hasPrefix("marketplace/add：已添加 raytone-market") &&
+                    removeStatus.hasPrefix("marketplace/remove：已移除 raytone-market") &&
+                    addRequestOK &&
+                    removeRequestOK
+                await marketplaceStore.stopAppServerForTesting()
 
                 let store = SessionStore()
                 store.workspacePath = workspaceURL.path
@@ -3684,12 +3734,13 @@ enum SmokeTestRunner {
                 let sourceFacts = store.environmentSourceFacts
                 let marketplaceFact = sourceFacts.first { $0.title == "插件市场" }
                 let summary = result.map { SessionStore.marketplaceUpgradeSummary($0) } ?? ""
-                let integrationOK = store.runtimeSnapshot.executable != nil &&
+                let upgradeIntegrationOK = store.runtimeSnapshot.executable != nil &&
                     result != nil &&
                     store.runtimeCatalogStatusText.hasPrefix("marketplace/upgrade") &&
                     marketplaceFact?.source == "marketplace/upgrade" &&
                     marketplaceFact?.active == true &&
                     store.runtimeCatalogErrors == (result?.errors.map { "\($0.marketplaceName)：\($0.message)" } ?? [])
+                let integrationOK = marketplaceCrudOK && upgradeIntegrationOK
                 let ok = parseOK && integrationOK
 
                 await store.stopAppServerForTesting()
@@ -3698,13 +3749,34 @@ enum SmokeTestRunner {
                     "schema": "MarketplaceAdd/Remove/Upgrade",
                     "parseOK": parseOK,
                     "integrationOK": integrationOK,
+                    "marketplaceCrudOK": marketplaceCrudOK,
+                    "upgradeIntegrationOK": upgradeIntegrationOK,
+                    "addRequestOK": addRequestOK,
+                    "removeRequestOK": removeRequestOK,
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
+                    "fakeExecutable": marketplaceScriptURL.path,
+                    "requestLog": marketplaceLogURL.path,
+                    "addStatus": addStatus,
+                    "removeStatus": removeStatus,
                     "status": store.runtimeCatalogStatusText,
                     "summary": summary,
+                    "addedMarketplace": addResult.map { result in
+                        [
+                            "marketplaceName": result.marketplaceName,
+                            "installedRoot": result.installedRoot,
+                            "alreadyAdded": result.alreadyAdded
+                        ] as [String: Any]
+                    } ?? [:],
+                    "removedMarketplace": removeResult.map { result in
+                        [
+                            "marketplaceName": result.marketplaceName,
+                            "installedRoot": result.installedRoot ?? ""
+                        ] as [String: Any]
+                    } ?? [:],
                     "selectedMarketplaces": result?.selectedMarketplaces ?? [],
                     "upgradedRoots": result?.upgradedRoots ?? [],
                     "responseErrors": result?.errors.map { error in
@@ -3719,7 +3791,8 @@ enum SmokeTestRunner {
                         "source": marketplaceFact?.source ?? "",
                         "detail": marketplaceFact?.detail ?? "",
                         "active": marketplaceFact?.active ?? false
-                    ]
+                    ],
+                    "requestLogPreview": String(marketplaceLogText.prefix(2400))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -17638,6 +17711,85 @@ enum SmokeTestRunner {
                     send_result(request_id, {})
             else:
                 send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeMarketplaceAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_MARKETPLACE_LOG")
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def catalog_response(method):
+            if method in ("plugin/list", "plugin/installed"):
+                return {"marketplaces": [], "featuredPluginIds": [], "marketplaceLoadErrors": []}
+            if method == "plugin/share/list":
+                return {"data": [], "nextCursor": None}
+            if method == "skills/list":
+                return {"skills": [], "errors": []}
+            if method == "config/read":
+                return {"config": {}, "layers": []}
+            if method == "hooks/list":
+                return {"hooks": [], "warnings": [], "errors": []}
+            if method == "mcpServerStatus/list":
+                return {"data": [], "nextCursor": None}
+            raise KeyError(method)
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "marketplace/add":
+                if params.get("source") != "Jackwwg83/raytone-marketplace-smoke":
+                    send_error(request_id, "unexpected source")
+                else:
+                    send_result(request_id, {
+                        "marketplaceName": "raytone-market",
+                        "installedRoot": "/tmp/raytone-market",
+                        "alreadyAdded": False,
+                    })
+            elif method == "marketplace/remove":
+                if params.get("marketplaceName") != "raytone-market":
+                    send_error(request_id, "unexpected marketplaceName")
+                else:
+                    send_result(request_id, {
+                        "marketplaceName": "raytone-market",
+                        "installedRoot": "/tmp/raytone-market",
+                    })
+            else:
+                try:
+                    send_result(request_id, catalog_response(method))
+                except Exception:
+                    send_error(request_id, f"unsupported method {method}")
         """#
     }
 
