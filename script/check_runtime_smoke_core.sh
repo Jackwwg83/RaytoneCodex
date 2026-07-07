@@ -15,6 +15,10 @@ default_cases=(
   new-thread-permissions-smoke
   default-permissions-smoke
   auto-review-smoke
+  approval-compat-smoke
+  guardian-denial-approve-smoke
+  tool-user-input-smoke
+  auth-attestation-smoke
   provider-sidecar-smoke
   model-provider-capabilities-smoke
   external-agent-config-smoke
@@ -30,9 +34,18 @@ default_cases=(
   experimental-features-smoke
   catalog-smoke
   plugin-read-smoke
+  plugin-install-response-smoke
+  plugin-share-smoke
+  marketplace-upgrade-smoke
   skill-read-smoke
+  skill-extra-roots-smoke
+  skill-toggle-smoke
   automation-smoke
   automation-hook-smoke
+  hook-notification-smoke
+  file-change-stream-smoke
+  runtime-diagnostics-smoke
+  app-server-notification-smoke
   mcp-resource-smoke
   mcp-tool-smoke
   mcp-login-smoke
@@ -48,6 +61,15 @@ default_cases=(
   review-smoke
   terminal-stream-smoke
   terminal-resize-smoke
+  process-stream-smoke
+  thread-management-smoke
+  thread-lifecycle-smoke
+  thread-bootstrap-actions-smoke
+  history-smoke
+  thread-resume-smoke
+  loaded-threads-smoke
+  thread-unsubscribe-smoke
+  thread-metadata-smoke
   thread-memory-mode-smoke
   work-mode-smoke
   realtime-voices-smoke

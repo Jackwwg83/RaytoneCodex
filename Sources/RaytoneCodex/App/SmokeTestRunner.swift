@@ -11017,20 +11017,16 @@ enum SmokeTestRunner {
                 let logHasAllMethods = expectedMethods.allSatisfy { method in
                     logText.contains(#""method":"\#(method)""#)
                 }
-                let processMethodsObserved = [
-                    "process/spawn",
-                    "process/outputDelta",
-                    "process/exited"
-                ].allSatisfy { method in
-                    logText.contains(#""method":"\#(method)""#)
-                }
+                let commandExecObserved = logText.contains(#""method":"command/exec""#) &&
+                    logText.contains(scriptURL.path) &&
+                    logText.contains("app-server --help")
                 let diagnosticCommandObserved = diagnosticRun?.command.contains(scriptURL.path) == true &&
                     diagnosticRun?.command.contains("app-server --help") == true
                 let diagnosticOutputObserved = diagnosticOutput.contains("codex-cli fake-runtime-diagnostics") &&
                     diagnosticOutput.contains("Usage: codex app-server") &&
                     diagnosticRun?.exitCode == 0 &&
                     diagnosticRun?.status == .succeeded &&
-                    diagnosticStatus.contains("process/exited")
+                    diagnosticStatus.contains("command/exec")
                 let ok = !store.isRunning &&
                     store.selectedThread.appServerThreadID == "thread-runtime-diagnostics" &&
                     notices.count >= expectedMethods.count &&
@@ -11051,7 +11047,7 @@ enum SmokeTestRunner {
                     notificationErrors.contains(where: { $0.contains("旧版协议即将移除") }) &&
                     diagnosticCommandObserved &&
                     diagnosticOutputObserved &&
-                    processMethodsObserved &&
+                    commandExecObserved &&
                     logHasAllMethods
 
                 emitJSON([
@@ -11069,7 +11065,7 @@ enum SmokeTestRunner {
                     "diagnosticOutput": diagnosticOutput,
                     "diagnosticCommandObserved": diagnosticCommandObserved,
                     "diagnosticOutputObserved": diagnosticOutputObserved,
-                    "processMethodsObserved": processMethodsObserved,
+                    "commandExecObserved": commandExecObserved,
                     "isRunning": store.isRunning,
                     "logHasAllMethods": logHasAllMethods,
                     "requestLogPreview": String(logText.prefix(2600))
@@ -15297,6 +15293,21 @@ enum SmokeTestRunner {
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-runtime-diagnostics", "status": "completed"}
+                })
+            elif method == "command/exec":
+                command = params.get("command") or []
+                command_text = " ".join(command)
+                log({
+                    "diagnosticCommandExec": command_text,
+                    "processId": params.get("processId"),
+                    "cwd": params.get("cwd"),
+                    "tty": params.get("tty"),
+                    "size": params.get("size"),
+                })
+                send_result(request_id, {
+                    "stdout": "codex-cli fake-runtime-diagnostics\nUsage: codex app-server [OPTIONS]\n",
+                    "stderr": "",
+                    "exitCode": 0,
                 })
             elif method == "process/spawn":
                 process_handle = params.get("processHandle", "runtime-diagnostics-process")
