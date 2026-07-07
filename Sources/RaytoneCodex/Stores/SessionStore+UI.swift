@@ -490,7 +490,7 @@ extension SessionStore {
                 symbol: "terminal",
                 title: "终端",
                 detail: terminalDetail,
-                source: "process/spawn",
+                source: "command/exec",
                 active: !terminalRuns.isEmpty
             )
         ]

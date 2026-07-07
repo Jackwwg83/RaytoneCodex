@@ -3288,18 +3288,20 @@ final class SessionStore: ObservableObject {
 
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
-            try await client.spawnProcess(
+            let result = try await client.execCommandStreaming(
                 ["/bin/zsh", "-lc", command],
-                processHandle: processID,
+                processID: processID,
                 cwd: URL(fileURLWithPath: workspacePath),
+                sandbox: sandbox,
                 tty: true,
-                streamStdin: true,
-                streamStdoutStderr: true,
                 rows: terminalRows,
                 cols: terminalCols
             )
-            runtimeCatalogStatusText = "process/spawn：\(processID)"
-            await waitForTerminalRunToFinish(id: recordID)
+            let output = [result.stdout, result.stderr]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+            completeTerminalRun(id: recordID, finalOutput: output, exitCode: result.exitCode)
+            runtimeCatalogStatusText = "command/exec：\(processID) · 退出 \(result.exitCode)"
         } catch {
             failTerminalRun(id: recordID, errorText: error.localizedDescription)
         }
@@ -3395,7 +3397,7 @@ final class SessionStore: ObservableObject {
         }
 
         do {
-            try await client.killProcess(processHandle: processID)
+            try await client.terminateCommand(processID: processID)
         } catch {
             if let runID = activeTerminalRunID {
                 appendTerminalRunOutput(id: runID, text: "\n终止失败：\(error.localizedDescription)\n")
@@ -3417,8 +3419,8 @@ final class SessionStore: ObservableObject {
         }
 
         do {
-            try await client.resizeProcessPty(processHandle: processID, rows: normalizedRows, cols: normalizedCols)
-            terminalResizeStatusText = "process/resizePty：\(normalizedRows)×\(normalizedCols)"
+            try await client.resizeCommand(processID: processID, rows: normalizedRows, cols: normalizedCols)
+            terminalResizeStatusText = "command/exec/resize：\(normalizedRows)×\(normalizedCols)"
             if let runID = activeTerminalRunID {
                 appendTerminalRunOutput(id: runID, text: "\n[终端尺寸 \(normalizedRows)×\(normalizedCols)]\n")
             }
@@ -3437,7 +3439,7 @@ final class SessionStore: ObservableObject {
         }
 
         do {
-            try await client.writeProcessInput(processHandle: processID, data: Data(input.utf8))
+            try await client.writeCommandInput(processID: processID, data: Data(input.utf8))
         } catch {
             if let runID = activeTerminalRunID {
                 appendTerminalRunOutput(id: runID, text: "\n写入 stdin 失败：\(error.localizedDescription)\n")
@@ -7180,18 +7182,6 @@ final class SessionStore: ObservableObject {
     private func appendTerminalRunOutput(id: UUID, text: String) {
         guard let index = terminalRuns.firstIndex(where: { $0.id == id }) else { return }
         terminalRuns[index].output.append(text)
-    }
-
-    private func waitForTerminalRunToFinish(id: UUID) async {
-        while true {
-            guard let run = terminalRuns.first(where: { $0.id == id }) else {
-                return
-            }
-            if run.status != .running {
-                return
-            }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
     }
 
     private func completeTerminalRun(id: UUID, finalOutput: String, exitCode: Int32) {

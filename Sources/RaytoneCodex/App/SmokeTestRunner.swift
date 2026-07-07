@@ -525,7 +525,7 @@ enum SmokeTestRunner {
                 let terminalFact = store.environmentSourceFacts.first { fact in
                     fact.title == "终端"
                 }
-                let terminalFactMatchesProcess = terminalFact?.source == "process/spawn" &&
+                let terminalFactMatchesCommand = terminalFact?.source == "command/exec" &&
                     terminalFact?.active == true &&
                     terminalFact?.detail.contains("2 次") == true
 
@@ -538,8 +538,8 @@ enum SmokeTestRunner {
                     terminatedRun?.processID?.hasPrefix("raytone-terminal-") == true &&
                     terminatedRun?.output.contains("sleeping") == true &&
                     terminatedRun?.output.contains("done") != true &&
-                    store.runtimeCatalogStatusText.contains("process/exited") &&
-                    terminalFactMatchesProcess &&
+                    store.runtimeCatalogStatusText.contains("command/exec") &&
+                    terminalFactMatchesCommand &&
                     store.terminalIsRunning == false
 
                 let stdinOutput = stdinRun?.output ?? ""
@@ -549,7 +549,7 @@ enum SmokeTestRunner {
 
                 emitJSON([
                     "ok": ok,
-                    "source": "process/spawn + process/writeStdin + process/kill",
+                    "source": "command/exec + command/exec/write + command/exec/terminate",
                     "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
                     "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
                     "runtimeVersion": store.runtimeSnapshot.version ?? "",
@@ -566,7 +566,7 @@ enum SmokeTestRunner {
                     "terminatedExitCode": Int(terminatedRun?.exitCode ?? -999),
                     "terminatedStatus": terminalStatusName(terminatedRun?.status),
                     "terminatedOutput": terminatedOutput,
-                    "terminalFactMatchesProcess": terminalFactMatchesProcess,
+                    "terminalFactMatchesCommand": terminalFactMatchesCommand,
                     "terminalFact": terminalFact.map { fact in
                         [
                             "title": fact.title,
@@ -641,7 +641,7 @@ enum SmokeTestRunner {
                 let output = run?.output ?? ""
                 let ok = store.runtimeSnapshot.executable != nil &&
                     streamedBeforeResize &&
-                    resizeStatus.contains("process/resizePty") &&
+                    resizeStatus.contains("command/exec/resize") &&
                     output.contains("line:raytone-resize-smoke") &&
                     output.contains("42 132") &&
                     run?.status == .succeeded &&
@@ -667,7 +667,7 @@ enum SmokeTestRunner {
                     "runtimeCatalogStatus": runtimeCatalogStatus,
                     "runStatus": terminalStatusName(run?.status),
                     "output": output,
-                    "source": "process/spawn + process/resizePty + process/writeStdin"
+                    "source": "command/exec + command/exec/resize + command/exec/write"
                 ])
                 exit(ok ? 0 : 1)
             } catch {
