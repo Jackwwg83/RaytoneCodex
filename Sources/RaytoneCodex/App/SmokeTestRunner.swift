@@ -11365,6 +11365,9 @@ enum SmokeTestRunner {
             let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
             let accountKind = store.runtimeAccount?.kind ?? "notLoggedIn"
             let sourceMarker = "account/read + account/usage/read + account/rateLimits/read"
+            store.settingsPane = .profile
+            store.settingsPane = .personalization
+            let profileEditRouteOK = store.settingsPane == .personalization
             let ok = store.runtimeSnapshot.executable != nil &&
                 status.contains("已复制分享摘要") &&
                 status.contains(sourceMarker) &&
@@ -11372,7 +11375,8 @@ enum SmokeTestRunner {
                 clipboard.contains("账户：") &&
                 clipboard.contains("累计 Token：") &&
                 clipboard.contains("速率限制桶：") &&
-                clipboard.contains("来源：\(sourceMarker)")
+                clipboard.contains("来源：\(sourceMarker)") &&
+                profileEditRouteOK
 
             emitJSON([
                 "ok": ok,
@@ -11385,6 +11389,8 @@ enum SmokeTestRunner {
                 "errors": store.runtimeCatalogErrors,
                 "clipboardLength": clipboard.count,
                 "clipboardPreview": redactedProfileSharePreview(String(clipboard.prefix(360))),
+                "profileEditRouteOK": profileEditRouteOK,
+                "profileEditTarget": store.settingsPane.rawValue,
                 "source": sourceMarker
             ])
             exit(ok ? 0 : 1)
