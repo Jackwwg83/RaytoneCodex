@@ -252,7 +252,7 @@ settings_runtime = {
         "--git-pr-create-smoke-test",
         "--runtime-environment-smoke-test",
     ],
-    "environments": ["environment/add", "permissionProfile/list", "configRequirements/read", "--runtime-environment-smoke-test"],
+    "environments": ["environment/add", "selectRuntimeEnvironment", "permissionProfile/list", "configRequirements/read", "--runtime-environment-smoke-test"],
     "worktrees": ["git worktree list", "openWorkspaceWorktree", "--worktree-switch-smoke-test"],
     "archivedChats": ["thread/list", "thread/unarchive", "--thread-lifecycle-smoke-test"],
 }

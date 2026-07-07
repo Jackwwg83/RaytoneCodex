@@ -9649,6 +9649,24 @@ enum SmokeTestRunner {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                 }
 
+                store.selectRuntimeEnvironment(nil)
+                let defaultSelectionStatus = store.runtimeEnvironmentStatusText
+                store.newThread(in: store.selectedProject.id)
+                store.prompt = "默认本地环境 smoke"
+                await store.runPrompt()
+                for _ in 0..<40 where store.isRunning {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
+                store.selectRuntimeEnvironment(environmentID)
+                let reselectedStatus = store.runtimeEnvironmentStatusText
+                store.newThread(in: store.selectedProject.id)
+                store.prompt = "重新选择远程环境 smoke"
+                await store.runPrompt()
+                for _ in 0..<40 where store.isRunning {
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
                 await store.stopAppServerForTesting()
 
@@ -9656,23 +9674,43 @@ enum SmokeTestRunner {
                     guard let data = String(line).data(using: .utf8) else { return nil }
                     return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
                 }
-                func params(for method: String) -> [String: Any]? {
-                    requests.first { $0["method"] as? String == method }?["params"] as? [String: Any]
+                func allParams(for method: String) -> [[String: Any]] {
+                    requests.compactMap { request in
+                        guard request["method"] as? String == method else { return nil }
+                        return request["params"] as? [String: Any]
+                    }
                 }
-                func hasSelectedEnvironment(method: String) -> Bool {
-                    guard let environments = params(for: method)?["environments"] as? [[String: Any]],
+                func firstParams(for method: String) -> [String: Any]? {
+                    allParams(for: method).first
+                }
+                func paramsHaveSelectedEnvironment(_ params: [String: Any]?) -> Bool {
+                    guard let environments = params?["environments"] as? [[String: Any]],
                           let first = environments.first else {
                         return false
                     }
                     return first["environmentId"] as? String == environmentID &&
                         first["cwd"] as? String == remoteCwd
                 }
+                func paramsHaveNoEnvironment(_ params: [String: Any]?) -> Bool {
+                    guard let params else { return false }
+                    return params["environments"] == nil
+                }
 
-                let environmentAddParams = params(for: "environment/add")
+                let threadStartParams = allParams(for: "thread/start")
+                let turnStartParams = allParams(for: "turn/start")
+                let environmentAddParams = firstParams(for: "environment/add")
                 let loggedEnvironmentAdd = environmentAddParams?["environmentId"] as? String == environmentID &&
                     environmentAddParams?["execServerUrl"] as? String == execServerURL
-                let loggedThreadStartEnvironment = hasSelectedEnvironment(method: "thread/start")
-                let loggedTurnStartEnvironment = hasSelectedEnvironment(method: "turn/start")
+                let loggedThreadStartEnvironment = paramsHaveSelectedEnvironment(threadStartParams.first)
+                let loggedTurnStartEnvironment = paramsHaveSelectedEnvironment(turnStartParams.first)
+                let loggedDefaultThreadStartNoEnvironment = threadStartParams.count > 1 &&
+                    paramsHaveNoEnvironment(threadStartParams[1])
+                let loggedDefaultTurnStartNoEnvironment = turnStartParams.count > 1 &&
+                    paramsHaveNoEnvironment(turnStartParams[1])
+                let loggedReselectedThreadStartEnvironment = threadStartParams.count > 2 &&
+                    paramsHaveSelectedEnvironment(threadStartParams[2])
+                let loggedReselectedTurnStartEnvironment = turnStartParams.count > 2 &&
+                    paramsHaveSelectedEnvironment(turnStartParams[2])
                 let registeredEnvironment = store.runtimeRegisteredEnvironments.first {
                     $0.environmentID == environmentID
                 }
@@ -9680,7 +9718,13 @@ enum SmokeTestRunner {
                     loggedEnvironmentAdd &&
                     loggedThreadStartEnvironment &&
                     loggedTurnStartEnvironment &&
+                    loggedDefaultThreadStartNoEnvironment &&
+                    loggedDefaultTurnStartNoEnvironment &&
+                    loggedReselectedThreadStartEnvironment &&
+                    loggedReselectedTurnStartEnvironment &&
                     store.selectedRuntimeEnvironmentID == environmentID &&
+                    defaultSelectionStatus == "使用默认本地环境" &&
+                    reselectedStatus == "已选择环境：\(environmentID)" &&
                     registeredEnvironment?.execServerURL == execServerURL &&
                     registeredEnvironment?.cwd == remoteCwd
 
@@ -9693,9 +9737,17 @@ enum SmokeTestRunner {
                     "selectedRuntimeEnvironmentID": store.selectedRuntimeEnvironmentID ?? "",
                     "registeredEnvironmentCount": store.runtimeRegisteredEnvironments.count,
                     "runtimeEnvironmentStatus": store.runtimeEnvironmentStatusText,
+                    "defaultSelectionStatus": defaultSelectionStatus,
+                    "reselectedStatus": reselectedStatus,
                     "loggedEnvironmentAdd": loggedEnvironmentAdd,
                     "loggedThreadStartEnvironment": loggedThreadStartEnvironment,
                     "loggedTurnStartEnvironment": loggedTurnStartEnvironment,
+                    "loggedDefaultThreadStartNoEnvironment": loggedDefaultThreadStartNoEnvironment,
+                    "loggedDefaultTurnStartNoEnvironment": loggedDefaultTurnStartNoEnvironment,
+                    "loggedReselectedThreadStartEnvironment": loggedReselectedThreadStartEnvironment,
+                    "loggedReselectedTurnStartEnvironment": loggedReselectedTurnStartEnvironment,
+                    "threadStartCount": threadStartParams.count,
+                    "turnStartCount": turnStartParams.count,
                     "requestLogPreview": String(logText.prefix(2600))
                 ])
                 exit(ok ? 0 : 1)
