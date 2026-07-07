@@ -880,7 +880,9 @@ codesign_authority() {
 }
 
 codesign_has_hardened_runtime() {
-  codesign_details "$1" | /usr/bin/grep -Eq 'flags=.*runtime'
+  local details
+  details="$(codesign_details "$1")"
+  /usr/bin/grep -Eq 'flags=.*runtime|Runtime Version=' <<<"$details"
 }
 
 require_valid_signature() {
