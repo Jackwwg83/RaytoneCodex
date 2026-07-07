@@ -401,13 +401,20 @@ menu_runtime_tokens = [
     "CommandGroup(replacing: .appSettings)",
     "CommandGroup(replacing: .newItem)",
     "CommandMenu(\"工具\")",
+    "deleteThread(",
     "thread/name/set",
     "thread/fork",
+    "thread/archive",
+    "thread/unsubscribe",
+    "thread/unarchive",
     "thread/compact/start",
     "thread/rollback",
     "turn/interrupt",
     "thread/goal/set",
     "thread/goal/clear",
+    "--thread-management-smoke-test",
+    "--thread-bootstrap-actions-smoke-test",
+    "--thread-lifecycle-smoke-test",
 ]
 for token in menu_runtime_tokens:
     require("menu and goal actions", token)
