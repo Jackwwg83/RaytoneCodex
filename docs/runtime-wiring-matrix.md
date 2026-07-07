@@ -56,6 +56,7 @@ This matrix is the product-side contract for keeping the Codex-style UI backed b
 | Surface | Runtime backing | Evidence |
 | --- | --- | --- |
 | Bundled runtime | `script/build_codex_from_source.sh`, `third_party/openai-codex`, bundled `Contents/Resources/codex`, Apache-2.0 NOTICE | `--bundle-audit`, `--package-audit`, `--release-audit` |
+| App-server protocol schema | `codex app-server generate-json-schema`, `Schemas/v2`, `CodexAppServerClient` request methods, `SessionStore` notifications and server requests | `script/check_schema_matches_binary.sh`, `script/check_app_server_methods.sh`, `script/test.sh` |
 | Sidecar provider layer | bundled `raytone-proxy`, provider TOML, Keychain secrets, local `/health` and `/usage` | `--provider-sidecar-smoke-test`, `--provider-unauthorized-smoke-test` |
 
 ## Completion Rule

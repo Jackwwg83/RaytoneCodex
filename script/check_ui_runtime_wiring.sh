@@ -588,6 +588,17 @@ runtime_bootstrap_navigation_tokens = [
 for token in runtime_bootstrap_navigation_tokens:
     require("runtime bootstrap and navigation", token)
 
+schema_truth_tokens = [
+    "codex app-server generate-json-schema",
+    "Schemas/v2",
+    "CodexAppServerClient",
+    "SessionStore",
+    "script/check_schema_matches_binary.sh",
+    "script/check_app_server_methods.sh",
+]
+for token in schema_truth_tokens:
+    require("app-server schema truth surface", token, text["runtime_matrix"])
+
 plugin_skill_dynamic_runtime_tokens = [
     "readRuntimeSkillPreview",
     "runtimeSkillPreviewStatusText",
