@@ -976,60 +976,6 @@ private func toolHeader<Leading: View, Trailing: View>(
     .overlay(alignment: .bottom) { Hairline() }
 }
 
-private struct ToolPlaceholderPanel: View {
-    let title: String
-    let symbol: String
-    let message: String
-    @ObservedObject var store: SessionStore
-    @Binding var showInspector: Bool
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button {
-                    store.toolPanel = .launcher
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .buttonStyle(GhostIconButtonStyle())
-                .help("返回工具")
-
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 0)
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
-                } label: {
-                    Image(systemName: "sidebar.trailing")
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .buttonStyle(GhostIconButtonStyle())
-                .help("关闭面板")
-            }
-            .padding(.horizontal, 12)
-            .frame(height: Theme.Layout.headerHeight)
-            .background(.bar)
-            .overlay(alignment: .bottom) { Hairline() }
-
-            VStack(spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(Theme.textTertiary)
-                Text(message)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(width: Theme.Layout.inspectorWidth)
-        .frame(maxHeight: .infinity)
-        .background(Theme.panel)
-        .overlay(alignment: .leading) { Hairline(axis: .vertical) }
-    }
-}
-
 private struct RecommendedRow: View {
     let path: String
     let action: () -> Void

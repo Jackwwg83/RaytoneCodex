@@ -27,6 +27,7 @@ files = {
     "commands": root / "Sources/RaytoneCodex/App/AppCommands.swift",
     "store": root / "Sources/RaytoneCodex/Stores/SessionStore.swift",
     "store_ui": root / "Sources/RaytoneCodex/Stores/SessionStore+UI.swift",
+    "runtime_matrix": root / "docs/runtime-wiring-matrix.md",
     "provider_model": root / "Sources/RaytoneCodexCore/Models/RaytoneProviderConfiguration.swift",
     "keychain": root / "Sources/RaytoneCodexCore/Services/KeychainService.swift",
     "proxy_service": root / "Sources/RaytoneCodexCore/Services/RaytoneProxyService.swift",
@@ -801,6 +802,50 @@ sample_data_guard = [
 ]
 for token in sample_data_guard:
     require("sample data gating", token)
+
+runtime_matrix_tokens = [
+    "RaytoneCodex Runtime Wiring Matrix",
+    "Thread And Composer",
+    "Tool Panels",
+    "Settings",
+    "Plugins And Skills",
+    "App-Server Requests And Dynamic Tools",
+    "Packaging Truth Surface",
+    "thread/start",
+    "turn/start",
+    "thread/settings/update",
+    "thread/name/set",
+    "thread/fork",
+    "thread/rollback",
+    "thread/compact/start",
+    "thread/archive",
+    "thread/unarchive",
+    "fs/readDirectory",
+    "fs/readFile",
+    "fs/writeFile",
+    "command/exec",
+    "mcpServer/tool/call",
+    "mcpServer/resource/read",
+    "hooks/list",
+    "UserPromptSubmit",
+    "externalAgentConfig/detect",
+    "externalAgentConfig/import",
+    "plugin/share/save",
+    "plugin/share/updateTargets",
+    "plugin/share/checkout",
+    "plugin/share/delete",
+    "raytone_browser.capture_snapshot",
+    "raytone_terminal.run_command",
+    "--dynamic-tool-smoke-test",
+    "--automation-hook-smoke-test",
+    "--thread-management-smoke-test",
+    "--plugin-share-smoke-test",
+    "--external-agent-config-smoke-test",
+    "--provider-sidecar-smoke-test",
+    "--package-audit",
+]
+for token in runtime_matrix_tokens:
+    require("runtime wiring matrix", token, text["runtime_matrix"])
 
 functional_smoke_report_tokens = [
     "raytonecodex-functional-smoke.json",
