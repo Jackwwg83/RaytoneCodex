@@ -1387,6 +1387,7 @@ run_functional_smoke() {
   printf '  "ok": true,\n' >>"$report"
   printf '  "startedAt": "%s",\n' "$(json_escape "$started_at")" >>"$report"
   printf '  "artifactDir": "%s",\n' "$(json_escape "$artifact_dir")" >>"$report"
+  printf '  "reportPath": "%s",\n' "$(json_escape "$report")" >>"$report"
   printf '  "runtimePath": "%s",\n' "$(json_escape "$runtime_path")" >>"$report"
   printf '  "runtimeVersion": "%s",\n' "$(json_escape "$runtime_version")" >>"$report"
   printf '  "sidecarPath": "%s",\n' "$(json_escape "$RAYTONE_PROXY_BINARY")" >>"$report"
