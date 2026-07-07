@@ -478,6 +478,50 @@ thread_history_runtime_tokens = [
 for token in thread_history_runtime_tokens:
     require("thread history runtime", token)
 
+codex_config_runtime_tokens = [
+    "saveRuntimeModelSelection",
+    "commitRuntimeModelSelection",
+    "model/model_provider",
+    "model_provider",
+    "desktop.raytone.selected_provider_id",
+    "saveRuntimeThinkingEnabled",
+    "model_reasoning_effort",
+    "model_reasoning_summary",
+    "saveInstructions",
+    "developer_instructions",
+    "saveRuntimeServiceTier",
+    "service_tier",
+    "saveRuntimeMemoryEnabled",
+    "memories.generate_memories",
+    "memories.use_memories",
+    "saveRuntimeSkipToolAssistedChats",
+    "memories.disable_on_external_context",
+    "resetCodexMemory",
+    "memory/reset",
+    "saveSelectedThreadMemoryMode",
+    "thread/memoryMode/set",
+    "setRuntimeSkillExtraRoots",
+    "skills/extraRoots/set",
+    "skills/list",
+    "fs/readFile",
+    "prepareCodexConfigFileForOpening",
+    "ensureCodexHomeSubfolder",
+    "fs/createDirectory + fs/getMetadata",
+    "refreshProfilePrivacyRuntimeStatus",
+    "profile/privacy",
+    "--model-config-smoke-test",
+    "--reasoning-config-smoke-test",
+    "--instructions-config-smoke-test",
+    "--service-tier-smoke-test",
+    "--memory-settings-smoke-test",
+    "--thread-memory-mode-smoke-test",
+    "--skill-extra-roots-smoke-test",
+    "--codex-home-directory-smoke-test",
+    "--profile-privacy-smoke-test",
+]
+for token in codex_config_runtime_tokens:
+    require("codex config runtime", token)
+
 dynamic_tools = [
     ("raytone_context", "workspace_snapshot", "dynamicToolResponse"),
     ("raytone_context", "list_workspace_files", "dynamicToolFilesResponse"),
