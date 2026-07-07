@@ -522,6 +522,49 @@ codex_config_runtime_tokens = [
 for token in codex_config_runtime_tokens:
     require("codex config runtime", token)
 
+runtime_bootstrap_navigation_tokens = [
+    "CodexCLIService",
+    "CodexRunOptions",
+    "inspectRuntime",
+    "service.run(",
+    "runPromptWithAppServer",
+    "usedExecFallback",
+    "appServerThreadID",
+    "refreshAccountUsageRuntime",
+    "refreshArchivedThreads",
+    "refreshWorkspaceGitDiff",
+    "runtimeDependencyReady",
+    "runtimeVersionDisplay",
+    "SettingsView.runtimeSurfaceDescription",
+    "SettingsRouteView",
+    "selectProjectForNewThread",
+    "selectProjectForSettings",
+    "refreshNewThreadHeroRuntime",
+    "setWorkspacePathForSelectedProject",
+    "loadFilePanelDirectory",
+    "refreshWorkspaceBranches",
+    "checkoutWorkspaceBranch",
+    "createWorkspaceBranch",
+    '"/usr/bin/git", "switch"',
+    "command/exec",
+    "fs/readDirectory",
+    "config/read",
+    "installSampleWorkspaceIfNeeded",
+    "sampleWorkspaceEnabled",
+    "RAYTONE_CODEX_ENABLE_SAMPLE_DATA",
+    "--cli-smoke-test",
+    "--session-smoke-test",
+    "--runtime-pages-smoke-test",
+    "--settings-scene-smoke-test",
+    "--settings-project-smoke-test",
+    "--sample-data-gate-smoke-test",
+    "--project-switch-smoke-test",
+    "--workspace-switch-smoke-test",
+    "--branch-switch-smoke-test",
+]
+for token in runtime_bootstrap_navigation_tokens:
+    require("runtime bootstrap and navigation", token)
+
 dynamic_tools = [
     ("raytone_context", "workspace_snapshot", "dynamicToolResponse"),
     ("raytone_context", "list_workspace_files", "dynamicToolFilesResponse"),

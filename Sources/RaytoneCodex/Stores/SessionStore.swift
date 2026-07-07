@@ -5588,9 +5588,9 @@ final class SessionStore: ObservableObject {
     func refreshNewThreadHeroRuntime() async {
         homeConnectionStatusText = "正在读取新对话连接状态…"
 
+        await loadFilePanelDirectory(workspacePath)
         await refreshWorkspaceBranches()
         await refreshIntegrationRuntime(forceRefetchApps: false)
-        await loadFilePanelDirectory(workspacePath)
 
         homeConnectionsRefreshedAt = Date()
         let errorText = runtimeCatalogErrors.isEmpty ? "" : " · \(runtimeCatalogErrors.count) 个提示"
