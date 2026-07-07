@@ -929,14 +929,7 @@ enum SmokeTestRunner {
 
                 let imageURL = workspaceURL.appendingPathComponent("raytone-local-image-smoke.png")
                 let missingImageURL = workspaceURL.appendingPathComponent("raytone-missing-image-smoke.png")
-                let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-                guard let pngData = Data(base64Encoded: pngBase64) else {
-                    throw NSError(
-                        domain: "RaytoneCodexLocalImageSmoke",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "failed to decode smoke PNG"]
-                    )
-                }
+                let pngData = try makeSmokePNGData(domain: "RaytoneCodexLocalImageSmoke", code: 1)
                 try pngData.write(to: imageURL)
 
                 mockServer = try startMockResponsesServer(message: "Raytone local image smoke OK")
@@ -1962,7 +1955,7 @@ enum SmokeTestRunner {
                 </html>
                 """.write(to: browserHTMLURL, atomically: true, encoding: .utf8)
                 let browserSnapshotURL = rootURL.appendingPathComponent("browser-dynamic-tool.png")
-                try Data("raytone browser snapshot placeholder\n".utf8).write(to: browserSnapshotURL)
+                try makeSmokePNGData(domain: "RaytoneCodexDynamicToolSmoke", code: 1).write(to: browserSnapshotURL)
                 try fakeDynamicToolAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
                 try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
 
@@ -2063,6 +2056,8 @@ enum SmokeTestRunner {
                 let normalizedBrowserSnapshotOutput = browserSnapshotOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedBrowserOutput = browserOutput.replacingOccurrences(of: "\\/", with: "/")
                 let normalizedTerminalOutput = terminalOutput.replacingOccurrences(of: "\\/", with: "/")
+                let browserSnapshotData = (try? Data(contentsOf: browserSnapshotURL)) ?? Data()
+                let browserSnapshotIsPNG = isPNGData(browserSnapshotData)
                 let terminalPanelRun = store.terminalRuns.last { run in
                     run.command.contains("Raytone dynamic terminal OK")
                 }
@@ -2196,6 +2191,7 @@ enum SmokeTestRunner {
                     browserOpenObserved &&
                     staleBrowserSnapshotCleared &&
                     browserSnapshotObserved &&
+                    browserSnapshotIsPNG &&
                     browserCurrentPageStaleSnapshotCleared &&
                     browserObserved &&
                     terminalObserved &&
@@ -2240,6 +2236,8 @@ enum SmokeTestRunner {
                     "browserOpenObserved": browserOpenObserved,
                     "staleBrowserSnapshotCleared": staleBrowserSnapshotCleared,
                     "browserSnapshotObserved": browserSnapshotObserved,
+                    "browserSnapshotIsPNG": browserSnapshotIsPNG,
+                    "browserSnapshotByteCount": browserSnapshotData.count,
                     "browserCurrentPageStaleSnapshotCleared": browserCurrentPageStaleSnapshotCleared,
                     "browserObserved": browserObserved,
                     "terminalObserved": terminalObserved,
@@ -6369,14 +6367,7 @@ enum SmokeTestRunner {
                     )
                 }
 
-                let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-                guard let pngData = Data(base64Encoded: pngBase64) else {
-                    throw NSError(
-                        domain: "RaytoneCodexBrowserSnapshotInputSmoke",
-                        code: 2,
-                        userInfo: [NSLocalizedDescriptionKey: "failed to decode smoke PNG"]
-                    )
-                }
+                let pngData = try makeSmokePNGData(domain: "RaytoneCodexBrowserSnapshotInputSmoke", code: 2)
                 try fileManager.createDirectory(at: request.outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try pngData.write(to: request.outputURL)
 
@@ -17885,6 +17876,23 @@ enum SmokeTestRunner {
         case .none:
             return "none"
         }
+    }
+
+    private static func makeSmokePNGData(domain: String, code: Int) throws -> Data {
+        let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+        guard let data = Data(base64Encoded: pngBase64), isPNGData(data) else {
+            throw NSError(
+                domain: domain,
+                code: code,
+                userInfo: [NSLocalizedDescriptionKey: "failed to decode valid smoke PNG"]
+            )
+        }
+        return data
+    }
+
+    private static func isPNGData(_ data: Data) -> Bool {
+        let signature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        return data.starts(with: signature)
     }
 
     private static func fileChanges(in items: [TranscriptItem]) -> [FileChange] {

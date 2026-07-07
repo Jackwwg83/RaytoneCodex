@@ -220,6 +220,8 @@ for namespace, tool, smoke_token in dynamic_tools:
     require(f"dynamic tool {namespace}.{tool}", f'tool == "{tool}"', text["store"])
     require(f"dynamic tool {namespace}.{tool}", smoke_token, text["smoke"])
     require(f"dynamic tool {namespace}.{tool}", f"{namespace}.{tool}", text["smoke"])
+require("dynamic tool browser snapshot artifact", "browserSnapshotIsPNG", text["smoke"])
+require("dynamic tool browser snapshot artifact", "isPNGData", text["smoke"])
 
 route_tokens = {
     "plugins": ["store.route = .plugins", "PluginsPage", "plugin/list", "plugin/read", "--plugin-read-smoke-test"],
