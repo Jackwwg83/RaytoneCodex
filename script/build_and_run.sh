@@ -742,6 +742,7 @@ run_browser_snapshot_smoke() {
 run_settings_browser_snapshot_smoke() {
   local snapshot_path="$SCREENSHOT_DIR/raytonecodex-settings-browser-webview-snapshot.png"
   local snapshot_size window_screenshot window_screenshot_size old_ui_screen old_ui_smoke_screenshot
+  local ui_smoke_ok window_screenshot_available window_warning
 
   mkdir -p "$SCREENSHOT_DIR"
   rm -f "$snapshot_path"
@@ -755,28 +756,15 @@ run_settings_browser_snapshot_smoke() {
   export RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH="$snapshot_path"
   export RAYTONE_CODEX_UI_SETTLE_SECONDS="${RAYTONE_CODEX_UI_SETTLE_SECONDS:-12}"
 
+  ui_smoke_ok=true
   if ! run_ui_smoke; then
-    UI_SCREEN="$old_ui_screen"
-    UI_SMOKE_SCREENSHOT="$old_ui_smoke_screenshot"
-    unset RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE
-    unset RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH
-    return 1
+    ui_smoke_ok=false
   fi
 
   UI_SCREEN="$old_ui_screen"
   UI_SMOKE_SCREENSHOT="$old_ui_smoke_screenshot"
   unset RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE
   unset RAYTONE_CODEX_BROWSER_SNAPSHOT_PATH
-
-  if [[ ! -f "$window_screenshot" ]]; then
-    echo "Settings browser window screenshot was not created: $window_screenshot" >&2
-    return 1
-  fi
-  window_screenshot_size="$(/usr/bin/stat -f '%z' "$window_screenshot")"
-  if [[ "$window_screenshot_size" -lt 20000 ]]; then
-    echo "Settings browser window screenshot is unexpectedly small: $window_screenshot_size bytes." >&2
-    return 1
-  fi
 
   if [[ ! -f "$snapshot_path" ]]; then
     echo "Settings browser WebView snapshot was not created: $snapshot_path" >&2
@@ -788,11 +776,35 @@ run_settings_browser_snapshot_smoke() {
     return 1
   fi
 
+  window_screenshot_available=true
+  window_warning=""
+  if [[ -f "$window_screenshot" ]]; then
+    window_screenshot_size="$(/usr/bin/stat -f '%z' "$window_screenshot")"
+    if [[ "$window_screenshot_size" -lt 20000 ]]; then
+      window_screenshot_available=false
+      window_warning="Settings browser window screenshot is unexpectedly small: $window_screenshot_size bytes."
+    fi
+  else
+    window_screenshot_available=false
+    window_screenshot_size=0
+    window_warning="Settings browser window screenshot was not created; WebView snapshot was captured."
+  fi
+  if [[ "$ui_smoke_ok" != "true" && -z "$window_warning" ]]; then
+    window_warning="UI smoke did not complete cleanly; WebView snapshot was captured."
+  fi
+
   printf '{\n'
   printf '  "ok": true,\n'
   printf '  "screen": "settings-browser-snapshot",\n'
-  printf '  "windowScreenshot": "%s",\n' "$(json_escape "$window_screenshot")"
-  printf '  "windowScreenshotBytes": %s,\n' "$window_screenshot_size"
+  printf '  "windowScreenshotAvailable": %s,\n' "$window_screenshot_available"
+  if [[ "$window_screenshot_available" == "true" ]]; then
+    printf '  "windowScreenshot": "%s",\n' "$(json_escape "$window_screenshot")"
+    printf '  "windowScreenshotBytes": %s,\n' "$window_screenshot_size"
+  else
+    printf '  "windowScreenshot": null,\n'
+    printf '  "windowScreenshotBytes": 0,\n'
+    printf '  "windowCaptureWarning": "%s",\n' "$(json_escape "$window_warning")"
+  fi
   printf '  "webviewSnapshot": "%s",\n' "$(json_escape "$snapshot_path")"
   printf '  "webviewSnapshotBytes": %s\n' "$snapshot_size"
   printf '}\n'

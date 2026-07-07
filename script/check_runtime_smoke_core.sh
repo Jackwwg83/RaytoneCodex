@@ -32,7 +32,9 @@ default_cases=(
   provider-onboarding-smoke
   provider-unauthorized-smoke
   external-agent-config-smoke
+  external-agent-real-smoke
   usage-activity-smoke
+  codex-home-directory-smoke
   account-auth-smoke
   account-device-code-smoke
   account-api-key-smoke
@@ -45,6 +47,7 @@ default_cases=(
   runtime-pages-smoke
   command-surface-smoke
   sample-data-gate-smoke
+  integration-pages-smoke
   experimental-features-smoke
   catalog-smoke
   plugin-read-smoke
@@ -54,11 +57,14 @@ default_cases=(
   skill-read-smoke
   skill-extra-roots-smoke
   skill-toggle-smoke
+  plugin-scaffold-smoke
   automation-smoke
   automation-hook-smoke
   hook-notification-smoke
+  hook-controls-smoke
   app-mention-config-smoke
   app-list-updated-smoke
+  home-connection-app-mention-smoke
   file-change-stream-smoke
   runtime-diagnostics-smoke
   app-server-notification-smoke
@@ -68,16 +74,23 @@ default_cases=(
   mcp-elicitation-smoke
   browser-navigation-smoke
   browser-clear-data-smoke
+  browser-snapshot-smoke
+  browser-snapshot-request-smoke
   browser-snapshot-input-smoke
+  settings-browser-snapshot-smoke
   file-search-smoke
   local-image-input-smoke
+  mention-smoke
   file-mention-turn-smoke
   app-mention-turn-smoke
   slash-smoke
   review-smoke
+  tools-smoke
   terminal-stream-smoke
   terminal-resize-smoke
   process-stream-smoke
+  cli-smoke
+  session-smoke
   thread-management-smoke
   thread-lifecycle-smoke
   thread-bootstrap-actions-smoke
@@ -88,6 +101,7 @@ default_cases=(
   thread-metadata-smoke
   thread-memory-mode-smoke
   work-mode-smoke
+  goal-smoke
   project-switch-smoke
   workspace-switch-smoke
   branch-switch-smoke
@@ -95,6 +109,7 @@ default_cases=(
   realtime-voices-smoke
   realtime-session-smoke
   runtime-environment-smoke
+  environment-smoke
   connection-recovery-smoke
   home-connection-actions-smoke
   remote-control-smoke
@@ -103,8 +118,14 @@ default_cases=(
   personality-smoke
   windows-sandbox-smoke
   side-chat-injection-smoke
+  side-chat-smoke
+  interrupt-smoke
   thread-shell-command-smoke
+  git-repo-create-smoke
+  git-push-smoke
+  git-pr-create-smoke
   dynamic-tool-smoke
+  ui-smoke
 )
 
 if [[ "$#" -gt 0 ]]; then
