@@ -24,6 +24,11 @@ default_cases=(
   browser-navigation-smoke
   browser-snapshot-input-smoke
   file-search-smoke
+  local-image-input-smoke
+  file-mention-turn-smoke
+  app-mention-turn-smoke
+  slash-smoke
+  review-smoke
   terminal-stream-smoke
   terminal-resize-smoke
   home-connection-actions-smoke
