@@ -181,7 +181,15 @@ settings_runtime = {
         "--browser-snapshot-smoke-test",
         "--browser-snapshot-input-smoke-test",
     ],
-    "computerControl": ["configRequirements/read", "windowsSandbox/readiness", "windowsSandbox/setupStart", "--windows-sandbox-smoke-test"],
+    "computerControl": [
+        "configRequirements/read",
+        "skills/list",
+        "mcpServerStatus/list",
+        "useChronicleContextInComposer",
+        "windowsSandbox/readiness",
+        "windowsSandbox/setupStart",
+        "--windows-sandbox-smoke-test",
+    ],
     "hooks": [
         "refreshRuntimeHooks",
         "trustRuntimeHook",

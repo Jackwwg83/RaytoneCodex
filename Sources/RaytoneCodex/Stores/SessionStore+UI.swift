@@ -825,6 +825,42 @@ extension SessionStore {
     }
 
     @discardableResult
+    func useChronicleContextInComposer() async -> Bool {
+        if runtimeSkills.isEmpty && runtimeMCPServers.isEmpty {
+            await refreshRuntimeCatalog(forceReloadSkills: true)
+        }
+
+        if let server = chronicleMCPServer, chronicleRuntimeAvailable {
+            prompt = """
+            请使用 Chronicle 屏幕上下文帮助我理解当前 Mac 上正在进行的工作，并用中文给出下一步建议。
+
+            来源：mcpServerStatus/list · \(server.title) · \(server.authStatus)
+            """
+            route = .thread
+            toolPanel = .launcher
+            runtimeCatalogStatusText = "mcpServerStatus/list：已把 Chronicle 上下文请求放入输入框"
+            return true
+        }
+
+        if let skill = chronicleSkill, skill.enabled {
+            prompt = """
+            请使用 \(skill.displayName) 帮我结合当前屏幕上下文分析下一步行动，并用中文给出可执行建议。
+
+            来源：skills/list · \(skill.name) · \(skill.scope)
+            """
+            route = .thread
+            toolPanel = .launcher
+            runtimeCatalogStatusText = "skills/list：已把 Chronicle 技能请求放入输入框"
+            return true
+        }
+
+        runtimeCatalogStatusText = "skills/list + mcpServerStatus/list：未检测到可用 Chronicle"
+        route = .settings
+        settingsPane = .connections
+        return false
+    }
+
+    @discardableResult
     func openHomeConnection(
         _ kind: HomeConnectionKind,
         openExternalInstall: Bool = true

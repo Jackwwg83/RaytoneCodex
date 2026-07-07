@@ -2417,6 +2417,26 @@ struct SettingsRouteView: View {
                 Divider()
                     .overlay(Theme.borderSoft)
                     .padding(.vertical, 8)
+                SettingsValueRow(title: "Chronicle 屏幕上下文", description: "通过 app-server 的 skills/list / mcpServerStatus/list 检测本机屏幕上下文能力") {
+                    HStack(spacing: 8) {
+                        statusBadge(store.chronicleRuntimeStatusText, ok: store.chronicleRuntimeAvailable)
+                        Button("使用") {
+                            Task { await store.useChronicleContextInComposer() }
+                        }
+                        .buttonStyle(ChipButtonStyle(prominent: store.chronicleRuntimeAvailable))
+                        Button("刷新") {
+                            Task { await store.refreshRuntimeCatalog(forceReloadSkills: true) }
+                        }
+                        .buttonStyle(ChipButtonStyle())
+                    }
+                }
+                Text(store.chronicleRuntimeDetailText)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(2)
+                Divider()
+                    .overlay(Theme.borderSoft)
+                    .padding(.vertical, 8)
                 metricRow("Windows 沙箱", store.windowsSandboxReadinessStatusText)
                 metricRow("设置状态", store.windowsSandboxSetupStatusText)
                 Text(windowsSandboxSetupAvailable ? "可从当前平台启动 Windows 沙箱设置。" : "当前 macOS 客户端只显示 app-server readiness，不启动 Windows 沙箱设置。")

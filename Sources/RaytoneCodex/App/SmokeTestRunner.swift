@@ -13332,6 +13332,18 @@ enum SmokeTestRunner {
                 let readinessStatus = store.windowsSandboxReadinessStatusText
                 let started = await store.startWindowsSandboxSetup(mode: .unelevated)
                 let setupStatus = store.windowsSandboxSetupStatusText
+                await store.refreshRuntimeCatalog(forceReloadSkills: true)
+                let chronicleState: [String: Any] = [
+                    "available": store.chronicleRuntimeAvailable,
+                    "status": store.chronicleRuntimeStatusText,
+                    "detail": store.chronicleRuntimeDetailText,
+                    "source": store.chronicleRuntimeSourceText
+                ]
+                let chroniclePromptInserted = await store.useChronicleContextInComposer()
+                let chroniclePrompt = store.prompt
+                let chronicleRoute = store.route
+                let chronicleToolPanel = store.toolPanel
+                let chronicleStatus = store.runtimeCatalogStatusText
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
                 await store.stopAppServerForTesting()
 
@@ -13342,7 +13354,17 @@ enum SmokeTestRunner {
                     logText.contains(#""method":"windowsSandbox/readiness""#) &&
                     logText.contains(#""method":"windowsSandbox/setupStart""#) &&
                     logText.contains(#""mode":"unelevated""#) &&
-                    logText.contains(#""cwd":"\#(workspaceURL.path)""#)
+                    logText.contains(#""cwd":"\#(workspaceURL.path)""#) &&
+                    logText.contains(#""method":"skills/list""#) &&
+                    logText.contains(#""method":"mcpServerStatus/list""#) &&
+                    chronicleState["available"] as? Bool == true &&
+                    chronicleState["source"] as? String == "mcpServerStatus/list" &&
+                    chroniclePromptInserted &&
+                    chroniclePrompt.contains("Chronicle 屏幕上下文") &&
+                    chroniclePrompt.contains("mcpServerStatus/list") &&
+                    chronicleRoute == .thread &&
+                    chronicleToolPanel == .launcher &&
+                    chronicleStatus.contains("mcpServerStatus/list")
 
                 emitJSON([
                     "ok": ok,
@@ -13352,6 +13374,12 @@ enum SmokeTestRunner {
                     "readinessStatus": readinessStatus,
                     "setupStatus": setupStatus,
                     "started": started,
+                    "chronicleRuntime": chronicleState,
+                    "chroniclePromptInserted": chroniclePromptInserted,
+                    "chroniclePrompt": chroniclePrompt,
+                    "chronicleRoute": "\(chronicleRoute)",
+                    "chronicleToolPanel": "\(chronicleToolPanel)",
+                    "chronicleStatus": chronicleStatus,
                     "requestLogPreview": String(logText.prefix(1600))
                 ])
                 exit(ok ? 0 : 1)
@@ -16228,6 +16256,55 @@ enum SmokeTestRunner {
                     "mode": params.get("mode", "unelevated"),
                     "success": True,
                     "error": None,
+                })
+            elif method == "plugin/list":
+                send_result(request_id, {"plugins": [], "marketplaceLoadErrors": []})
+            elif method == "plugin/installed":
+                send_result(request_id, {"plugins": [], "marketplaceLoadErrors": []})
+            elif method == "plugin/share/list":
+                send_result(request_id, {"plugins": []})
+            elif method == "skills/list":
+                send_result(request_id, {
+                    "data": [{
+                        "cwd": params.get("cwds", [""])[0] if params.get("cwds") else "",
+                        "skills": [{
+                            "name": "chronicle-screen-context",
+                            "interface": {
+                                "displayName": "Chronicle 屏幕上下文",
+                                "shortDescription": "读取本机屏幕上下文以辅助 Codex 记忆和研究。",
+                            },
+                            "path": "/Users/example/.codex/skills/chronicle/SKILL.md",
+                            "scope": "user",
+                            "enabled": True,
+                        }],
+                        "errors": [],
+                    }],
+                })
+            elif method == "config/read":
+                send_result(request_id, {})
+            elif method == "hooks/list":
+                send_result(request_id, {"hooks": [], "warnings": [], "errors": []})
+            elif method == "mcpServerStatus/list":
+                send_result(request_id, {
+                    "data": [{
+                        "name": "chronicle",
+                        "serverInfo": {
+                            "name": "chronicle",
+                            "title": "Chronicle",
+                            "version": "1.0.0",
+                        },
+                        "authStatus": "authenticated",
+                        "tools": {
+                            "screen_context": {
+                                "name": "screen_context",
+                                "title": "屏幕上下文",
+                                "description": "读取当前屏幕上下文。",
+                            }
+                        },
+                        "resources": [],
+                        "resourceTemplates": [],
+                    }],
+                    "nextCursor": None,
                 })
             else:
                 send_error(request_id, f"unsupported method {method}")
