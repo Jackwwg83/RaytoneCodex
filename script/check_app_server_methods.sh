@@ -58,6 +58,7 @@ rg -o 'request\(method: "[^"]+"' "$SWIFT_CLIENT" |
 
 comm -23 "$tmp_dir/swift_methods" "$tmp_dir/allowed_methods" >"$tmp_dir/swift_not_in_schema"
 comm -23 "$tmp_dir/allowed_methods" "$tmp_dir/swift_methods" >"$tmp_dir/schema_not_in_swift_raw"
+comm -12 "$tmp_dir/schema_not_in_swift_raw" "$tmp_dir/client_allowlist" >"$tmp_dir/schema_allowlisted"
 comm -23 "$tmp_dir/schema_not_in_swift_raw" "$tmp_dir/client_allowlist" >"$tmp_dir/schema_not_in_swift"
 
 jq -r '.definitions.ServerNotification.oneOf[]?.properties.method.enum[]?' "$STABLE_SCHEMA" "$EXPERIMENTAL_SCHEMA" |
@@ -112,6 +113,8 @@ schema_count="$(wc -l <"$tmp_dir/allowed_methods" | tr -d ' ')"
 swift_count="$(wc -l <"$tmp_dir/swift_methods" | tr -d ' ')"
 swift_not_in_schema_count="$(wc -l <"$tmp_dir/swift_not_in_schema" | tr -d ' ')"
 schema_not_in_swift_count="$(wc -l <"$tmp_dir/schema_not_in_swift" | tr -d ' ')"
+client_allowlisted_count="$(wc -l <"$tmp_dir/schema_allowlisted" | tr -d ' ')"
+client_allowlisted_methods_json="$(jq -R -s -c 'split("\n") | map(select(length > 0))' <"$tmp_dir/schema_allowlisted")"
 notification_count="$(wc -l <"$tmp_dir/server_notifications" | tr -d ' ')"
 unhandled_notification_count="$(wc -l <"$tmp_dir/unhandled_notifications" | tr -d ' ')"
 server_request_count="$(wc -l <"$tmp_dir/server_requests" | tr -d ' ')"
@@ -144,8 +147,8 @@ if [[ "$swift_not_in_schema_count" != "0" ||
       "$unhandled_notification_count" != "0" ||
       "$unhandled_server_request_count" != "0" ||
       "$stale_split_schema_count" != "0" ]]; then
-  echo "{\"ok\":false,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":$swift_not_in_schema_count,\"schemaNotInSwift\":$schema_not_in_swift_count,\"serverNotifications\":$notification_count,\"unhandledNotifications\":$unhandled_notification_count,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":$unhandled_server_request_count,\"staleSplitSchemas\":$stale_split_schema_count}"
+  echo "{\"ok\":false,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":$swift_not_in_schema_count,\"schemaNotInSwift\":$schema_not_in_swift_count,\"clientAllowlisted\":$client_allowlisted_count,\"clientAllowlistedMethods\":$client_allowlisted_methods_json,\"serverNotifications\":$notification_count,\"unhandledNotifications\":$unhandled_notification_count,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":$unhandled_server_request_count,\"staleSplitSchemas\":$stale_split_schema_count}"
   exit 1
 fi
 
-echo "{\"ok\":true,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":0,\"schemaNotInSwift\":0,\"clientAllowlisted\":1,\"serverNotifications\":$notification_count,\"unhandledNotifications\":0,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":0,\"staleSplitSchemas\":0}"
+echo "{\"ok\":true,\"stableMethods\":$stable_count,\"experimentalMethods\":$experimental_count,\"schemaMethods\":$schema_count,\"swiftMethods\":$swift_count,\"swiftNotInSchema\":0,\"schemaNotInSwift\":0,\"clientAllowlisted\":$client_allowlisted_count,\"clientAllowlistedMethods\":$client_allowlisted_methods_json,\"serverNotifications\":$notification_count,\"unhandledNotifications\":0,\"serverRequests\":$server_request_count,\"unhandledServerRequests\":0,\"staleSplitSchemas\":0}"
