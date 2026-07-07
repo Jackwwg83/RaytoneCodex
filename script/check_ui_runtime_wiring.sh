@@ -86,7 +86,7 @@ settings_runtime = {
         "--prevent-sleep-smoke-test",
         "--runtime-diagnostics-smoke-test",
     ],
-    "modelsProviders": ["model/list", "modelProvider/capabilities/read", "RaytoneKeychainService", "RaytoneProxyService", "continueProviderOnboardingWithOpenAI", "继续使用 OpenAI", "--model-catalog-smoke-test", "--model-provider-capabilities-smoke-test", "--provider-sidecar-smoke-test", "--provider-onboarding-smoke-test", "--provider-unauthorized-smoke-test"],
+    "modelsProviders": ["model/list", "modelProvider/capabilities/read", "RaytoneKeychainService", "RaytoneProxyService", "continueProviderOnboardingWithOpenAI", "继续使用 OpenAI", "稍后在设置里配置", "dismissProviderOnboarding", "已跳过首启向导", "--model-catalog-smoke-test", "--model-provider-capabilities-smoke-test", "--provider-sidecar-smoke-test", "--provider-onboarding-smoke-test", "--provider-unauthorized-smoke-test"],
     "profile": [
         "account/read",
         "account/usage/read",

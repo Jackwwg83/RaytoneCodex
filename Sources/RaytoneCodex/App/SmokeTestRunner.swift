@@ -4731,6 +4731,32 @@ enum SmokeTestRunner {
                 await openAIStore.stopAppServerForTesting()
                 openAIStore.resetProviderOnboardingForTesting()
 
+                let skipStore = SessionStore()
+                skipStore.providers.append(RaytoneProviderConfiguration(
+                    id: providerID,
+                    displayName: "Onboarding Provider",
+                    baseURL: baseURL,
+                    model: model,
+                    models: [model],
+                    kind: .chatCompletionsSidecar
+                ))
+                skipStore.resetProviderOnboardingForTesting()
+                skipStore.evaluateProviderOnboarding(force: true)
+                let skipInitiallyPresented = skipStore.providerOnboardingPresented
+                skipStore.route = .settings
+                skipStore.settingsPane = .modelsProviders
+                skipStore.dismissProviderOnboarding()
+                skipStore.evaluateProviderOnboarding()
+                let skipDismissed = !skipStore.providerOnboardingPresented
+                let skipRouteOK = skipStore.route == .settings && skipStore.settingsPane == .modelsProviders
+                let skipStatus = skipStore.providerOnboardingStatusText
+                let skipOK = skipInitiallyPresented &&
+                    skipDismissed &&
+                    skipRouteOK &&
+                    skipStatus.contains("已跳过首启向导")
+                await skipStore.stopAppServerForTesting()
+                skipStore.resetProviderOnboardingForTesting()
+
                 try? RaytoneKeychainService.deletePassword(account: providerID)
                 store.resetProviderOnboardingForTesting()
                 store.evaluateProviderOnboarding(force: true)
@@ -4759,6 +4785,7 @@ enum SmokeTestRunner {
                 let upstreamVerified = requestLog.contains("\"path\":\"/v1/models\"") ||
                     requestLog.contains("\"path\":\"\\/v1\\/models\"")
                 let ok = openAIOk &&
+                    skipOK &&
                     initiallyPresented &&
                     completed &&
                     !presentedAfterCompletion &&
@@ -4803,6 +4830,11 @@ enum SmokeTestRunner {
                     "openAIStatus": openAIStatus,
                     "openAIConfigPath": openAIConfigURL.path,
                     "openAIConfigText": openAIConfigText,
+                    "skipOK": skipOK,
+                    "skipInitiallyPresented": skipInitiallyPresented,
+                    "skipDismissed": skipDismissed,
+                    "skipRouteOK": skipRouteOK,
+                    "skipStatus": skipStatus,
                     "initiallyPresented": initiallyPresented,
                     "completed": completed,
                     "presentedAfterCompletion": presentedAfterCompletion,
