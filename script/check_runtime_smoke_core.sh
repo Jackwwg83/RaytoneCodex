@@ -12,6 +12,9 @@ default_cases=(
   model-config-smoke
   provider-sidecar-smoke
   usage-activity-smoke
+  catalog-smoke
+  plugin-read-smoke
+  skill-read-smoke
   file-search-smoke
   home-connection-actions-smoke
   side-chat-injection-smoke
