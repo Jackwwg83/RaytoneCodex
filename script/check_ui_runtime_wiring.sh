@@ -499,6 +499,7 @@ for token in thread_history_runtime_tokens:
     require("thread history runtime", token)
 
 codex_config_runtime_tokens = [
+    "selectProvider",
     "saveRuntimeModelSelection",
     "commitRuntimeModelSelection",
     "model/model_provider",

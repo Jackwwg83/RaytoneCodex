@@ -4444,6 +4444,13 @@ enum SmokeTestRunner {
                     models: [sidecarModel2],
                     kind: .chatCompletionsSidecar
                 ))
+                store.selectProvider(sidecarProviderID)
+                await store.waitForProviderSelectionToSettleForTesting()
+                let selectedViaProviderRowID = store.selectedProviderID
+                let selectedViaProviderRowModel = store.model
+                let selectedThreadModelAfterProviderRow = store.selectedThread.model
+                let providerRowConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+
                 await store.saveRuntimeModelSelection(providerID: sidecarProviderID, model: sidecarModel)
                 let persistedSidecarSelectedProviderID = store.runtimeConfig?.raytoneSelectedProviderID ?? ""
                 let persistedSidecarConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
@@ -4470,6 +4477,10 @@ enum SmokeTestRunner {
                     selectedThreadModelAfterSwitchBack == selectedModel &&
                     config?.model == selectedModel &&
                     config?.modelProvider == "openai" &&
+                    selectedViaProviderRowID == sidecarProviderID &&
+                    selectedViaProviderRowModel == sidecarModel &&
+                    selectedThreadModelAfterProviderRow == sidecarModel &&
+                    providerRowConfigText.contains("selected_provider_id = \"\(sidecarProviderID)\"") &&
                     configText.contains("model = \"\(selectedModel)\"") &&
                     configText.contains("model_provider = \"openai\"") &&
                     configText.contains("selected_provider_id = \"openai\"")
@@ -4492,6 +4503,10 @@ enum SmokeTestRunner {
                     "sidecarSelectedProviderID": sidecarSelectedProviderID,
                     "sidecarSelectedModel": sidecarSelectedModel,
                     "sidecarSelectedModel2": sidecarModel2,
+                    "selectedViaProviderRowID": selectedViaProviderRowID,
+                    "selectedViaProviderRowModel": selectedViaProviderRowModel,
+                    "selectedThreadModelAfterProviderRow": selectedThreadModelAfterProviderRow,
+                    "providerRowConfigText": providerRowConfigText,
                     "persistedSidecarSelectedProviderID": persistedSidecarSelectedProviderID,
                     "persistedSidecarConfigText": persistedSidecarConfigText,
                     "selectedThreadModelAfterSidecarMenu": selectedThreadModelAfterSidecarMenu,
