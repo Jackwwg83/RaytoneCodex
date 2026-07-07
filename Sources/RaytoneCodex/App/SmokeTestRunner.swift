@@ -5231,6 +5231,11 @@ enum SmokeTestRunner {
                     "mcpServerCount": store.runtimeMCPServers.count
                 ]
 
+                await store.resetCodexMemory()
+                let resetStatus = store.runtimeCatalogStatusText
+                let resetErrors = store.runtimeCatalogErrors
+                let resetRefreshing = store.runtimeCatalogIsRefreshing
+
                 await store.stopAppServerForTesting()
 
                 let ok = disabledConfig?.memoryGenerateMemories == false &&
@@ -5247,7 +5252,11 @@ enum SmokeTestRunner {
                     skipDisabledConfig?.memoryDisableOnExternalContext == false &&
                     skipDisabledText.contains("disable_on_external_context = false") &&
                     !store.chronicleRuntimeStatusText.isEmpty &&
-                    !store.chronicleRuntimeDetailText.isEmpty
+                    !store.chronicleRuntimeDetailText.isEmpty &&
+                    resetStatus.contains("memory/reset") &&
+                    resetStatus.contains("已重置") &&
+                    resetErrors.isEmpty &&
+                    resetRefreshing == false
 
                 emitJSON([
                     "ok": ok,
@@ -5262,6 +5271,9 @@ enum SmokeTestRunner {
                     "skipEnabled": skipEnabledState,
                     "skipDisabled": skipDisabledState,
                     "chronicleRuntime": chronicleState,
+                    "resetStatus": resetStatus,
+                    "resetErrors": resetErrors,
+                    "resetRefreshing": resetRefreshing,
                     "runtimeCatalogStatusText": store.runtimeCatalogStatusText
                 ])
                 exit(ok ? 0 : 1)

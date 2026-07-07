@@ -5589,7 +5589,9 @@ final class SessionStore: ObservableObject {
     }
 
     func resetCodexMemory() async {
+        runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在调用 memory/reset…"
+        runtimeCatalogErrors = []
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             try await client.resetMemory()
@@ -5598,6 +5600,7 @@ final class SessionStore: ObservableObject {
             runtimeCatalogStatusText = "记忆重置失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
+        runtimeCatalogIsRefreshing = false
     }
 
     func refreshWorkspaceWorktrees() async {
