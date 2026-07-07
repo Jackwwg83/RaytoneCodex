@@ -10081,6 +10081,15 @@ enum SmokeTestRunner {
                 }
                 await waitForStoreToSettle(store)
 
+                let notificationStatus = store.runtimeCatalogStatusText
+                let notificationErrors = store.runtimeCatalogErrors
+                await store.diagnoseWorkspaceRuntime()
+                let diagnosticStatus = store.runtimeCatalogStatusText
+                let diagnosticRun = store.terminalRuns.last { run in
+                    run.command.contains("--version") && run.command.contains("app-server --help")
+                }
+                let diagnosticOutput = diagnosticRun?.output ?? ""
+
                 let notices = store.selectedThread.items.compactMap { item -> Notice? in
                     if case let .notice(notice) = item.kind { return notice }
                     return nil
@@ -10104,6 +10113,20 @@ enum SmokeTestRunner {
                 let logHasAllMethods = expectedMethods.allSatisfy { method in
                     logText.contains(#""method":"\#(method)""#)
                 }
+                let processMethodsObserved = [
+                    "process/spawn",
+                    "process/outputDelta",
+                    "process/exited"
+                ].allSatisfy { method in
+                    logText.contains(#""method":"\#(method)""#)
+                }
+                let diagnosticCommandObserved = diagnosticRun?.command.contains(scriptURL.path) == true &&
+                    diagnosticRun?.command.contains("app-server --help") == true
+                let diagnosticOutputObserved = diagnosticOutput.contains("codex-cli fake-runtime-diagnostics") &&
+                    diagnosticOutput.contains("Usage: codex app-server") &&
+                    diagnosticRun?.exitCode == 0 &&
+                    diagnosticRun?.status == .succeeded &&
+                    diagnosticStatus.contains("process/exited")
                 let ok = !store.isRunning &&
                     store.selectedThread.appServerThreadID == "thread-runtime-diagnostics" &&
                     notices.count >= expectedMethods.count &&
@@ -10120,8 +10143,11 @@ enum SmokeTestRunner {
                     noticeText.contains("内部服务器错误") &&
                     noticeText.contains("raytone error notification smoke") &&
                     noticeText.contains("旧版协议即将移除") &&
-                    store.runtimeCatalogStatusText.contains("deprecationNotice") &&
-                    store.runtimeCatalogErrors.contains(where: { $0.contains("旧版协议即将移除") }) &&
+                    notificationStatus.contains("deprecationNotice") &&
+                    notificationErrors.contains(where: { $0.contains("旧版协议即将移除") }) &&
+                    diagnosticCommandObserved &&
+                    diagnosticOutputObserved &&
+                    processMethodsObserved &&
                     logHasAllMethods
 
                 emitJSON([
@@ -10132,8 +10158,14 @@ enum SmokeTestRunner {
                     "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
                     "noticeCount": notices.count,
                     "noticeText": noticeText,
-                    "runtimeCatalogStatus": store.runtimeCatalogStatusText,
-                    "runtimeCatalogErrors": store.runtimeCatalogErrors,
+                    "notificationStatus": notificationStatus,
+                    "notificationErrors": notificationErrors,
+                    "diagnosticStatus": diagnosticStatus,
+                    "diagnosticCommand": diagnosticRun?.command ?? "",
+                    "diagnosticOutput": diagnosticOutput,
+                    "diagnosticCommandObserved": diagnosticCommandObserved,
+                    "diagnosticOutputObserved": diagnosticOutputObserved,
+                    "processMethodsObserved": processMethodsObserved,
                     "isRunning": store.isRunning,
                     "logHasAllMethods": logHasAllMethods,
                     "requestLogPreview": String(logText.prefix(2600))
@@ -14016,9 +14048,13 @@ enum SmokeTestRunner {
         import json
         import os
         import sys
+        import base64
 
         log_path = os.environ.get("RAYTONE_RUNTIME_DIAGNOSTICS_LOG")
         cwd = os.getcwd()
+
+        def b64(text):
+            return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
         def log(message):
             if not log_path:
@@ -14149,6 +14185,33 @@ enum SmokeTestRunner {
                 })
                 send_notification("turn/completed", {
                     "turn": {"id": "turn-runtime-diagnostics", "status": "completed"}
+                })
+            elif method == "process/spawn":
+                process_handle = params.get("processHandle", "runtime-diagnostics-process")
+                command = params.get("command") or []
+                command_text = " ".join(command)
+                log({
+                    "diagnosticProcessCommand": command_text,
+                    "processHandle": process_handle,
+                    "cwd": params.get("cwd"),
+                })
+                send_result(request_id, {
+                    "processHandle": process_handle,
+                    "started": True,
+                })
+                send_notification("process/outputDelta", {
+                    "processHandle": process_handle,
+                    "stream": "stdout",
+                    "deltaBase64": b64("codex-cli fake-runtime-diagnostics\n"),
+                    "capReached": False,
+                })
+                send_notification("process/exited", {
+                    "processHandle": process_handle,
+                    "exitCode": 0,
+                    "stdout": "Usage: codex app-server [OPTIONS]\n",
+                    "stdoutCapReached": False,
+                    "stderr": "",
+                    "stderrCapReached": False,
                 })
             else:
                 send_error(request_id, f"unsupported method {method}")
