@@ -17,6 +17,13 @@ default_cases=(
   auto-review-smoke
   provider-sidecar-smoke
   usage-activity-smoke
+  account-auth-smoke
+  account-device-code-smoke
+  account-api-key-smoke
+  profile-privacy-smoke
+  profile-share-smoke
+  add-credits-nudge-smoke
+  feedback-upload-smoke
   catalog-smoke
   plugin-read-smoke
   skill-read-smoke
