@@ -5,6 +5,7 @@ DerivedData/
 sidecar/raytone-proxy/target/
 third_party/
 screenshots/
+artifacts/
 
 .DS_Store
 *.xcuserstate
