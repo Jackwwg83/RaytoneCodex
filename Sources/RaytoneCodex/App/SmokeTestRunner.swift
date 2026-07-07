@@ -11033,8 +11033,9 @@ enum SmokeTestRunner {
                 login?.loginID?.isEmpty == false &&
                 !authURL.isEmpty &&
                 startErrors.isEmpty &&
-                !cancelStatus.hasPrefix("取消登录失败") &&
-                !cancelErrors.contains { $0.localizedCaseInsensitiveContains("account/login/cancel") }
+                cancelStatus == "account/login/cancel：canceled" &&
+                cancelErrors.isEmpty &&
+                store.activeAccountLogin == nil
 
             emitJSON([
                 "ok": ok,
@@ -11088,8 +11089,9 @@ enum SmokeTestRunner {
                 !userCode.isEmpty &&
                 startStatus.contains("account/login/start(chatgptDeviceCode)") &&
                 startErrors.isEmpty &&
-                !cancelStatus.hasPrefix("取消登录失败") &&
-                cancelErrors.isEmpty
+                cancelStatus == "account/login/cancel：canceled" &&
+                cancelErrors.isEmpty &&
+                store.activeAccountLogin == nil
 
             emitJSON([
                 "ok": ok,
@@ -11223,6 +11225,7 @@ enum SmokeTestRunner {
                 let logoutStatus = store.runtimeCatalogStatusText
                 let logoutErrors = store.runtimeCatalogErrors
                 let authExistsAfterLogout = FileManager.default.fileExists(atPath: authURL.path)
+                let accountKindAfterLogout = store.runtimeAccount?.kind ?? "nil"
 
                 let ok = store.runtimeSnapshot.executable != nil &&
                     loginOK &&
@@ -11230,7 +11233,11 @@ enum SmokeTestRunner {
                     authExistsAfterLogin &&
                     authHasAPIKey &&
                     !loginStatus.hasPrefix("API Key 登录失败") &&
-                    !logoutStatus.hasPrefix("退出登录失败")
+                    logoutStatus == "account/logout 已完成" &&
+                    !authExistsAfterLogout &&
+                    accountKindAfterLogout != "apiKey" &&
+                    store.runtimeTokenUsage == nil &&
+                    store.runtimeRateLimits == nil
 
                 emitJSON([
                     "ok": ok,
@@ -11245,6 +11252,7 @@ enum SmokeTestRunner {
                     "authFileExistedAfterLogin": authExistsAfterLogin,
                     "authFileKeys": authKeys,
                     "authFileHadAPIKeyField": authHasAPIKey,
+                    "accountKindAfterLogout": accountKindAfterLogout,
                     "logoutStatus": logoutStatus,
                     "logoutErrors": logoutErrors,
                     "authFileExistedAfterLogout": authExistsAfterLogout

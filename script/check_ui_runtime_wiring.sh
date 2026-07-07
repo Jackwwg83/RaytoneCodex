@@ -69,7 +69,17 @@ for pane in settings_cases:
 settings_runtime = {
     "general": ["refreshRuntimeCatalog", "saveRuntimeWorkMode", "saveRuntimeShowInMenuBar", "diagnoseWorkspaceRuntime", "--runtime-diagnostics-smoke-test"],
     "modelsProviders": ["model/list", "modelProvider/capabilities/read", "RaytoneKeychainService", "RaytoneProxyService", "continueProviderOnboardingWithOpenAI", "继续使用 OpenAI", "--model-catalog-smoke-test", "--model-provider-capabilities-smoke-test", "--provider-sidecar-smoke-test", "--provider-onboarding-smoke-test", "--provider-unauthorized-smoke-test"],
-    "profile": ["account/read", "account/usage/read", "feedback/upload", "--profile-share-smoke-test"],
+    "profile": [
+        "account/read",
+        "account/usage/read",
+        "account/login/start",
+        "account/login/cancel",
+        "account/logout",
+        "feedback/upload",
+        "--account-auth-smoke-test",
+        "--account-api-key-smoke-test",
+        "--profile-share-smoke-test",
+    ],
     "appearance": ["saveRuntimeAppearance", "--desktop-settings-smoke-test"],
     "configuration": [
         "config/read",
