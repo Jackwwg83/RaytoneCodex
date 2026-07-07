@@ -243,6 +243,7 @@ page_runtime_tokens = {
         "plugin/uninstall",
         "plugin/share/save",
         "plugin/share/checkout",
+        "plugin/share/delete",
         "skills/config/write",
         "createLocalPluginTemplate",
         "createLocalSkillTemplate",

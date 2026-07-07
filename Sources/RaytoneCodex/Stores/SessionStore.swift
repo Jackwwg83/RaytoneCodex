@@ -6230,14 +6230,14 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func deleteSharedPlugin(_ plugin: CodexRuntimePlugin) async {
+    func deleteSharedPlugin(_ plugin: CodexRuntimePlugin, requireConfirmation: Bool = true) async {
         guard let remotePluginID = plugin.shareContext?.remotePluginID else {
             runtimeCatalogStatusText = "plugin/share/delete：缺少 remotePluginId"
             runtimePluginDetailStatusText = runtimeCatalogStatusText
             return
         }
 
-        guard confirmDeleteSharedPlugin(plugin, remotePluginID: remotePluginID) else {
+        guard !requireConfirmation || confirmDeleteSharedPlugin(plugin, remotePluginID: remotePluginID) else {
             runtimeCatalogStatusText = "plugin/share/delete：已取消"
             runtimePluginDetailStatusText = runtimeCatalogStatusText
             return
