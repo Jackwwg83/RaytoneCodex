@@ -236,6 +236,8 @@ final class SessionStore: ObservableObject {
     private let proxyService = RaytoneProxyService()
     private var appServerClient: CodexAppServerClient?
     private var appServerEventsTask: Task<Void, Never>?
+    private var remoteControlAppServerClient: CodexAppServerClient?
+    private var remoteControlAppServerEventsTask: Task<Void, Never>?
     private var appServerItemIDs: [String: UUID] = [:]
     private var activeDiffTranscriptIDs: Set<UUID> = []
     private var activeFileChangePatchTranscriptIDs: [String: Set<UUID>] = [:]
@@ -247,6 +249,7 @@ final class SessionStore: ObservableObject {
     private var activeAppServerTurnID: String?
     private var appServerConnectionState: ConnectionState?
     private var appServerEnvironmentKey: String?
+    private var remoteControlAppServerEnvironmentKey: String?
     private var filePanelWatchID: String?
     private var filePanelWatchedPath: String?
     private var activeFileSearchSessionID: String?
@@ -677,10 +680,17 @@ final class SessionStore: ObservableObject {
         if let client = appServerClient {
             await client.stop()
         }
+        if let client = remoteControlAppServerClient {
+            await client.stop()
+        }
         appServerClient = nil
         appServerEventsTask?.cancel()
         appServerEventsTask = nil
         appServerEnvironmentKey = nil
+        remoteControlAppServerClient = nil
+        remoteControlAppServerEventsTask?.cancel()
+        remoteControlAppServerEventsTask = nil
+        remoteControlAppServerEnvironmentKey = nil
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
         activeFileChangePatchTranscriptIDs.removeAll()
@@ -5344,10 +5354,14 @@ final class SessionStore: ObservableObject {
             }
 
             do {
-                let status = try await client.readRemoteControlStatus()
+                let remoteControlClient = try await ensureAppServerClient(
+                    useProviderConfiguration: false,
+                    remoteControl: true
+                )
+                let status = try await remoteControlClient.readRemoteControlStatus()
                 applyRemoteControlStatus(status)
                 do {
-                    try await loadRemoteControlClientsIfAvailable(using: client, environmentID: status.environmentID)
+                    try await loadRemoteControlClientsIfAvailable(using: remoteControlClient, environmentID: status.environmentID)
                 } catch {
                     errors.append("remoteControl/client/list：\(error.localizedDescription)")
                 }
@@ -6632,10 +6646,17 @@ final class SessionStore: ObservableObject {
         if let client = appServerClient {
             await client.stop()
         }
+        if let client = remoteControlAppServerClient {
+            await client.stop()
+        }
         appServerClient = nil
         appServerEventsTask?.cancel()
         appServerEventsTask = nil
         appServerEnvironmentKey = nil
+        remoteControlAppServerClient = nil
+        remoteControlAppServerEventsTask?.cancel()
+        remoteControlAppServerEventsTask = nil
+        remoteControlAppServerEnvironmentKey = nil
         appServerItemIDs.removeAll()
         resetFilePanelWatch()
     }
@@ -7993,6 +8014,10 @@ final class SessionStore: ObservableObject {
         useProviderConfiguration: Bool = true,
         remoteControl: Bool = false
     ) async throws -> CodexAppServerClient {
+        if remoteControl {
+            return try await ensureRemoteControlAppServerClient(useProviderConfiguration: useProviderConfiguration)
+        }
+
         if runtimeSnapshot.executable == nil {
             runtimeSnapshot = await service.inspectRuntime()
         }
@@ -8063,6 +8088,67 @@ final class SessionStore: ObservableObject {
         return client
     }
 
+    private func ensureRemoteControlAppServerClient(
+        useProviderConfiguration: Bool = false
+    ) async throws -> CodexAppServerClient {
+        if runtimeSnapshot.executable == nil {
+            runtimeSnapshot = await service.inspectRuntime()
+        }
+
+        guard let executable = runtimeSnapshot.executable ?? service.resolver.resolve() else {
+            appServerConnectionState = .notInstalled
+            throw CodexCLIError.executableNotFound
+        }
+
+        var environmentOverrides = baseAppServerEnvironmentOverrides()
+        if useProviderConfiguration {
+            environmentOverrides.merge(try await appServerEnvironmentOverrides()) { _, new in new }
+        }
+
+        let baseEnvironmentKey: String
+        if let codexHome = environmentOverrides["CODEX_HOME"] {
+            baseEnvironmentKey = codexHome
+        } else if useProviderConfiguration {
+            baseEnvironmentKey = "global"
+        } else {
+            baseEnvironmentKey = selectedProvider.usesSidecar ? "global-tools" : "global"
+        }
+        let environmentKey = "\(baseEnvironmentKey)|remoteControl:true"
+
+        if remoteControlAppServerEnvironmentKey != nil,
+           remoteControlAppServerEnvironmentKey != environmentKey {
+            if let existing = remoteControlAppServerClient {
+                await existing.stop()
+            }
+            remoteControlAppServerClient = nil
+            remoteControlAppServerEventsTask?.cancel()
+            remoteControlAppServerEventsTask = nil
+        }
+        remoteControlAppServerEnvironmentKey = environmentKey
+
+        let client: CodexAppServerClient
+        if let existing = remoteControlAppServerClient {
+            client = existing
+        } else {
+            client = CodexAppServerClient(
+                executable: executable,
+                workspaceURL: URL(fileURLWithPath: workspacePath),
+                environmentOverrides: environmentOverrides,
+                remoteControl: true
+            )
+            remoteControlAppServerClient = client
+            startRemoteControlAppServerEventPump(client)
+        }
+
+        try await client.initialize()
+        if !runtimeSkillExtraRoots.isEmpty {
+            try await client.setSkillExtraRoots(runtimeSkillExtraRoots)
+        }
+        let version = runtimeSnapshot.version?.isEmpty == false ? runtimeSnapshot.version! : "app-server"
+        appServerConnectionState = .connected(version: version)
+        return client
+    }
+
     private func appServerEnvironmentOverrides() async throws -> [String: String] {
         let provider = selectedProvider
         guard provider.usesSidecar else {
@@ -8119,10 +8205,17 @@ final class SessionStore: ObservableObject {
         if let existing = appServerClient {
             await existing.stop()
         }
+        if let existing = remoteControlAppServerClient {
+            await existing.stop()
+        }
         appServerClient = nil
         appServerEventsTask?.cancel()
         appServerEventsTask = nil
         appServerEnvironmentKey = nil
+        remoteControlAppServerClient = nil
+        remoteControlAppServerEventsTask?.cancel()
+        remoteControlAppServerEventsTask = nil
+        remoteControlAppServerEnvironmentKey = nil
         activeAppServerTurnID = nil
         activeDiffTranscriptIDs.removeAll()
         activeFileChangePatchTranscriptIDs.removeAll()
@@ -8173,6 +8266,19 @@ final class SessionStore: ObservableObject {
 
         let events = client.events
         appServerEventsTask = Task { [weak self] in
+            for await event in events {
+                self?.handleAppServerEvent(event)
+            }
+        }
+    }
+
+    private func startRemoteControlAppServerEventPump(_ client: CodexAppServerClient) {
+        guard remoteControlAppServerEventsTask == nil else {
+            return
+        }
+
+        let events = client.events
+        remoteControlAppServerEventsTask = Task { [weak self] in
             for await event in events {
                 self?.handleAppServerEvent(event)
             }
