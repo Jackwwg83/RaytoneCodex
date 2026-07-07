@@ -662,6 +662,7 @@ account_recovery_external_realtime_tokens = [
     "targetSkillContainsMarker",
     "listRealtimeVoices",
     "thread/realtime/listVoices",
+    "startVoiceInput",
     "startRealtimeTextSessionForVoiceInput",
     "startRealtime(",
     "thread/realtime/start",

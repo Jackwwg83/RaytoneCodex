@@ -13559,16 +13559,70 @@ enum SmokeTestRunner {
                         store.voiceInputStatusText.contains("已停止") ||
                         store.voiceInputStatusText.contains("已关闭")
                     )
+
+                await store.stopAppServerForTesting()
+
+                let voiceStore = SessionStore()
+                voiceStore.workspacePath = workspaceURL.path
+                voiceStore.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-realtime-session"
+                )
+                voiceStore.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_REALTIME_SESSION_LOG": logURL.path
+                ]
+
+                fputs("realtime-session-smoke: startVoiceInput\n", stderr)
+                await voiceStore.startVoiceInput()
+
+                let voiceDeadline = Date().addingTimeInterval(8)
+                while Date() < voiceDeadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    let realtimeStartCount = logText.components(separatedBy: #""method":"thread/realtime/start""#).count - 1
+                    if realtimeStartCount >= 2,
+                       logText.contains("RaytoneCodex macOS 麦克风输入") {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(voiceStore)
+                let voiceInputStatusText = voiceStore.voiceInputStatusText
+                let voiceInputNotices = voiceStore.selectedThread.items.compactMap { item -> String? in
+                    if case let .notice(notice) = item.kind {
+                        return notice.text
+                    }
+                    return nil
+                }
+                let voiceInputStopped = await voiceStore.stopRealtimeVoiceInput()
+                let voiceInputStopStatusText = voiceStore.voiceInputStatusText
+
+                logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? logText
+                let realtimeListVoicesCount = logText.components(separatedBy: #""method":"thread/realtime/listVoices""#).count - 1
+                let realtimeStartCount = logText.components(separatedBy: #""method":"thread/realtime/start""#).count - 1
+                let voiceInputRequestObserved = realtimeListVoicesCount >= 2 &&
+                    realtimeStartCount >= 2 &&
+                    logText.contains("RaytoneCodex macOS 麦克风输入") &&
+                    logText.contains(#""voice":"marin""#)
+                let voiceInputStoreObserved = voiceStore.runtimeRealtimeVoices?.defaultV2 == "marin" &&
+                    voiceStore.selectedThread.appServerThreadID == "thread-realtime-smoke" &&
+                    (
+                        voiceInputStatusText.contains("Codex realtime") ||
+                        voiceInputStatusText.contains("thread/realtime/start") ||
+                        voiceInputNotices.contains { $0.contains("Codex realtime 已读取") }
+                    )
                 let ok = started &&
                     audioAppended &&
                     appended &&
                     stopped &&
+                    voiceInputStopped &&
                     requestObserved &&
+                    voiceInputRequestObserved &&
+                    voiceInputStoreObserved &&
                     notificationObserved &&
                     voices?.defaultV2 == "marin" &&
                     store.selectedThread.appServerThreadID == "thread-realtime-smoke"
 
-                await store.stopAppServerForTesting()
+                await voiceStore.stopAppServerForTesting()
                 emitJSON([
                     "ok": ok,
                     "workspacePath": workspaceURL.path,
@@ -13578,17 +13632,27 @@ enum SmokeTestRunner {
                     "audioAppended": audioAppended,
                     "appended": appended,
                     "stopped": stopped,
+                    "voiceInputStopped": voiceInputStopped,
                     "requestObserved": requestObserved,
+                    "voiceInputRequestObserved": voiceInputRequestObserved,
+                    "voiceInputStoreObserved": voiceInputStoreObserved,
+                    "realtimeListVoicesCount": realtimeListVoicesCount,
+                    "realtimeStartCount": realtimeStartCount,
                     "notificationObserved": notificationObserved,
                     "audioNotificationObserved": audioNotificationObserved,
                     "audioAppendStatusText": audioAppendStatusText,
                     "voiceInputStatusText": store.voiceInputStatusText,
+                    "startVoiceInputStatusText": voiceInputStatusText,
+                    "startVoiceInputStopStatusText": voiceInputStopStatusText,
+                    "startVoiceInputNoticeCount": voiceInputNotices.count,
                     "threadID": store.selectedThread.appServerThreadID ?? "",
+                    "startVoiceInputThreadID": voiceStore.selectedThread.appServerThreadID ?? "",
                     "voices": realtimeVoicesPayload(voices),
+                    "startVoiceInputVoices": realtimeVoicesPayload(voiceStore.runtimeRealtimeVoices),
                     "transcriptTexts": transcriptTexts,
                     "reasoningTexts": reasoningTexts,
-                    "requestLogPreview": String(logText.prefix(2600)),
-                    "source": "thread/realtime/listVoices + start + appendAudio + appendText + stop"
+                    "requestLogPreview": String(logText.prefix(3200)),
+                    "source": "thread/realtime/listVoices + startVoiceInput + start + appendAudio + appendText + stop"
                 ])
                 exit(ok ? 0 : 1)
             } catch {

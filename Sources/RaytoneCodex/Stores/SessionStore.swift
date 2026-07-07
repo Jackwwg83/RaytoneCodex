@@ -2369,7 +2369,8 @@ final class SessionStore: ObservableObject {
         await refreshRealtimeVoicesForVoiceInput()
         _ = await startRealtimeTextSessionForVoiceInput()
 
-        let didStart = NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+        let application: NSApplication? = NSApp
+        let didStart = application?.sendAction(Selector(("startDictation:")), to: nil, from: nil) ?? false
         guard !didStart else {
             voiceInputStatusText = "已请求系统听写 · Codex realtime \(runtimeRealtimeVoicesSummary)"
             return
