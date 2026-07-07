@@ -24,6 +24,8 @@ default_cases=(
   browser-navigation-smoke
   browser-snapshot-input-smoke
   file-search-smoke
+  terminal-stream-smoke
+  terminal-resize-smoke
   home-connection-actions-smoke
   side-chat-injection-smoke
   thread-shell-command-smoke
