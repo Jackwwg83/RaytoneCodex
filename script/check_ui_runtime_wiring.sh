@@ -873,6 +873,14 @@ empty_button_matches = re.findall(r"Button\s*(?:\([^)]*\))?\s*\{\s*\}", all_text
 if empty_button_matches:
     failures.append({"surface": "interactive controls", "missing": f"found {len(empty_button_matches)} empty Button closures"})
 
+empty_action_defaults = re.findall(r"(?m)^\s*(?:var\s+)?[A-Za-z0-9_]*action[A-Za-z0-9_]*\s*:\s*(?:@escaping\s*)?\([^)]*\)\s*->\s*Void\s*=\s*\{\s*\}", all_text)
+empty_action_defaults += re.findall(r"(?m)^\s*(?:var|let)\s+[A-Za-z0-9_]+\s*:\s*\([^)]*\)\s*->\s*Void\s*=\s*\{\s*\}", all_text)
+if empty_action_defaults:
+    failures.append({
+        "surface": "interactive controls",
+        "missing": f"found {len(empty_action_defaults)} default empty action closures",
+    })
+
 smoke_test_flags = set(re.findall(r'"(--[A-Za-z0-9-]+-smoke-test)"', text["smoke"]))
 wiring_smoke_flags = set(re.findall(r'"(--[A-Za-z0-9-]+-smoke-test)"', text["wiring"]))
 runner_smoke_flags = set(re.findall(r"--[A-Za-z0-9-]+-smoke-test", text["runner"]))

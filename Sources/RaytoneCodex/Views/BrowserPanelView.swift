@@ -209,7 +209,7 @@ struct BrowserPanelView: View {
         _ symbol: String,
         _ help: String,
         disabled: Bool = false,
-        action: @escaping () -> Void = {}
+        action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)

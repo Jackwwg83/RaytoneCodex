@@ -321,9 +321,9 @@ struct AutomationPage: View {
 private struct HookRuntimeRow: View {
     let hook: CodexRuntimeHook
     var isRaytoneHook: Bool = false
-    var trust: () -> Void = {}
-    var toggleEnabled: () -> Void = {}
-    var remove: () -> Void = {}
+    let trust: () -> Void
+    let toggleEnabled: () -> Void
+    let remove: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
