@@ -3967,20 +3967,29 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func loginMCPServer(_ server: CodexRuntimeMCPServer) async {
+    @discardableResult
+    func loginMCPServer(_ server: CodexRuntimeMCPServer, openAuthorizationURL: Bool = true) async -> URL? {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = "正在启动 \(server.title) OAuth 登录…"
         runtimeCatalogErrors = []
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
             let login = try await client.loginMCPServerOAuth(name: server.name, timeoutSecs: 120)
-            NSWorkspace.shared.open(login.authorizationURL)
-            runtimeCatalogStatusText = "已打开 \(server.title) 授权页面，等待浏览器完成登录…"
+            if openAuthorizationURL {
+                NSWorkspace.shared.open(login.authorizationURL)
+                runtimeCatalogStatusText = "已打开 \(server.title) 授权页面，等待浏览器完成登录…"
+            } else {
+                let host = login.authorizationURL.host ?? login.authorizationURL.absoluteString
+                runtimeCatalogStatusText = "mcpServer/oauth/login：\(server.title) · \(host)"
+            }
+            runtimeCatalogIsRefreshing = false
+            return login.authorizationURL
         } catch {
             runtimeCatalogStatusText = "\(server.title) 登录失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
         }
         runtimeCatalogIsRefreshing = false
+        return nil
     }
 
     func readMCPResource(_ resource: CodexRuntimeMCPResource, from server: CodexRuntimeMCPServer) async {

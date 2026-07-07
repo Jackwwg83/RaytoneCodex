@@ -29,6 +29,8 @@ enum SmokeTestRunner {
             runMCPToolSmoke()
         } else if CommandLine.arguments.contains("--mcp-elicitation-smoke-test") {
             runMCPElicitationSmoke()
+        } else if CommandLine.arguments.contains("--mcp-login-smoke-test") {
+            runMCPLoginSmoke()
         } else if CommandLine.arguments.contains("--tool-user-input-smoke-test") {
             runToolUserInputSmoke()
         } else if CommandLine.arguments.contains("--approval-compat-smoke-test") {
@@ -1569,6 +1571,104 @@ enum SmokeTestRunner {
                     "runtimeVersion": "",
                     "workspacePath": workspaceURL.path,
                     "codexHome": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
+        }
+
+        dispatchMain()
+    }
+
+    private static func runMCPLoginSmoke() {
+        Task { @MainActor in
+            let fileManager = FileManager.default
+            let rootURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexMCPLoginSmoke-\(UUID().uuidString)", isDirectory: true)
+            let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
+            let logURL = rootURL.appendingPathComponent("requests.jsonl")
+            let scriptURL = rootURL.appendingPathComponent("fake-codex")
+            let serverName = "raytone_login"
+            let expectedURL = "https://auth.example.invalid/oauth?server=\(serverName)"
+
+            do {
+                try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+                try fakeMCPLoginAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+                let store = SessionStore()
+                store.workspacePath = workspaceURL.path
+                store.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-mcp-login"
+                )
+                store.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_MCP_LOGIN_LOG": logURL.path
+                ]
+
+                fputs("mcp-login-smoke: refreshRuntimeMCPServers\n", stderr)
+                await store.refreshRuntimeMCPServers()
+                guard let server = store.runtimeMCPServers.first(where: { $0.name == serverName }) else {
+                    let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    await store.stopAppServerForTesting()
+                    emitJSON([
+                        "ok": false,
+                        "workspacePath": workspaceURL.path,
+                        "fakeExecutable": scriptURL.path,
+                        "requestLog": logURL.path,
+                        "status": store.runtimeCatalogStatusText,
+                        "errors": store.runtimeCatalogErrors,
+                        "servers": store.runtimeMCPServers.map { server in
+                            [
+                                "name": server.name,
+                                "title": server.title,
+                                "authStatus": server.authStatus
+                            ] as [String: Any]
+                        },
+                        "requestLogPreview": String(logText.prefix(1600))
+                    ])
+                    exit(1)
+                }
+
+                fputs("mcp-login-smoke: loginMCPServer\n", stderr)
+                let loginURL = await store.loginMCPServer(server, openAuthorizationURL: false)
+                let status = store.runtimeCatalogStatusText
+                let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                let statusListObserved = logText.contains(#""method":"mcpServerStatus/list""#)
+                let oauthLoginObserved = logText.contains(#""method":"mcpServer/oauth/login""#) &&
+                    logText.contains(#""name":"raytone_login""#) &&
+                    logText.contains(#""timeoutSecs":120"#)
+                let ok = server.authStatus == "notLoggedIn" &&
+                    loginURL?.absoluteString == expectedURL &&
+                    status.contains("mcpServer/oauth/login") &&
+                    statusListObserved &&
+                    oauthLoginObserved &&
+                    store.runtimeCatalogErrors.isEmpty
+
+                await store.stopAppServerForTesting()
+                emitJSON([
+                    "ok": ok,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
+                    "serverName": server.name,
+                    "serverTitle": server.title,
+                    "authStatus": server.authStatus,
+                    "loginURL": loginURL?.absoluteString ?? "",
+                    "expectedURL": expectedURL,
+                    "status": status,
+                    "errors": store.runtimeCatalogErrors,
+                    "statusListObserved": statusListObserved,
+                    "oauthLoginObserved": oauthLoginObserved,
+                    "requestLogPreview": String(logText.prefix(2200))
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                emitJSON([
+                    "ok": false,
+                    "workspacePath": workspaceURL.path,
+                    "fakeExecutable": scriptURL.path,
+                    "requestLog": logURL.path,
                     "error": error.localizedDescription
                 ])
                 exit(1)
@@ -15614,6 +15714,75 @@ enum SmokeTestRunner {
                     "namespaceTools": True,
                     "imageGeneration": True,
                     "webSearch": False,
+                })
+            else:
+                send_error(request_id, f"unsupported method {method}")
+        """#
+    }
+
+    private static var fakeMCPLoginAppServerScript: String {
+        #"""
+        #!/usr/bin/env python3
+        import json
+        import os
+        import sys
+
+        log_path = os.environ.get("RAYTONE_MCP_LOGIN_LOG")
+        server_name = "raytone_login"
+
+        def log(message):
+            if not log_path:
+                return
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+        def send_result(request_id, result):
+            sys.stdout.write(json.dumps({"id": request_id, "result": result}, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        def send_error(request_id, message):
+            sys.stdout.write(json.dumps({
+                "id": request_id,
+                "error": {"code": -32602, "message": message},
+            }, separators=(",", ":")) + "\n")
+            sys.stdout.flush()
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            request = json.loads(line)
+            log(request)
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
+            if request_id is None:
+                continue
+            if method == "initialize":
+                send_result(request_id, {})
+            elif method == "mcpServerStatus/list":
+                send_result(request_id, {
+                    "data": [
+                        {
+                            "name": server_name,
+                            "serverInfo": {
+                                "title": "Raytone MCP Login Smoke",
+                                "version": "1.0.0",
+                            },
+                            "authStatus": "notLoggedIn",
+                            "tools": {},
+                            "resources": [],
+                            "resourceTemplates": [],
+                        }
+                    ],
+                    "nextCursor": None,
+                })
+            elif method == "mcpServer/oauth/login":
+                if params.get("name") != server_name:
+                    send_error(request_id, "unexpected MCP server name")
+                    continue
+                send_result(request_id, {
+                    "authorizationUrl": f"https://auth.example.invalid/oauth?server={server_name}"
                 })
             else:
                 send_error(request_id, f"unsupported method {method}")
