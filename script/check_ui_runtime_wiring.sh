@@ -108,7 +108,7 @@ settings_runtime = {
         "--usage-activity-smoke-test",
         "--provider-sidecar-smoke-test",
     ],
-    "appSnapshots": ["app/list", "captureBrowserPanelScreenshot", "--app-mention-turn-smoke-test"],
+    "appSnapshots": ["app/list", "useRuntimeAppSnapshotPromptInComposer", "snapshotMentionInTurnStart", "captureBrowserPanelScreenshot", "--app-mention-turn-smoke-test"],
     "mcpServers": ["mcpServerStatus/list", "mcpServer/tool/call", "mcpServer/resource/read", "--mcp-tool-smoke-test", "--mcp-resource-smoke-test"],
     "browser": [
         "WKWebView",

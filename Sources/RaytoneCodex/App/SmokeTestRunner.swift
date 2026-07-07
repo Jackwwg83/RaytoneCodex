@@ -11490,6 +11490,7 @@ enum SmokeTestRunner {
                     screenshotPrompts: ["打开邮件摘要"]
                 )
                 let marker = "Raytone app mention turn smoke OK"
+                let snapshotMarker = "Raytone app snapshot prompt turn smoke OK"
 
                 let store = SessionStore()
                 store.workspacePath = workspaceURL.path
@@ -11519,6 +11520,23 @@ enum SmokeTestRunner {
                 }
                 await waitForStoreToSettle(store)
 
+                fputs("app-mention-turn-smoke: useRuntimeAppSnapshotPromptInComposer\n", stderr)
+                store.runtimeApps = [app]
+                let snapshotPromptOK = await store.useRuntimeAppSnapshotPromptInComposer(app, prompt: app.screenshotPrompts[0])
+                let preparedSnapshotPrompt = store.prompt
+                fputs("app-mention-turn-smoke: run snapshot prompt\n", stderr)
+                await store.runPrompt()
+
+                let snapshotDeadline = Date().addingTimeInterval(8)
+                while Date() < snapshotDeadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+                    if logText.contains(#""turnCompletedAfterSnapshotMention":true"#) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(store)
+
                 let agentMessages = store.selectedThread.items.compactMap { item -> String? in
                     if case let .agentMessage(text) = item.kind { return text }
                     return nil
@@ -11532,14 +11550,26 @@ enum SmokeTestRunner {
                     logText.contains(#""type":"mention""#) &&
                     logText.contains(#""name":"Raytone Mail""#) &&
                     logText.contains(#""path":"app://raytone.app-demo""#)
+                let mentionTurnStartCount = logText.components(separatedBy: #""method":"turn/start""#).count - 1
+                let mentionPathCount = logText.components(separatedBy: #""path":"app://raytone.app-demo""#).count - 1
                 let textInTurnStart = logText.contains(#""type":"text""#) &&
                     logText.contains("最小可执行请求")
+                let snapshotPromptContainsAppSlug = preparedSnapshotPrompt.contains("$\(app.inputSlug)")
+                let snapshotMentionInTurnStart = mentionTurnStartCount >= 2 &&
+                    mentionPathCount >= 2 &&
+                    logText.contains(app.screenshotPrompts[0]) &&
+                    logText.contains(#""turnCompletedAfterSnapshotMention":true"#)
                 let ok = composerOK &&
+                    snapshotPromptOK &&
                     promptContainsAppSlug &&
+                    snapshotPromptContainsAppSlug &&
                     mentionInTurnStart &&
+                    snapshotMentionInTurnStart &&
                     textInTurnStart &&
                     userMessages.contains(preparedPrompt) &&
+                    userMessages.contains(preparedSnapshotPrompt) &&
                     agentMessages.contains(marker) &&
+                    agentMessages.contains(snapshotMarker) &&
                     !store.isRunning &&
                     store.selectedThread.appServerThreadID == "thread-app-mention"
 
@@ -11552,15 +11582,21 @@ enum SmokeTestRunner {
                     "appID": app.id,
                     "appSlug": app.inputSlug,
                     "composerOK": composerOK,
+                    "snapshotPromptOK": snapshotPromptOK,
                     "promptContainsAppSlug": promptContainsAppSlug,
+                    "snapshotPromptContainsAppSlug": snapshotPromptContainsAppSlug,
                     "mentionInTurnStart": mentionInTurnStart,
+                    "snapshotMentionInTurnStart": snapshotMentionInTurnStart,
+                    "turnStartCount": mentionTurnStartCount,
+                    "mentionPathCount": mentionPathCount,
                     "textInTurnStart": textInTurnStart,
                     "isRunning": store.isRunning,
                     "threadID": store.selectedThread.appServerThreadID ?? "",
                     "preparedPrompt": preparedPrompt,
+                    "preparedSnapshotPrompt": preparedSnapshotPrompt,
                     "agentMessages": agentMessages,
                     "requestLogPreview": String(logText.prefix(2600)),
-                    "source": "useRuntimeAppInComposer + turn/start mention input"
+                    "source": "useRuntimeAppInComposer + useRuntimeAppSnapshotPromptInComposer + turn/start mention input"
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -16766,6 +16802,8 @@ enum SmokeTestRunner {
         def send_notification(method, params=None):
             send({"method": method, "params": params or {}})
 
+        turn_counter = 0
+
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -16791,30 +16829,40 @@ enum SmokeTestRunner {
                     "sandbox": "read-only"
                 })
             elif method == "turn/start":
-                log({"turnStartInput": params.get("input")})
+                turn_counter += 1
+                input_payload = params.get("input")
+                input_text = json.dumps(input_payload, ensure_ascii=False, separators=(",", ":"))
+                is_snapshot_prompt = "打开邮件摘要" in input_text
+                turn_id = "turn-app-snapshot-mention" if is_snapshot_prompt else "turn-app-mention"
+                item_id = "agent-app-snapshot-mention" if is_snapshot_prompt else "agent-app-mention"
+                response_text = "Raytone app snapshot prompt turn smoke OK" if is_snapshot_prompt else "Raytone app mention turn smoke OK"
+                log({"turnStartInput": input_payload, "turnIndex": turn_counter, "snapshotPrompt": is_snapshot_prompt})
                 send_result(request_id, {
-                    "turn": {"id": "turn-app-mention", "status": "inProgress"}
+                    "turn": {"id": turn_id, "status": "inProgress"}
                 })
                 send_notification("turn/started", {
                     "turn": {
-                        "id": "turn-app-mention",
+                        "id": turn_id,
                         "status": "inProgress",
                         "startedAt": 1700000000
                     }
                 })
                 send_notification("item/completed", {
                     "threadId": "thread-app-mention",
-                    "turnId": "turn-app-mention",
+                    "turnId": turn_id,
                     "item": {
-                        "id": "agent-app-mention",
+                        "id": item_id,
                         "type": "agentMessage",
-                        "text": "Raytone app mention turn smoke OK"
+                        "text": response_text
                     }
                 })
                 send_notification("turn/completed", {
-                    "turn": {"id": "turn-app-mention", "status": "completed"}
+                    "turn": {"id": turn_id, "status": "completed"}
                 })
-                log({"turnCompletedAfterMention": True})
+                if is_snapshot_prompt:
+                    log({"turnCompletedAfterSnapshotMention": True})
+                else:
+                    log({"turnCompletedAfterMention": True})
             else:
                 send_error(request_id, f"unsupported method {method}")
         """#
