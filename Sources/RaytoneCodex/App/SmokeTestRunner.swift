@@ -759,10 +759,23 @@ enum SmokeTestRunner {
         let sourceAfterWatchReplacement = store.filePanelLastOperationSource
         let statusAfterWatchReplacement = store.filePanelStatusText
 
+        await store.openParentDirectoryInFilePanel()
+        let pathAfterParentNavigation = store.filePanelPath
+        let sourceAfterParentNavigation = store.filePanelLastOperationSource
+        let statusAfterParentNavigation = store.filePanelStatusText
+        let parentNavigationEntries = store.fileEntries.map(\.name)
+
         store.fileSearchQuery = "NeedleRuntime"
         await store.searchWorkspaceFiles()
-
+        let searchQueryBeforeClear = store.fileSearchQuery
+        let searchResultsBeforeClear = store.fileSearchResults
         let targetResult = store.fileSearchResults.first { $0.path == targetURL.path }
+        let searchResultCountBeforeClear = searchResultsBeforeClear.count
+        let searchStatusBeforeClear = store.fileSearchStatusText
+        store.clearFileSearch()
+        let searchQueryAfterClear = store.fileSearchQuery
+        let searchResultCountAfterClear = store.fileSearchResults.count
+        let searchStatusAfterClear = store.fileSearchStatusText
         if let targetResult {
             await store.openFilePathInPanel(targetResult.path)
         }
@@ -814,7 +827,7 @@ enum SmokeTestRunner {
 
         let ok = store.runtimeSnapshot.executable != nil &&
             targetResult != nil &&
-            store.fileSearchStatusText.contains("fuzzyFileSearch/sessionCompleted") &&
+            searchStatusBeforeClear.contains("fuzzyFileSearch/sessionCompleted") &&
             originalPreview?.path == targetURL.path &&
             originalPreview?.text.contains("fuzzy-file-search-runtime-proof") == true &&
             originalPreview?.byteCount == targetText.utf8.count &&
@@ -839,9 +852,16 @@ enum SmokeTestRunner {
             watchedStatus.contains("已监听") &&
             watchedResult?.name == "WatchedRuntimeFile.txt" &&
             sourceAfterWatchReplacement.contains("fs/unwatch") &&
-            store.fileSearchStatusText.contains("fuzzyFileSearch/sessionStop")
+            pathAfterParentNavigation == workspaceURL.path &&
+            sourceAfterParentNavigation.contains("fs/readDirectory") &&
+            parentNavigationEntries.contains("Sources") &&
+            parentNavigationEntries.contains("docs") &&
+            searchStatusBeforeClear.contains("fuzzyFileSearch/sessionStop") &&
+            searchQueryAfterClear.isEmpty &&
+            searchResultCountAfterClear == 0 &&
+            searchStatusAfterClear.isEmpty
 
-        let resultsPayload = store.fileSearchResults.prefix(8).map { result in
+        let resultsPayload = searchResultsBeforeClear.prefix(8).map { result in
             [
                 "name": result.name,
                 "path": result.path,
@@ -893,15 +913,24 @@ enum SmokeTestRunner {
             "runtimeVersion": store.runtimeSnapshot.version ?? "",
             "workspacePath": workspaceURL.path,
             "codexHomePath": codexHomeURL.path,
-            "query": store.fileSearchQuery,
+            "query": searchQueryBeforeClear,
+            "queryAfterClear": searchQueryAfterClear,
             "initialFilePanelStatus": watchedStatus,
             "watchedFileObserved": watchedResult?.path ?? "",
             "filePanelStatusAfterWatch": statusAfterWatch,
             "filePanelStatusAfterWatchReplacement": statusAfterWatchReplacement,
             "sourceAfterWatchReplacement": sourceAfterWatchReplacement,
+            "parentNavigation": [
+                "path": pathAfterParentNavigation,
+                "status": statusAfterParentNavigation,
+                "source": sourceAfterParentNavigation,
+                "entries": Array(parentNavigationEntries.prefix(12))
+            ] as [String: Any],
             "fileEntriesPreview": Array(store.fileEntries.map(\.name).prefix(12)),
-            "searchStatus": store.fileSearchStatusText,
-            "resultCount": store.fileSearchResults.count,
+            "searchStatus": searchStatusBeforeClear,
+            "searchStatusAfterClear": searchStatusAfterClear,
+            "resultCount": searchResultCountBeforeClear,
+            "resultCountAfterClear": searchResultCountAfterClear,
             "results": resultsPayload,
             "originalPreview": originalPreviewPayload,
             "previewReference": [

@@ -307,6 +307,8 @@ tool_panels = {
         "fuzzyFileSearch/sessionStop",
         "handleFileSystemChanged",
         "addPreviewedFileReferenceToPrompt",
+        "openParentDirectoryInFilePanel",
+        "clearFileSearch",
         "WatchedRuntimeFile.txt",
         "--tools-smoke-test",
         "--file-search-smoke-test",
