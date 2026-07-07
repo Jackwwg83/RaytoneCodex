@@ -443,6 +443,41 @@ event_stream_runtime_tokens = [
 for token in event_stream_runtime_tokens:
     require("app-server event stream", token)
 
+thread_history_runtime_tokens = [
+    "thread/list",
+    "thread/search",
+    "thread/loaded/list",
+    "thread/read",
+    "thread/turns/list",
+    "thread/turns/items/list",
+    "thread/resume",
+    "thread/unsubscribe",
+    "thread/metadata/update",
+    "refreshRuntimeThreads",
+    "refreshArchivedThreads",
+    "refreshLoadedRuntimeThreads",
+    "loadRuntimeThreadTranscript",
+    "resumeRuntimeThread",
+    "loadRuntimeThreadTurns",
+    "loadRuntimeThreadTurnItems",
+    "syncSelectedThreadGitMetadata",
+    "runtimeThreadSyncStatusText",
+    "runtimeLoadedThreadsStatusText",
+    "runtimeThreadMetadataStatusText",
+    "loadedRuntimeThreadIDs",
+    "archivedRuntimeThreads",
+    "mergeRuntimeThreads",
+    "applyRuntimeThreadTurns",
+    "applyRuntimeThreadRead",
+    "--history-smoke-test",
+    "--thread-resume-smoke-test",
+    "--loaded-threads-smoke-test",
+    "--thread-unsubscribe-smoke-test",
+    "--thread-metadata-smoke-test",
+]
+for token in thread_history_runtime_tokens:
+    require("thread history runtime", token)
+
 dynamic_tools = [
     ("raytone_context", "workspace_snapshot", "dynamicToolResponse"),
     ("raytone_context", "list_workspace_files", "dynamicToolFilesResponse"),
