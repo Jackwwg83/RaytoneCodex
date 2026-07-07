@@ -10,6 +10,11 @@ json_escape() {
 
 default_cases=(
   model-config-smoke
+  config-write-smoke
+  access-mode-smoke
+  new-thread-permissions-smoke
+  default-permissions-smoke
+  auto-review-smoke
   provider-sidecar-smoke
   usage-activity-smoke
   catalog-smoke
