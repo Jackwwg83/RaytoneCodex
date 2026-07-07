@@ -32,6 +32,7 @@ files = {
     "keychain": root / "Sources/RaytoneCodexCore/Services/KeychainService.swift",
     "proxy_service": root / "Sources/RaytoneCodexCore/Services/RaytoneProxyService.swift",
     "client": root / "Sources/RaytoneCodexCore/Services/CodexAppServerClient.swift",
+    "core_checks": root / "Sources/RaytoneCodexCoreChecks/main.swift",
     "smoke": root / "Sources/RaytoneCodex/App/SmokeTestRunner.swift",
     "onboarding": root / "Sources/RaytoneCodex/Views/ProviderOnboardingView.swift",
     "runner": root / "script/build_and_run.sh",
@@ -894,27 +895,14 @@ runtime_evidence_text = "\n".join(
     for name, body in text.items()
     if name not in {"client", "wiring"}
 )
-client_only_legacy_methods = {
-    "process/writeStdin",
-    "process/kill",
-    "process/resizePty",
-}
 unreferenced_client_methods = sorted(
     method for method in client_request_methods
     if method not in runtime_evidence_text
 )
-unreferenced_actionable_methods = [
-    method for method in unreferenced_client_methods
-    if method not in client_only_legacy_methods
-]
-legacy_client_only_methods = [
-    method for method in unreferenced_client_methods
-    if method in client_only_legacy_methods
-]
-if unreferenced_actionable_methods:
+if unreferenced_client_methods:
     failures.append({
         "surface": "app-server UI runtime evidence",
-        "missing": ", ".join(unreferenced_actionable_methods),
+        "missing": ", ".join(unreferenced_client_methods),
     })
 
 result = {
@@ -927,8 +915,7 @@ result = {
     "wiringSmokeFlags": len(wiring_smoke_flags),
     "runnerSmokeFlags": len(runner_smoke_flags),
     "clientRuntimeMethods": len(client_request_methods),
-    "unreferencedClientMethods": unreferenced_actionable_methods,
-    "legacyClientOnlyMethods": legacy_client_only_methods,
+    "unreferencedClientMethods": unreferenced_client_methods,
     "checkedFiles": len(files),
     "failures": failures,
 }
