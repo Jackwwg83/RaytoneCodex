@@ -434,6 +434,8 @@ event_stream_runtime_tokens = [
     "mcpServer/elicitation/request",
     "respondMcpElicitation",
     "item/tool/requestUserInput",
+    "submitToolUserInput",
+    "skipToolUserInput",
     "respondToolUserInput",
     "account/chatgptAuthTokens/refresh",
     "attestation/generate",

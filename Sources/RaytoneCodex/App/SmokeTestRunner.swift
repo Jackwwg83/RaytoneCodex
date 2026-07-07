@@ -1859,6 +1859,7 @@ enum SmokeTestRunner {
                 }
                 await waitForStoreToSettle(store)
                 logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? logText
+                await store.stopAppServerForTesting()
 
                 let requests = store.selectedThread.items.compactMap { item -> ToolUserInputRequest? in
                     if case let .toolUserInput(request) = item.kind {
@@ -1871,19 +1872,73 @@ enum SmokeTestRunner {
                         request.questions.count == 2 &&
                         request.questions.contains { $0.id == "q_secret" && $0.isSecret }
                 }
-                let counterObserved = logText.contains(#""method":"thread/increment_elicitation""#) &&
-                    logText.contains(#""method":"thread/decrement_elicitation""#) &&
+
+                let skipStore = SessionStore()
+                skipStore.workspacePath = workspaceURL.path
+                skipStore.runtimeSnapshot = CodexRuntimeSnapshot(
+                    executable: CodexExecutable(url: scriptURL, source: .environment),
+                    version: "fake-tool-user-input"
+                )
+                skipStore.appServerEnvironmentOverridesForTesting = [
+                    "RAYTONE_TOOL_USER_INPUT_LOG": logURL.path
+                ]
+                skipStore.prompt = "触发工具补充信息跳过"
+                await skipStore.runPrompt()
+                let skipRequestItemID = await waitForToolUserInput(in: skipStore)
+                if let skipRequestItemID {
+                    skipStore.skipToolUserInput(itemID: skipRequestItemID)
+                }
+
+                let skipDeadline = Date().addingTimeInterval(8)
+                while Date() < skipDeadline {
+                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? logText
+                    let responses = toolUserInputResponses(in: logText)
+                    if responses.count >= 2,
+                       responses.contains(where: { toolUserInputResponse($0, hasAnswer: "q_mode", values: []) }),
+                       responses.contains(where: { toolUserInputResponse($0, hasAnswer: "q_secret", values: []) }) {
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                await waitForStoreToSettle(skipStore)
+                logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? logText
+                let skipRequests = skipStore.selectedThread.items.compactMap { item -> ToolUserInputRequest? in
+                    if case let .toolUserInput(request) = item.kind {
+                        return request
+                    }
+                    return nil
+                }
+                let skipped = skipRequests.contains { request in
+                    request.status == .skipped &&
+                        request.questions.count == 2 &&
+                        request.questions.contains { $0.id == "q_secret" && $0.isSecret }
+                }
+                let responses = toolUserInputResponses(in: logText)
+                let submittedResponse = responses.contains {
+                    toolUserInputResponse($0, hasAnswer: "q_mode", values: ["继续"]) &&
+                        toolUserInputResponse($0, hasAnswer: "q_secret", values: ["smoke-secret"])
+                }
+                let skippedResponse = responses.contains {
+                    toolUserInputResponse($0, hasAnswer: "q_mode", values: []) &&
+                        toolUserInputResponse($0, hasAnswer: "q_secret", values: [])
+                }
+                let incrementCount = logText.components(separatedBy: #""method":"thread/increment_elicitation""#).count - 1
+                let decrementCount = logText.components(separatedBy: #""method":"thread/decrement_elicitation""#).count - 1
+                let counterObserved = incrementCount >= 2 &&
+                    decrementCount >= 2 &&
                     logText.contains(#""threadId":"thread-smoke""#)
                 let ok = requestItemID != nil &&
+                    skipRequestItemID != nil &&
                     submitted &&
+                    skipped &&
+                    submittedResponse &&
+                    skippedResponse &&
                     counterObserved &&
                     logText.contains(#""method":"turn/start""#) &&
                     logText.contains(#""method":"item/tool/requestUserInput""#) &&
-                    logText.contains(#""toolUserInputResponse""#) &&
-                    logText.contains(#""q_mode":{"answers":["继续"]}"#) &&
-                    logText.contains(#""q_secret":{"answers":["smoke-secret"]}"#)
+                    logText.contains(#""toolUserInputResponse""#)
 
-                await store.stopAppServerForTesting()
+                await skipStore.stopAppServerForTesting()
                 emitJSON([
                     "ok": ok,
                     "workspacePath": workspaceURL.path,
@@ -1891,11 +1946,20 @@ enum SmokeTestRunner {
                     "requestLog": logURL.path,
                     "transcriptItemCount": store.selectedThread.items.count,
                     "toolUserInputCount": requests.count,
+                    "skipTranscriptItemCount": skipStore.selectedThread.items.count,
+                    "skipToolUserInputCount": skipRequests.count,
                     "submitted": submitted,
+                    "skipped": skipped,
+                    "submittedResponse": submittedResponse,
+                    "skippedResponse": skippedResponse,
                     "elicitationCounterObserved": counterObserved,
+                    "elicitationIncrementCount": incrementCount,
+                    "elicitationDecrementCount": decrementCount,
                     "runtimeElicitationStatus": store.runtimeElicitationStatusText,
+                    "skipRuntimeElicitationStatus": skipStore.runtimeElicitationStatusText,
                     "isRunning": store.isRunning,
-                    "requestLogPreview": String(logText.prefix(2200))
+                    "skipIsRunning": skipStore.isRunning,
+                    "requestLogPreview": String(logText.prefix(3200))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -18653,6 +18717,37 @@ enum SmokeTestRunner {
         case .null:
             NSNull()
         }
+    }
+
+    private static func jsonLineObjects(from text: String) -> [[String: Any]] {
+        text.split(separator: "\n").compactMap { line in
+            guard let data = String(line).data(using: .utf8) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+    }
+
+    private static func toolUserInputResponses(in logText: String) -> [[String: Any]] {
+        jsonLineObjects(from: logText).compactMap { line in
+            line["toolUserInputResponse"] as? [String: Any]
+        }
+    }
+
+    private static func toolUserInputResponse(
+        _ response: [String: Any],
+        hasAnswer questionID: String,
+        values expected: [String]
+    ) -> Bool {
+        guard let answers = response["answers"] as? [String: Any],
+              let question = answers[questionID] as? [String: Any] else {
+            return false
+        }
+        if let values = question["answers"] as? [String] {
+            return values == expected
+        }
+        if let values = question["answers"] as? [Any] {
+            return values.compactMap { $0 as? String } == expected
+        }
+        return false
     }
 
     private static func redactedProfileSharePreview(_ value: String) -> String {
