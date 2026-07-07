@@ -5122,22 +5122,39 @@ enum SmokeTestRunner {
                     exit(1)
                 }
 
+                guard let openAIProvider = store.providers.first(where: { $0.id == "openai" }) else {
+                    emitJSON([
+                        "ok": false,
+                        "runtimeSource": runtime.executable?.source.rawValue ?? "none",
+                        "runtimePath": runtime.executable?.url.path ?? "",
+                        "runtimeVersion": runtime.version ?? "",
+                        "workspacePath": workspacePath,
+                        "codexHome": codexHome.path,
+                        "error": "OpenAI provider was not found"
+                    ])
+                    exit(1)
+                }
+
                 await store.saveRuntimeThinkingEnabled(providerID: "openai", enabled: false)
                 let offConfig = store.runtimeConfig
+                let offToggleState = store.providerThinkingEnabled(openAIProvider)
                 let configURL = codexHome.appendingPathComponent("config.toml")
                 let offConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
 
                 await store.saveRuntimeThinkingEnabled(providerID: "openai", enabled: true)
                 let onConfig = store.runtimeConfig
+                let onToggleState = store.providerThinkingEnabled(openAIProvider)
                 let onConfigText = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
                 await store.stopAppServerForTesting()
 
                 let ok = offConfig?.reasoningEffort == "none" &&
                     offConfig?.reasoningSummary == "none" &&
+                    offToggleState == false &&
                     offConfigText.contains("model_reasoning_effort = \"none\"") &&
                     offConfigText.contains("model_reasoning_summary = \"none\"") &&
                     onConfig?.reasoningEffort == "medium" &&
                     onConfig?.reasoningSummary == "auto" &&
+                    onToggleState == true &&
                     onConfigText.contains("model_reasoning_effort = \"medium\"") &&
                     onConfigText.contains("model_reasoning_summary = \"auto\"")
 
@@ -5152,11 +5169,13 @@ enum SmokeTestRunner {
                     "off": [
                         "reasoningEffort": offConfig?.reasoningEffort ?? "",
                         "reasoningSummary": offConfig?.reasoningSummary ?? "",
+                        "providerThinkingEnabled": offToggleState,
                         "configText": offConfigText
                     ],
                     "on": [
                         "reasoningEffort": onConfig?.reasoningEffort ?? "",
                         "reasoningSummary": onConfig?.reasoningSummary ?? "",
+                        "providerThinkingEnabled": onToggleState,
                         "configText": onConfigText
                     ],
                     "modelCatalogStatusText": store.modelCatalogStatusText,

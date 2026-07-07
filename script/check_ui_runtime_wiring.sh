@@ -504,6 +504,7 @@ codex_config_runtime_tokens = [
     "model/model_provider",
     "model_provider",
     "desktop.raytone.selected_provider_id",
+    "providerThinkingEnabled",
     "saveRuntimeThinkingEnabled",
     "model_reasoning_effort",
     "model_reasoning_summary",
