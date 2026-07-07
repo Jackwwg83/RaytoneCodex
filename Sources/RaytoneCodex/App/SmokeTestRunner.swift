@@ -422,6 +422,13 @@ enum SmokeTestRunner {
                     path.hasSuffix("Sources/RaytoneCodex/Views/ContentView.swift") ||
                         path.hasSuffix("Sources/RaytoneCodex/Stores/SessionStore.swift")
                 }
+            let bootstrapStore = SessionStore()
+            let bootstrapRecommendedFallbackBeforeRuntimeAttempt = bootstrapStore.inspectorRecommendedFiles.contains("Package.swift")
+            let failedRecommendationStore = SessionStore()
+            failedRecommendationStore.workspacePath = workspacePath
+            failedRecommendationStore.filePanelStatusText = "读取失败：runtime unavailable"
+            failedRecommendationStore.inspectorRecommendedFilesSource = "fs/getMetadata 失败：runtime unavailable"
+            let noStaticRecommendedFallbackAfterRuntimeAttempt = failedRecommendationStore.inspectorRecommendedFiles.isEmpty
             let ok = requiredEntries.isSubset(of: foundEntries) &&
                 lastRun?.exitCode == 0 &&
                 lastRun?.output.contains("Package.swift") == true &&
@@ -429,6 +436,8 @@ enum SmokeTestRunner {
                 filePreview?.path == expectedRecommendedPath &&
                 recommendedTarget != nil &&
                 metadataRecommendedObserved &&
+                bootstrapRecommendedFallbackBeforeRuntimeAttempt &&
+                noStaticRecommendedFallbackAfterRuntimeAttempt &&
                 store.prompt.contains("Package.swift") &&
                 !currentBranch.isEmpty &&
                 store.workspaceBranches.contains(currentBranch)
@@ -448,6 +457,8 @@ enum SmokeTestRunner {
                 "inspectorRecommendedFilesSource": store.inspectorRecommendedFilesSource,
                 "inspectorRecommendedFilePaths": store.inspectorRecommendedFilePaths,
                 "metadataRecommendedObserved": metadataRecommendedObserved,
+                "bootstrapRecommendedFallbackBeforeRuntimeAttempt": bootstrapRecommendedFallbackBeforeRuntimeAttempt,
+                "noStaticRecommendedFallbackAfterRuntimeAttempt": noStaticRecommendedFallbackAfterRuntimeAttempt,
                 "recommendedTarget": recommendedTarget ?? "",
                 "recommendedExpectedPath": expectedRecommendedPath,
                 "filePreview": [

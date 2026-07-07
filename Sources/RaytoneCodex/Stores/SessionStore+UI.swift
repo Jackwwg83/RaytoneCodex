@@ -647,11 +647,22 @@ extension SessionStore {
             return Array(selected.prefix(5))
         }
 
+        guard inspectorRecommendedFilesCanUseBootstrapFallback else {
+            return []
+        }
+
         return [
             "Package.swift",
             "Sources/RaytoneCodex/Views/ContentView.swift",
             "docs/codex-screens-spec.md"
         ]
+    }
+
+    private var inspectorRecommendedFilesCanUseBootstrapFallback: Bool {
+        fileEntries.isEmpty &&
+            inspectorRecommendedFilePaths.isEmpty &&
+            inspectorRecommendedFilesSource == "未刷新" &&
+            filePanelStatusText == "未加载"
     }
 
     func tokenUsageActivityValues(scale: String) -> [Int] {
