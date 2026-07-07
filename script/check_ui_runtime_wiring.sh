@@ -231,6 +231,7 @@ settings_runtime = {
     ],
     "git": [
         "command/exec",
+        "refreshWorkspaceEnvironment",
         "refreshWorkspaceGitDiff",
         "workspaceGitSnapshotCommand",
         "git status --short --branch",

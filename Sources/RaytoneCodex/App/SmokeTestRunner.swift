@@ -9078,6 +9078,15 @@ enum SmokeTestRunner {
             await store.runGitCommitPushPreflightInTerminal()
             let terminalRun = store.terminalRuns.last
             let terminalOutput = terminalRun?.output ?? ""
+
+            await store.refreshWorkspaceEnvironment()
+            let combinedEnvironmentStatus = store.runtimeCatalogStatusText
+            let combinedRefreshOK = combinedEnvironmentStatus.hasPrefix("环境已刷新：") &&
+                combinedEnvironmentStatus.contains("个分支") &&
+                combinedEnvironmentStatus.contains("个工作树") &&
+                combinedEnvironmentStatus.contains("个已加载线程") &&
+                !store.runtimeCatalogIsRefreshing
+
             let environmentSourceFacts = store.environmentSourceFacts
             let sourceFactsPayload = environmentSourceFacts.map { fact in
                 [
@@ -9123,6 +9132,7 @@ enum SmokeTestRunner {
                 gitDataAvailable &&
                 pullRequestStatusAvailable &&
                 terminalPreflightOk &&
+                combinedRefreshOK &&
                 sourceEvidenceOk
 
             emitJSON([
@@ -9148,6 +9158,15 @@ enum SmokeTestRunner {
                 "worktreeStatus": worktreeStatus,
                 "worktreeErrors": worktreeErrors,
                 "worktrees": store.workspaceWorktrees,
+                "combinedRefresh": [
+                    "status": combinedEnvironmentStatus,
+                    "ok": combinedRefreshOK,
+                    "branchCount": store.workspaceBranches.count,
+                    "worktreeCount": store.workspaceWorktrees.count,
+                    "loadedThreadCount": store.loadedRuntimeThreadIDs.count,
+                    "pullRequestStatus": store.workspacePullRequestStatusText,
+                    "threadMetadataStatus": store.runtimeThreadMetadataStatusText
+                ] as [String: Any],
                 "terminalPreflight": [
                     "exitCode": Int(terminalRun?.exitCode ?? -999),
                     "command": terminalRun?.command ?? "",
