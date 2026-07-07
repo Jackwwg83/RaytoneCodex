@@ -747,6 +747,7 @@ page_runtime_tokens = {
     "automation page": [
         "refreshRuntimeHooks",
         "refreshAutomationEventLog",
+        "prepareAutomationTemplate",
         "installAutomationHookTemplate",
         "openCodexConfigFile",
         "revealCodexHomeSubfolder",

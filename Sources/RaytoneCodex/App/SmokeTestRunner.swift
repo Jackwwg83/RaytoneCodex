@@ -10411,43 +10411,118 @@ enum SmokeTestRunner {
         let workspacePath = argument(after: "--workspace") ?? FileManager.default.currentDirectoryPath
 
         Task { @MainActor in
-            let store = SessionStore()
-            store.workspacePath = workspacePath
+            let fileManager = FileManager.default
+            let codexHomeURL = fileManager.temporaryDirectory
+                .appendingPathComponent("RaytoneCodexAutomationSmokeCodexHome-\(UUID().uuidString)", isDirectory: true)
+            var mockServer: MockResponsesServer?
 
-            fputs("automation-smoke: refreshRuntime\n", stderr)
-            await store.refreshRuntime()
-            fputs("automation-smoke: refreshRuntimeHooks\n", stderr)
-            await store.refreshRuntimeHooks()
+            do {
+                try fileManager.createDirectory(at: codexHomeURL, withIntermediateDirectories: true)
+                mockServer = try startMockResponsesServer(message: "Raytone automation template smoke OK")
+                try writeMockCodexConfig(codexHome: codexHomeURL, baseURL: mockServer!.baseURL)
 
-            let hardFailure = store.runtimeSnapshot.executable == nil ||
-                store.runtimeCatalogStatusText.hasPrefix("hooks/list 失败")
+                let store = SessionStore()
+                store.workspacePath = workspacePath
+                store.filePanelPath = workspacePath
+                store.model = "mock-model"
+                store.sandbox = .readOnly
+                store.approval = .never
+                store.appServerEnvironmentOverridesForTesting = [
+                    "CODEX_HOME": codexHomeURL.path
+                ]
 
-            emitJSON([
-                "ok": !hardFailure,
-                "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
-                "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
-                "runtimeVersion": store.runtimeSnapshot.version ?? "",
-                "workspacePath": workspacePath,
-                "status": store.runtimeCatalogStatusText,
-                "errors": store.runtimeCatalogErrors,
-                "hookCount": store.runtimeHooks.count,
-                "hooksPreview": Array(store.runtimeHooks.prefix(10).map { hook in
-                    [
-                        "key": hook.key,
-                        "eventName": hook.eventName,
-                        "handlerType": hook.handlerType,
-                        "matcher": hook.matcher ?? "",
-                        "command": hook.command ?? "",
-                        "source": hook.source,
-                        "sourcePath": hook.sourcePath,
-                        "trustStatus": hook.trustStatus,
-                        "timeoutSec": hook.timeoutSec,
-                        "enabled": hook.enabled,
-                        "isManaged": hook.isManaged
-                    ] as [String: Any]
-                })
-            ])
-            exit(hardFailure ? 1 : 0)
+                if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
+                    store.projects[index].path = workspacePath
+                }
+
+                fputs("automation-smoke: refreshRuntime\n", stderr)
+                await store.refreshRuntime()
+                fputs("automation-smoke: refreshRuntimeHooks\n", stderr)
+                await store.refreshRuntimeHooks()
+
+                let templatePrompt = "请回复 Raytone automation template smoke OK"
+                store.prepareAutomationTemplate(title: "项目监控", prompt: templatePrompt)
+                let preparedThreadTitle = store.selectedThread.title
+                let preparedPrompt = store.prompt
+                let preparedRoute = store.route
+                let preparedToolPanel = store.toolPanel
+                let preparedProjectID = store.selectedThread.projectID
+
+                await store.runPrompt()
+                await waitForStoreToSettle(store)
+
+                let agentMessages = store.selectedThread.items.compactMap { item -> String? in
+                    if case let .agentMessage(text) = item.kind { return text }
+                    return nil
+                }
+                let requestLog = (try? String(contentsOf: mockServer!.requestLogURL, encoding: .utf8)) ?? ""
+                let hooksStatus = store.runtimeCatalogStatusText
+                let hardFailure = store.runtimeSnapshot.executable == nil ||
+                    hooksStatus.hasPrefix("hooks/list 失败")
+                let templatePreparedOK = preparedThreadTitle == "项目监控" &&
+                    preparedPrompt == templatePrompt &&
+                    preparedRoute == .thread &&
+                    preparedToolPanel == .launcher &&
+                    preparedProjectID == store.selectedProject.id
+                let templateRuntimeOK = !store.isRunning &&
+                    (store.selectedThread.appServerThreadID?.isEmpty == false) &&
+                    agentMessages.contains("Raytone automation template smoke OK") &&
+                    requestLog.contains("/v1/responses") &&
+                    requestLog.contains("Raytone automation template smoke OK")
+                let ok = !hardFailure && templatePreparedOK && templateRuntimeOK
+
+                await store.stopAppServerForTesting()
+                mockServer?.stop()
+
+                emitJSON([
+                    "ok": ok,
+                    "runtimeSource": store.runtimeSnapshot.executable?.source.rawValue ?? "none",
+                    "runtimePath": store.runtimeSnapshot.executable?.url.path ?? "",
+                    "runtimeVersion": store.runtimeSnapshot.version ?? "",
+                    "workspacePath": workspacePath,
+                    "codexHomePath": codexHomeURL.path,
+                    "status": hooksStatus,
+                    "errors": store.runtimeCatalogErrors,
+                    "hookCount": store.runtimeHooks.count,
+                    "templatePreparedOK": templatePreparedOK,
+                    "templateRuntimeOK": templateRuntimeOK,
+                    "preparedThreadTitle": preparedThreadTitle,
+                    "preparedPrompt": preparedPrompt,
+                    "preparedRoute": "\(preparedRoute)",
+                    "preparedToolPanel": "\(preparedToolPanel)",
+                    "appServerThreadID": store.selectedThread.appServerThreadID ?? "",
+                    "agentMessages": agentMessages,
+                    "mockRequestLogPreview": String(requestLog.prefix(1600)),
+                    "hooksPreview": Array(store.runtimeHooks.prefix(10).map { hook in
+                        [
+                            "key": hook.key,
+                            "eventName": hook.eventName,
+                            "handlerType": hook.handlerType,
+                            "matcher": hook.matcher ?? "",
+                            "command": hook.command ?? "",
+                            "source": hook.source,
+                            "sourcePath": hook.sourcePath,
+                            "trustStatus": hook.trustStatus,
+                            "timeoutSec": hook.timeoutSec,
+                            "enabled": hook.enabled,
+                            "isManaged": hook.isManaged
+                        ] as [String: Any]
+                    })
+                ])
+                exit(ok ? 0 : 1)
+            } catch {
+                mockServer?.stop()
+                emitJSON([
+                    "ok": false,
+                    "runtimeSource": "unknown",
+                    "runtimePath": "",
+                    "runtimeVersion": "",
+                    "workspacePath": workspacePath,
+                    "codexHomePath": codexHomeURL.path,
+                    "error": error.localizedDescription
+                ])
+                exit(1)
+            }
         }
 
         dispatchMain()
