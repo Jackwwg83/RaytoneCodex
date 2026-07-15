@@ -14,7 +14,7 @@ struct ThreadView: View {
 
             if store.connectionState.showsBanner {
                 ConnectionBanner(state: store.connectionState) {
-                    Task { await store.refreshRuntime() }
+                    Task { await store.recoverConnection(from: store.connectionState) }
                 }
             }
 
@@ -74,7 +74,15 @@ struct ThreadView: View {
                 ActiveGoalBar(
                     goal: activeGoal,
                     onEdit: { store.promptEditActiveGoal() },
-                    onPause: { Task { await store.pauseActiveGoal() } },
+                    onPause: {
+                        Task {
+                            if activeGoal.status == .paused {
+                                await store.resumeActiveGoal()
+                            } else {
+                                await store.pauseActiveGoal()
+                            }
+                        }
+                    },
                     onDelete: { Task { await store.clearActiveGoal() } },
                     onExpand: {
                         withAnimation(.easeInOut(duration: 0.18)) {
@@ -118,6 +126,15 @@ private struct ThreadHeader: View {
                 Button("复制对话") {
                     store.duplicateSelectedThread()
                 }
+                Divider()
+                Button("压缩对话历史") {
+                    Task { await store.startSelectedThreadCompaction() }
+                }
+                .disabled(store.isRunning)
+                Button("回滚最后一轮", role: .destructive) {
+                    Task { await store.rollbackSelectedThreadLastTurn() }
+                }
+                .disabled(store.isRunning)
                 Divider()
                 Button("删除对话", role: .destructive) {
                     store.deleteThread(store.selectedThreadID)

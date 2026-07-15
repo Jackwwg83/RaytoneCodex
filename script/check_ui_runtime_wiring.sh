@@ -1,0 +1,929 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+python3 - <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+
+files = {
+    "routes": root / "Sources/RaytoneCodex/Models/AppRoutes.swift",
+    "settings": root / "Sources/RaytoneCodex/Views/SettingsRouteView.swift",
+    "content": root / "Sources/RaytoneCodex/Views/ContentView.swift",
+    "sidebar": root / "Sources/RaytoneCodex/Views/SidebarView.swift",
+    "inspector": root / "Sources/RaytoneCodex/Views/InspectorView.swift",
+    "browser_panel": root / "Sources/RaytoneCodex/Views/BrowserPanelView.swift",
+    "plugins": root / "Sources/RaytoneCodex/Views/PluginsPage.swift",
+    "automation": root / "Sources/RaytoneCodex/Views/AutomationPage.swift",
+    "environment": root / "Sources/RaytoneCodex/Views/EnvironmentInfoPanel.swift",
+    "thread": root / "Sources/RaytoneCodex/Views/ThreadView.swift",
+    "hero": root / "Sources/RaytoneCodex/Views/NewThreadHeroView.swift",
+    "commands": root / "Sources/RaytoneCodex/App/AppCommands.swift",
+    "store": root / "Sources/RaytoneCodex/Stores/SessionStore.swift",
+    "store_ui": root / "Sources/RaytoneCodex/Stores/SessionStore+UI.swift",
+    "runtime_matrix": root / "docs/runtime-wiring-matrix.md",
+    "provider_model": root / "Sources/RaytoneCodexCore/Models/RaytoneProviderConfiguration.swift",
+    "keychain": root / "Sources/RaytoneCodexCore/Services/KeychainService.swift",
+    "proxy_service": root / "Sources/RaytoneCodexCore/Services/RaytoneProxyService.swift",
+    "client": root / "Sources/RaytoneCodexCore/Services/CodexAppServerClient.swift",
+    "core_checks": root / "Sources/RaytoneCodexCoreChecks/main.swift",
+    "smoke": root / "Sources/RaytoneCodex/App/SmokeTestRunner.swift",
+    "onboarding": root / "Sources/RaytoneCodex/Views/ProviderOnboardingView.swift",
+    "runner": root / "script/build_and_run.sh",
+    "wiring": root / "script/check_ui_runtime_wiring.sh",
+}
+
+missing_files = [str(path.relative_to(root)) for path in files.values() if not path.exists()]
+if missing_files:
+    print(json.dumps({"ok": False, "missingFiles": missing_files}, ensure_ascii=False, indent=2))
+    sys.exit(1)
+
+text = {name: path.read_text(encoding="utf-8") for name, path in files.items()}
+all_text = "\n".join(text.values())
+failures = []
+
+
+def require(surface, token, haystack=None):
+    haystack = all_text if haystack is None else haystack
+    if token not in haystack:
+        failures.append({"surface": surface, "missing": token})
+
+
+def enum_cases(enum_name):
+    match = re.search(rf"enum {enum_name}:[^{{]*\{{(?P<body>.*?)\n\}}", text["routes"], re.S)
+    if not match:
+        failures.append({"surface": enum_name, "missing": "enum declaration"})
+        return []
+    return re.findall(r"\bcase\s+([A-Za-z_][A-Za-z0-9_]*)", match.group("body"))
+
+
+settings_cases = enum_cases("SettingsPane")
+tool_panel_cases = enum_cases("ToolPanel")
+
+for pane in settings_cases:
+    require(f"settings pane {pane}", f"case .{pane}", text["settings"])
+
+hidden_cloud_smoke_flags = [
+    # These runtime smokes still cover legacy/upstream Codex APIs, but Raytone
+    # settings UI no longer exposes them as default buttons.
+    "--account-api-key-smoke-test",
+    "--account-auth-smoke-test",
+    "--add-credits-nudge-smoke-test",
+    "--realtime-voices-smoke-test",
+    "--windows-sandbox-smoke-test",
+]
+
+settings_runtime = {
+    "general": [
+        "refreshRuntimeCatalog",
+        "saveRuntimeWorkMode",
+        "collaborationMode/list",
+        "thread/settings/update",
+        "saveRuntimeShowInMenuBar",
+        "saveRuntimeShowBottomPanel",
+        "saveRuntimePreventSleepWhileRunning",
+        "saveRuntimeTerminalPosition",
+        "saveRuntimeOpenTarget",
+        "saveRuntimeLanguage",
+        "saveRuntimeServiceTier",
+        "diagnoseWorkspaceRuntime",
+        "--work-mode-smoke-test",
+        "--desktop-settings-smoke-test",
+        "--open-target-smoke-test",
+        "--prevent-sleep-smoke-test",
+        "--runtime-diagnostics-smoke-test",
+    ],
+    "modelsProviders": ["model/list", "modelProvider/capabilities/read", "RaytoneKeychainService", "RaytoneProxyService", "continueProviderOnboardingWithOpenAI", "继续使用 OpenAI", "稍后在设置里配置", "dismissProviderOnboarding", "已跳过首启向导", "--model-catalog-smoke-test", "--model-provider-capabilities-smoke-test", "--provider-sidecar-smoke-test", "--provider-onboarding-smoke-test", "--provider-unauthorized-smoke-test"],
+    "profile": [
+        "copyRaytoneStatusSummary",
+        "raytoneLocalStatusSummary",
+        "refreshProviderUsageRuntime",
+        'Button("复制摘要")',
+        'Button("模型设置")',
+        'Button("编辑个性化")',
+        "store.settingsPane = .modelsProviders",
+        "store.settingsPane = .personalization",
+        "--profile-share-smoke-test",
+    ],
+    "appearance": ["saveRuntimeAppearance", "--desktop-settings-smoke-test"],
+    "configuration": [
+        "config/read",
+        "config/value/write",
+        "saveRuntimeApprovalPolicy",
+        "exportLocalDiagnosticBundle",
+        "localDiagnosticStatusText",
+        "本地诊断包",
+        "externalAgentConfig/detect",
+        "externalAgentConfig/import",
+        "--config-write-smoke-test",
+        "--feedback-upload-smoke-test",
+        "--external-agent-config-smoke-test",
+    ],
+    "experimentalFeatures": ["experimentalFeature/list", "experimentalFeatureReadOnlyRow", "--experimental-features-smoke-test"],
+    "personalization": [
+        "thread/settings/update",
+        "macOS 系统听写",
+        "startVoiceInput",
+        "desktop.raytone.commit_instructions",
+        "desktop.raytone.pull_request_instructions",
+        "config/batchWrite",
+        "/commit",
+        "/pr",
+        "/goal",
+        "/goal-status",
+        "/goal-clear",
+        "thread/goal/set",
+        "thread/goal/get",
+        "thread/goal/clear",
+        "--goal-smoke-test",
+        "--personality-smoke-test",
+    ],
+    "keyboardShortcuts": ["AppCommands", "CommandMenu(\"对话\")", "CommandMenu(\"工具\")", "CommandGroup(replacing: .help)", "commandSurfaceShortcuts", "CommandSurfaceShortcut", "runtime-diagnostics", "turn/start", "turn/interrupt", "thread/archive", "fs/readDirectory", "command/exec", "config/read", "diagnoseWorkspaceRuntime", "--command-surface-smoke-test"],
+    "usageBilling": [
+        "raytone-proxy /usage",
+        "refreshProviderUsageRuntime",
+        "Provider 用量",
+        "--usage-activity-smoke-test",
+        "--provider-sidecar-smoke-test",
+    ],
+    "appSnapshots": ["本地快照", "WKWebView", "captureBrowserPanelScreenshot", "browserAttachedSnapshotPath", "--browser-snapshot-smoke-test"],
+    "mcpServers": [
+        "refreshRuntimeMCPServers",
+        "mcpServerStatus/list",
+        "reloadRuntimeMCPServers",
+        "config/mcpServer/reload",
+        "loginMCPServer",
+        "mcpServer/oauth/login",
+        "callMCPTool",
+        "mcpServer/tool/call",
+        "readMCPResource",
+        "readMCPResourceTemplate",
+        "mcpServer/resource/read",
+        "--catalog-smoke-test",
+        "--mcp-login-smoke-test",
+        "--mcp-tool-smoke-test",
+        "--mcp-resource-smoke-test",
+    ],
+    "browser": [
+        "WKWebView",
+        "fs/getMetadata",
+        "fs/readFile",
+        "WKWebsiteDataStore",
+        "BrowserSnapshotWriter",
+        "captureBrowserPanelScreenshot",
+        "browserAttachedSnapshotPath",
+        "localImagePaths",
+        "--browser-navigation-smoke-test",
+        "--browser-clear-data-smoke-test",
+        "--browser-snapshot-smoke-test",
+        "--browser-snapshot-input-smoke-test",
+    ],
+    "computerControl": [
+        "configRequirements/read",
+        "skills/list",
+        "mcpServerStatus/list",
+        "useChronicleContextInComposer",
+    ],
+    "hooks": [
+        "refreshRuntimeHooks",
+        "trustRuntimeHook",
+        "setRuntimeHookEnabled",
+        "installAutomationHookTemplate",
+        "removeRaytoneAutomationHookTemplate",
+        "refreshAutomationEventLog",
+        "hooks/list",
+        "config/value/write",
+        "fs/readFile",
+        "UserPromptSubmit",
+        "--automation-smoke-test",
+        "--automation-hook-smoke-test",
+        "--hook-controls-smoke-test",
+        "--hook-notification-smoke-test",
+    ],
+    "connections": [
+        "refreshIntegrationRuntime",
+        "官方云端模式",
+        "Button(\"模型设置\")",
+        "Button(\"MCP 服务器\")",
+        "Button(\"打开浏览器\")",
+        "mcpServerStatus/list",
+        "loginMCPServer",
+        "mcpServer/oauth/login",
+        "--integration-pages-smoke-test",
+        "--home-connection-actions-smoke-test",
+        "--home-connection-app-mention-smoke-test",
+        "--app-list-updated-smoke-test",
+        "--remote-control-smoke-test",
+        "--remote-control-mode-smoke-test",
+        "--remote-control-revoke-smoke-test",
+        "--mcp-login-smoke-test",
+    ],
+    "git": [
+        "command/exec",
+        "refreshWorkspaceEnvironment",
+        "refreshWorkspaceGitDiff",
+        "workspaceGitSnapshotCommand",
+        "git status --short --branch",
+        "git diff -- .",
+        "refreshWorkspacePullRequestStatus",
+        "pullRequestStatusCommand",
+        "gh pr view",
+        "gh repo create",
+        "gh pr create",
+        "runGitDiffInTerminal",
+        "runGitCreateRepositoryInTerminal",
+        "runGitPushCurrentBranchInTerminal",
+        "runGitCreatePullRequestInTerminal",
+        "environmentSourceFacts",
+        "--environment-smoke-test",
+        "--git-repo-create-smoke-test",
+        "--git-push-smoke-test",
+        "--git-pr-create-smoke-test",
+        "--runtime-environment-smoke-test",
+    ],
+    "environments": ["environment/add", "selectRuntimeEnvironment", "permissionProfile/list", "configRequirements/read", "--runtime-environment-smoke-test"],
+    "worktrees": ["git worktree list", "openWorkspaceWorktree", "--worktree-switch-smoke-test"],
+    "archivedChats": ["thread/list", "thread/unarchive", "--thread-lifecycle-smoke-test"],
+}
+
+missing_pane_specs = sorted(set(settings_cases) - set(settings_runtime))
+if missing_pane_specs:
+    failures.append({"surface": "settings pane runtime spec", "missing": ", ".join(missing_pane_specs)})
+
+for pane, tokens in settings_runtime.items():
+    for token in tokens:
+        require(f"settings pane {pane}", token)
+
+tool_panels = {
+    "launcher": [
+        "EnvironmentInfoPanel",
+        "private var launcher",
+        "ActiveGoalDetailCard",
+        "environmentSourceFacts",
+        "title: \"目标\"",
+        "thread/goal/get",
+        "refreshSelectedRuntimeGoal",
+    ],
+    "browser": [
+        "BrowserPanelView",
+        "WKWebView",
+        "fs/getMetadata",
+        "WKWebsiteDataStore",
+        "BrowserSnapshotWriter",
+        "openBrowserAddress",
+        "newBrowserTab",
+        "reloadBrowserPanel",
+        "openBrowserSampleAndCapture",
+        "captureBrowserPanelScreenshot",
+        "browserAttachedSnapshotPath",
+        "--browser-navigation-smoke-test",
+        "--browser-clear-data-smoke-test",
+        "--browser-snapshot-smoke-test",
+        "--browser-snapshot-input-smoke-test",
+    ],
+    "files": [
+        "FilesToolPanel",
+        "fs/getMetadata",
+        "fs/readDirectory",
+        "fs/watch",
+        "fs/unwatch",
+        "fs/readFile",
+        "fs/writeFile",
+        "fs/createDirectory",
+        "fs/copy",
+        "fs/remove",
+        "fuzzyFileSearch",
+        "fuzzyFileSearch/sessionStop",
+        "handleFileSystemChanged",
+        "addPreviewedFileReferenceToPrompt",
+        "openParentDirectoryInFilePanel",
+        "clearFileSearch",
+        "WatchedRuntimeFile.txt",
+        "--tools-smoke-test",
+        "--file-search-smoke-test",
+        "--file-change-stream-smoke-test",
+    ],
+    "terminal": [
+        "TerminalToolPanel",
+        "command/exec",
+        "command/exec/write",
+        "command/exec/resize",
+        "command/exec/terminate",
+        "thread/shellCommand",
+        "thread/backgroundTerminals/clean",
+        "--terminal-stream-smoke-test",
+        "--terminal-resize-smoke-test",
+        "--thread-shell-command-smoke-test",
+    ],
+    "sideChat": ["SideChatToolPanel", "turn/start", "turn/steer", "thread/inject_items", "--side-chat-smoke-test", "--side-chat-injection-smoke-test"],
+}
+
+missing_tool_specs = sorted(set(tool_panel_cases) - set(tool_panels))
+if missing_tool_specs:
+    failures.append({"surface": "tool panel runtime spec", "missing": ", ".join(missing_tool_specs)})
+
+for panel, tokens in tool_panels.items():
+    for token in tokens:
+        require(f"tool panel {panel}", token)
+
+permission_runtime_tokens = [
+    "AccessModeControl",
+    "AccessModePopover",
+    "chooseAccessMode",
+    "syncSelectedThreadExecutionSettings",
+    "updateThreadExecutionSettings",
+    "thread/settings/update",
+    'params["approvalPolicy"] = .string(approvalPolicy.appServerValue)',
+    'params["approvalsReviewer"] = .string(approvalsReviewer.rawValue)',
+    'params["sandboxPolicy"] = sandbox.appServerSandboxPolicy',
+    '"approvalPolicy": .string(options.approvalPolicy.appServerValue)',
+    '"approvalsReviewer": .string(options.approvalsReviewer.rawValue)',
+    '"sandbox": .string(options.sandbox.rawValue)',
+    '"sandboxPolicy": options.sandbox.appServerSandboxPolicy',
+    "saveRuntimeApprovalPolicy",
+    "saveRuntimeSandboxMode",
+    "saveRuntimeApprovalsReviewer",
+    "saveRuntimeDefaultPermissions",
+    "saveRuntimePersonality",
+    "writeConfigValue",
+    "approval_policy",
+    "approvals_reviewer",
+    "sandbox_mode",
+    "default_permissions",
+    "item/permissions/requestApproval",
+    "execCommandApproval",
+    "applyPatchApproval",
+    "respondPermissionsApproval",
+    "respondApproval",
+    "respondLegacyApproval",
+    "pendingApprovalResponseKinds",
+    "approved_for_session",
+    "--access-mode-smoke-test",
+    "--new-thread-permissions-smoke-test",
+    "--approval-compat-smoke-test",
+    "--default-permissions-smoke-test",
+    "--auto-review-smoke-test",
+]
+for token in permission_runtime_tokens:
+    require("permissions and access mode", token)
+
+composer_runtime_tokens = [
+    "runPromptWithAppServer",
+    "inputMentions(in:",
+    "previewInputMentions",
+    "addFileReferencesToPrompt",
+    "addImageReferencesToPrompt",
+    "chooseImagesForPrompt",
+    "pendingLocalImagePaths",
+    "consumePendingLocalImages",
+    "lastLocalImageInputPreview",
+    '"input": Self.userInputItems(',
+    '"type": .string("mention")',
+    '"type": .string("localImage")',
+    "turn/start",
+    "turn/steer",
+    "review/start",
+    "startReview",
+    "handleSlashCommand",
+    "runSlashShellCommand",
+    "detectedTestCommand",
+    "runCommitMessageGeneration",
+    "runPullRequestSummaryGeneration",
+    "config/batchWrite",
+    "command/exec",
+    "useRuntimeAppInComposer",
+    "useRuntimeAppSnapshotPromptInComposer",
+    "mentionInTurnStart",
+    "snapshotMentionInTurnStart",
+    "--local-image-input-smoke-test",
+    "--mention-smoke-test",
+    "--app-mention-config-smoke-test",
+    "--app-mention-turn-smoke-test",
+    "--file-mention-turn-smoke-test",
+    "--review-smoke-test",
+    "--slash-smoke-test",
+]
+for token in composer_runtime_tokens:
+    require("composer input runtime", token)
+
+event_stream_runtime_tokens = [
+    "ServerEvent",
+    "AsyncStream<ServerEvent>",
+    "handleAppServerEvent",
+    "handleAppServerNotification",
+    "handleAppServerRequest",
+    "serverRequest/resolved",
+    "thread/increment_elicitation",
+    "thread/decrement_elicitation",
+    "process/outputDelta",
+    "process/exited",
+    "item/commandExecution/outputDelta",
+    "item/commandExecution/terminalInteraction",
+    "item/autoApprovalReview/started",
+    "item/autoApprovalReview/completed",
+    "rawResponseItem/completed",
+    "item/plan/delta",
+    "item/reasoning/summaryTextDelta",
+    "item/mcpToolCall/progress",
+    "thread/realtime/transcript/delta",
+    "thread/realtime/outputAudio/delta",
+    "thread/tokenUsage/updated",
+    "mcpServer/elicitation/request",
+    "respondMcpElicitation",
+    "item/tool/requestUserInput",
+    "submitToolUserInput",
+    "skipToolUserInput",
+    "respondToolUserInput",
+    "account/chatgptAuthTokens/refresh",
+    "attestation/generate",
+    "rejectAppServerRequest",
+    "turn/interrupt",
+    "interruptRunningTurn",
+    "thread/approveGuardianDeniedAction",
+    "approveGuardianDeniedAction",
+    "--app-server-notification-smoke-test",
+    "--process-stream-smoke-test",
+    "--mcp-elicitation-smoke-test",
+    "--tool-user-input-smoke-test",
+    "--auth-attestation-smoke-test",
+    "--guardian-denial-approve-smoke-test",
+    "--interrupt-smoke-test",
+]
+for token in event_stream_runtime_tokens:
+    require("app-server event stream", token)
+
+thread_history_runtime_tokens = [
+    "thread/list",
+    "thread/search",
+    "thread/loaded/list",
+    "thread/read",
+    "thread/turns/list",
+    "thread/items/list",
+    "thread/resume",
+    "thread/unsubscribe",
+    "thread/metadata/update",
+    "refreshRuntimeThreads",
+    "refreshArchivedThreads",
+    "refreshLoadedRuntimeThreads",
+    "loadRuntimeThreadTranscript",
+    "resumeRuntimeThread",
+    "loadRuntimeThreadTurns",
+    "loadRuntimeThreadTurnItems",
+    "syncSelectedThreadGitMetadata",
+    "runtimeThreadSyncStatusText",
+    "runtimeLoadedThreadsStatusText",
+    "runtimeThreadMetadataStatusText",
+    "loadedRuntimeThreadIDs",
+    "archivedRuntimeThreads",
+    "mergeRuntimeThreads",
+    "applyRuntimeThreadTurns",
+    "applyRuntimeThreadRead",
+    "--history-smoke-test",
+    "--thread-resume-smoke-test",
+    "--loaded-threads-smoke-test",
+    "--thread-unsubscribe-smoke-test",
+    "--thread-metadata-smoke-test",
+]
+for token in thread_history_runtime_tokens:
+    require("thread history runtime", token)
+
+codex_config_runtime_tokens = [
+    "selectProvider",
+    "saveRuntimeModelSelection",
+    "commitRuntimeModelSelection",
+    "model/model_provider",
+    "model_provider",
+    "desktop.raytone.selected_provider_id",
+    "providerThinkingEnabled",
+    "saveRuntimeThinkingEnabled",
+    "model_reasoning_effort",
+    "model_reasoning_summary",
+    "saveInstructions",
+    "developer_instructions",
+    "saveRuntimeServiceTier",
+    "service_tier",
+    "saveRuntimeMemoryEnabled",
+    "memories.generate_memories",
+    "memories.use_memories",
+    "saveRuntimeSkipToolAssistedChats",
+    "memories.disable_on_external_context",
+    "resetCodexMemory",
+    "memory/reset",
+    "saveSelectedThreadMemoryMode",
+    "thread/memoryMode/set",
+    "setRuntimeSkillExtraRoots",
+    "skills/extraRoots/set",
+    "skills/list",
+    "fs/readFile",
+    "prepareCodexConfigFileForOpening",
+    "ensureCodexHomeSubfolder",
+    "fs/createDirectory + fs/getMetadata",
+    "refreshProfilePrivacyRuntimeStatus",
+    "profile/privacy",
+    "--model-config-smoke-test",
+    "--reasoning-config-smoke-test",
+    "--instructions-config-smoke-test",
+    "--service-tier-smoke-test",
+    "--memory-settings-smoke-test",
+    "--thread-memory-mode-smoke-test",
+    "--skill-extra-roots-smoke-test",
+    "--codex-home-directory-smoke-test",
+    "--profile-privacy-smoke-test",
+]
+for token in codex_config_runtime_tokens:
+    require("codex config runtime", token)
+
+runtime_bootstrap_navigation_tokens = [
+    "CodexCLIService",
+    "CodexRunOptions",
+    "inspectRuntime",
+    "service.run(",
+    "runPromptWithAppServer",
+    "usedExecFallback",
+    "appServerThreadID",
+    "refreshAccountUsageRuntime",
+    "refreshArchivedThreads",
+    "refreshWorkspaceGitDiff",
+    "runtimeDependencyReady",
+    "runtimeVersionDisplay",
+    "SettingsView.runtimeSurfaceDescription",
+    "SettingsRouteView",
+    "selectProjectForNewThread",
+    "selectProjectForSettings",
+    "refreshNewThreadHeroRuntime",
+    "setWorkspacePathForSelectedProject",
+    "loadFilePanelDirectory",
+    "refreshWorkspaceBranches",
+    "checkoutWorkspaceBranch",
+    "createWorkspaceBranch",
+    '"/usr/bin/git", "switch"',
+    "command/exec",
+    "fs/readDirectory",
+    "config/read",
+    "installSampleWorkspaceIfNeeded",
+    "sampleWorkspaceEnabled",
+    "RAYTONE_CODEX_ENABLE_SAMPLE_DATA",
+    "--cli-smoke-test",
+    "--session-smoke-test",
+    "--runtime-pages-smoke-test",
+    "--settings-scene-smoke-test",
+    "--settings-project-smoke-test",
+    "--sample-data-gate-smoke-test",
+    "--project-switch-smoke-test",
+    "--workspace-switch-smoke-test",
+    "--branch-switch-smoke-test",
+]
+for token in runtime_bootstrap_navigation_tokens:
+    require("runtime bootstrap and navigation", token)
+
+schema_truth_tokens = [
+    "codex app-server generate-json-schema",
+    "Schemas/v2",
+    "CodexAppServerClient",
+    "SessionStore",
+    "script/check_schema_matches_binary.sh",
+    "script/check_app_server_methods.sh",
+]
+for token in schema_truth_tokens:
+    require("app-server schema truth surface", token, text["runtime_matrix"])
+
+plugin_skill_dynamic_runtime_tokens = [
+    "readRuntimeSkillPreview",
+    "runtimeSkillPreviewStatusText",
+    "createLocalPluginTemplate",
+    "createLocalSkillTemplate",
+    "CodexRuntimeScaffoldResult",
+    "togglePluginInstallation",
+    "runtimePluginInstallResult",
+    "useFeaturedPluginInComposer",
+    "openPluginInstallAuthURL",
+    "PluginInstallResponse",
+    "pluginInstallResult(from:",
+    "pluginInstallSummary",
+    "addPluginMarketplace",
+    "removePluginMarketplace",
+    "upgradePluginMarketplaces",
+    "marketplace/add",
+    "marketplace/remove",
+    "marketplace/upgrade",
+    "plugin/install",
+    "plugin/uninstall",
+    "plugin/installed",
+    "plugin/list",
+    "plugin/read",
+    "plugin/skill/read",
+    "skills/list",
+    "skills/config/write",
+    "fs/writeFile",
+    "fs/readFile",
+    "fs/getMetadata",
+    "item/tool/call",
+    "serverRequest/resolved",
+    "dynamicTools",
+    "dynamicToolResponse",
+    "dynamicToolFilesResponse",
+    "dynamicToolReadFileResponse",
+    "dynamicToolMCPToolResponse",
+    "dynamicToolMCPResourceResponse",
+    "dynamicToolBrowserOpenResponse",
+    "dynamicToolBrowserSnapshotResponse",
+    "dynamicToolBrowserResponse",
+    "dynamicToolTerminalResponse",
+    "mcpServer/tool/call",
+    "mcpServer/resource/read",
+    "--skill-read-smoke-test",
+    "--plugin-scaffold-smoke-test",
+    "--plugin-install-response-smoke-test",
+    "--marketplace-upgrade-smoke-test",
+    "--dynamic-tool-smoke-test",
+]
+for token in plugin_skill_dynamic_runtime_tokens:
+    require("plugin skill dynamic runtime", token)
+
+account_recovery_external_realtime_tokens = [
+    "startAccountChatGPTDeviceCodeLogin",
+    "startChatGPTDeviceCodeAccountLogin",
+    '"type": .string("chatgptDeviceCode")',
+    "verificationURL",
+    "userCode",
+    "account/login/start(chatgptDeviceCode)",
+    "cancelAccountLogin",
+    "account/login/cancel",
+    "recoverConnection",
+    "ConnectionState.loginRequired.title",
+    "ConnectionState.providerKeyMissing(\"DeepSeek\")",
+    "settingsPane == .usageBilling",
+    "settingsPane == .modelsProviders",
+    "startAccountChatGPTLogin",
+    "startChatGPTAccountLogin",
+    "CodexAppServerError.invalidResponse(\"account/login/start did not return authUrl.\")",
+    "CodexAppServerError.invalidResponse(\"account/login/start did not return verificationUrl.\")",
+    "detectExternalAgentConfig",
+    "externalAgentConfig/detect",
+    "importExternalAgentConfig",
+    "externalAgentConfig/import",
+    "externalAgentConfig/import/completed",
+    "CODEX_HOME",
+    "USERPROFILE",
+    "targetAgentsContainsMarker",
+    "targetSkillContainsMarker",
+    "listRealtimeVoices",
+    "thread/realtime/listVoices",
+    "startVoiceInput",
+    "startRealtimeTextSessionForVoiceInput",
+    "startRealtime(",
+    "thread/realtime/start",
+    "appendRealtimeTextForVoiceInput",
+    "appendRealtimeText(",
+    "thread/realtime/appendText",
+    "appendRealtimeAudioForVoiceInput",
+    "appendRealtimeAudio(",
+    "thread/realtime/appendAudio",
+    "stopRealtimeVoiceInput",
+    "stopRealtime(",
+    "thread/realtime/stop",
+    "handleRealtimeNotification",
+    "thread/realtime/transcript/delta",
+    "thread/realtime/outputAudio/delta",
+    "fakeRealtimeSessionAppServerScript",
+    "realtimeStopped",
+    "--account-device-code-smoke-test",
+    "--connection-recovery-smoke-test",
+    "--external-agent-real-smoke-test",
+    "--realtime-session-smoke-test",
+]
+for token in account_recovery_external_realtime_tokens:
+    require("account recovery external agent realtime runtime", token)
+
+dynamic_tools = [
+    ("raytone_context", "workspace_snapshot", "dynamicToolResponse"),
+    ("raytone_context", "list_workspace_files", "dynamicToolFilesResponse"),
+    ("raytone_context", "read_workspace_file", "dynamicToolReadFileResponse"),
+    ("raytone_browser", "current_page", "dynamicToolBrowserResponse"),
+    ("raytone_browser", "open_url", "dynamicToolBrowserOpenResponse"),
+    ("raytone_browser", "capture_snapshot", "dynamicToolBrowserSnapshotResponse"),
+    ("raytone_terminal", "run_command", "dynamicToolTerminalResponse"),
+    ("raytone_mcp", "read_resource", "dynamicToolMCPResourceResponse"),
+    ("raytone_mcp", "call_tool", "dynamicToolMCPToolResponse"),
+]
+
+for namespace, tool, smoke_token in dynamic_tools:
+    require(f"dynamic tool {namespace}.{tool}", f'"namespace": .string("{namespace}")', text["client"])
+    require(f"dynamic tool {namespace}.{tool}", f'"name": .string("{tool}")', text["client"])
+    require(f"dynamic tool {namespace}.{tool}", f'namespace == "{namespace}"', text["store"])
+    require(f"dynamic tool {namespace}.{tool}", f'tool == "{tool}"', text["store"])
+    require(f"dynamic tool {namespace}.{tool}", smoke_token, text["smoke"])
+    require(f"dynamic tool {namespace}.{tool}", f"{namespace}.{tool}", text["smoke"])
+require("dynamic tool browser snapshot artifact", "browserSnapshotIsPNG", text["smoke"])
+require("dynamic tool browser snapshot artifact", "isPNGData", text["smoke"])
+
+route_tokens = {
+    "plugins": ["store.route = .plugins", "PluginsPage", "plugin/list", "plugin/read", "--plugin-read-smoke-test"],
+    "automation": ["store.route = .automation", "AutomationPage", "hooks/list", "--automation-smoke-test"],
+    "settings": ["store.route = .settings", "SettingsRouteView", "CommandGroup(replacing: .appSettings)", "⌘,"],
+    "thread": ["store.route = .thread", "ThreadView", "turn/start", "thread/start"],
+}
+for route, tokens in route_tokens.items():
+    for token in tokens:
+        require(f"route {route}", token)
+
+page_runtime_tokens = {
+    "plugins page": [
+        "refreshRuntimeCatalog",
+        "useFeaturedPluginInComposer",
+        "plugin/list",
+        "skills/list",
+        "plugin/read",
+        "plugin/install",
+        "plugin/uninstall",
+        "plugin/share/save",
+        "plugin/share/checkout",
+        "plugin/share/delete",
+        "marketplace/add",
+        "marketplace/remove",
+        "marketplace/upgrade",
+        "skills/config/write",
+        "createLocalPluginTemplate",
+        "createLocalSkillTemplate",
+        "--skill-toggle-smoke-test",
+        "--plugin-share-smoke-test",
+    ],
+    "automation page": [
+        "refreshRuntimeHooks",
+        "refreshAutomationEventLog",
+        "prepareAutomationTemplate",
+        "installAutomationHookTemplate",
+        "openCodexConfigFile",
+        "revealCodexHomeSubfolder",
+        "trustRuntimeHook",
+        "setRuntimeHookEnabled",
+        "removeRaytoneAutomationHookTemplate",
+        "hooks/list",
+        "config/value/write",
+        "fs/readFile",
+        "UserPromptSubmit",
+        "raytone-automation-events.jsonl",
+        "--automation-smoke-test",
+        "--automation-hook-smoke-test",
+        "--hook-controls-smoke-test",
+        "--hook-notification-smoke-test",
+    ],
+}
+for page, tokens in page_runtime_tokens.items():
+    for token in tokens:
+        require(page, token)
+
+menu_runtime_tokens = [
+    "--command-surface-smoke-test",
+    "CommandGroup(replacing: .appSettings)",
+    "CommandGroup(replacing: .newItem)",
+    "CommandGroup(replacing: .help)",
+    "CommandMenu(\"工具\")",
+    "diagnoseWorkspaceRuntime",
+    "deleteThread(",
+    "thread/name/set",
+    "thread/fork",
+    "thread/archive",
+    "thread/unsubscribe",
+    "thread/unarchive",
+    "thread/compact/start",
+    "thread/rollback",
+    "turn/interrupt",
+    "thread/goal/set",
+    "thread/goal/clear",
+    "--thread-management-smoke-test",
+    "--thread-bootstrap-actions-smoke-test",
+    "--thread-lifecycle-smoke-test",
+]
+for token in menu_runtime_tokens:
+    require("menu and goal actions", token)
+
+sample_data_guard = [
+    "RAYTONE_CODEX_ENABLE_SAMPLE_DATA",
+    "RAYTONE_CODEX_UI_SCREEN",
+    "installSampleWorkspaceIfNeeded",
+]
+for token in sample_data_guard:
+    require("sample data gating", token)
+
+runtime_matrix_tokens = [
+    "RaytoneCodex Runtime Wiring Matrix",
+    "Thread And Composer",
+    "Tool Panels",
+    "Settings",
+    "Plugins And Skills",
+    "App-Server Requests And Dynamic Tools",
+    "Packaging Truth Surface",
+    "thread/start",
+    "turn/start",
+    "thread/settings/update",
+    "thread/name/set",
+    "thread/fork",
+    "thread/rollback",
+    "thread/compact/start",
+    "thread/archive",
+    "thread/unarchive",
+    "fs/readDirectory",
+    "fs/readFile",
+    "fs/writeFile",
+    "command/exec",
+    "mcpServer/tool/call",
+    "mcpServer/resource/read",
+    "hooks/list",
+    "UserPromptSubmit",
+    "externalAgentConfig/detect",
+    "externalAgentConfig/import",
+    "plugin/share/save",
+    "plugin/share/updateTargets",
+    "plugin/share/checkout",
+    "plugin/share/delete",
+    "raytone_browser.capture_snapshot",
+    "raytone_terminal.run_command",
+    "--dynamic-tool-smoke-test",
+    "--automation-hook-smoke-test",
+    "--thread-management-smoke-test",
+    "--plugin-share-smoke-test",
+    "--external-agent-config-smoke-test",
+    "--provider-sidecar-smoke-test",
+    "--package-audit",
+]
+for token in runtime_matrix_tokens:
+    require("runtime wiring matrix", token, text["runtime_matrix"])
+
+functional_smoke_report_tokens = [
+    "raytonecodex-functional-smoke.json",
+    '"reportPath"',
+    '"caseCount"',
+    '"stdout"',
+    '"stderr"',
+]
+for token in functional_smoke_report_tokens:
+    require("functional smoke evidence report", token, text["runner"])
+
+empty_button_matches = re.findall(r"Button\s*(?:\([^)]*\))?\s*\{\s*\}", all_text)
+if empty_button_matches:
+    failures.append({"surface": "interactive controls", "missing": f"found {len(empty_button_matches)} empty Button closures"})
+
+empty_action_defaults = re.findall(r"(?m)^\s*(?:var\s+)?[A-Za-z0-9_]*action[A-Za-z0-9_]*\s*:\s*(?:@escaping\s*)?\([^)]*\)\s*->\s*Void\s*=\s*\{\s*\}", all_text)
+empty_action_defaults += re.findall(r"(?m)^\s*(?:var|let)\s+[A-Za-z0-9_]+\s*:\s*\([^)]*\)\s*->\s*Void\s*=\s*\{\s*\}", all_text)
+if empty_action_defaults:
+    failures.append({
+        "surface": "interactive controls",
+        "missing": f"found {len(empty_action_defaults)} default empty action closures",
+    })
+
+smoke_test_flags = set(re.findall(r'"(--[A-Za-z0-9-]+-smoke-test)"', text["smoke"]))
+wiring_smoke_flags = set(re.findall(r'"(--[A-Za-z0-9-]+-smoke-test)"', text["wiring"]))
+runner_smoke_flags = set(re.findall(r"--[A-Za-z0-9-]+-smoke-test", text["runner"]))
+missing_wiring_smokes = sorted(smoke_test_flags - wiring_smoke_flags)
+missing_runner_smokes = sorted(smoke_test_flags - runner_smoke_flags)
+if missing_wiring_smokes:
+    failures.append({
+        "surface": "smoke runtime coverage",
+        "missing": ", ".join(missing_wiring_smokes),
+    })
+if missing_runner_smokes:
+    failures.append({
+        "surface": "smoke runner coverage",
+        "missing": ", ".join(missing_runner_smokes),
+    })
+
+client_request_methods = set(re.findall(r'request\(method: "([^"]+)"', text["client"]))
+runtime_evidence_text = "\n".join(
+    body
+    for name, body in text.items()
+    if name not in {"client", "wiring"}
+)
+unreferenced_client_methods = sorted(
+    method for method in client_request_methods
+    if method not in runtime_evidence_text
+)
+if unreferenced_client_methods:
+    failures.append({
+        "surface": "app-server UI runtime evidence",
+        "missing": ", ".join(unreferenced_client_methods),
+    })
+
+result = {
+    "ok": not failures,
+    "settingsPanes": len(settings_cases),
+    "toolPanels": len(tool_panel_cases),
+    "dynamicTools": len(dynamic_tools),
+    "settingsRuntimeSpecs": len(settings_runtime),
+    "smokeTestFlags": len(smoke_test_flags),
+    "wiringSmokeFlags": len(wiring_smoke_flags),
+    "runnerSmokeFlags": len(runner_smoke_flags),
+    "clientRuntimeMethods": len(client_request_methods),
+    "unreferencedClientMethods": unreferenced_client_methods,
+    "checkedFiles": len(files),
+    "failures": failures,
+}
+print(json.dumps(result, ensure_ascii=False, indent=2))
+sys.exit(0 if not failures else 1)
+PY

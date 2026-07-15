@@ -2,24 +2,24 @@
 
 Date: 2026-06-09
 
-RaytoneCodex is intended to ship as a single macOS app bundle with the Codex CLI
+RaytoneX is intended to ship as a single macOS app bundle with the Codex CLI
 inside the app package. Users should not need a separate `codex` install.
 
 ## Current Bundle Shape
 
 `script/build_and_run.sh` stages:
 
-- `dist/RaytoneCodex.app/Contents/MacOS/RaytoneCodex`
-- `dist/RaytoneCodex.app/Contents/Resources/codex`
-- `dist/RaytoneCodex.app/Contents/Resources/OPENAI_CODEX_CLI_NOTICE.txt`
-- `dist/RaytoneCodex.app/Contents/Resources/OPENAI_CODEX_LICENSE.txt`
-- `dist/RaytoneCodex.app/Contents/Resources/OPENAI_CODEX_NOTICE.txt`
-- `dist/RaytoneCodex.app/Contents/Resources/RaytoneCodexRelease.json`
+- `dist/RaytoneX.app/Contents/MacOS/RaytoneX`
+- `dist/RaytoneX.app/Contents/Resources/codex`
+- `dist/RaytoneX.app/Contents/Resources/OPENAI_CODEX_CLI_NOTICE.txt`
+- `dist/RaytoneX.app/Contents/Resources/OPENAI_CODEX_LICENSE.txt`
+- `dist/RaytoneX.app/Contents/Resources/OPENAI_CODEX_NOTICE.txt`
+- `dist/RaytoneX.app/Contents/Resources/RaytoneCodexRelease.json`
 
 It can also produce one-install artifacts:
 
-- `dist/RaytoneCodex-0.1.0-macos-arm64.zip`
-- `dist/RaytoneCodex-0.1.0-macos-arm64.dmg`
+- `dist/RaytoneX-0.1.0-macos-arm64.zip`
+- `dist/RaytoneX-0.1.0-macos-arm64.dmg`
 
 The project also includes a signing baseline at
 `Signing/RaytoneCodex.entitlements`. It is intentionally empty right now because
@@ -29,9 +29,10 @@ entitlements for the current CLI execution slice.
 The source for the staged CLI is chosen in this order:
 
 1. `RAYTONE_CODEX_CLI`
-2. `/Applications/Codex.app/Contents/Resources/codex`
-3. standalone `codex` on `PATH`
-4. common Homebrew paths
+2. `dist/RaytoneCodexCLI/codex` built from the pinned OpenAI Codex source
+3. `/Applications/Codex.app/Contents/Resources/codex`
+4. standalone `codex` on `PATH`
+5. common Homebrew paths
 
 ## Local Development Limitation
 
@@ -107,7 +108,7 @@ signed by a Raytone Developer ID identity. On a release machine it requires:
 - valid stapled notarization ticket
 
 When a signing identity is available, the staging script signs both
-`Contents/Resources/codex` and `RaytoneCodex.app` with `--options runtime`.
+`Contents/Resources/codex` and `RaytoneX.app` with `--options runtime`.
 Set `RAYTONE_CODEX_SIGN_IDENTITY` to pin the intended certificate.
 
 ## Release Requirement
@@ -131,9 +132,9 @@ RAYTONE_CODEX_SIGN_IDENTITY="Developer ID Application: Raytone (...)" \
 8. Verify on a clean machine with:
 
 ```sh
-codesign --verify --deep --strict --verbose=4 RaytoneCodex.app
-spctl --assess --type execute --verbose=4 RaytoneCodex.app
-xcrun stapler validate RaytoneCodex.app
+codesign --verify --deep --strict --verbose=4 RaytoneX.app
+spctl --assess --type execute --verbose=4 RaytoneX.app
+xcrun stapler validate RaytoneX.app
 ```
 
 Only after those checks pass should the bundle be described as an installable

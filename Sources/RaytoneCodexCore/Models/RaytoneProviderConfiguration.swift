@@ -13,7 +13,20 @@ public struct RaytoneProviderConfiguration: Identifiable, Codable, Equatable, Se
     public var models: [String]
     public var kind: RaytoneProviderKind
     public var apiKeyEnvironmentName: String?
+    public var requiresAPIKey: Bool
     public var reasoning: CodexChatReasoningSettings?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case displayName
+        case baseURL
+        case model
+        case models
+        case kind
+        case apiKeyEnvironmentName
+        case requiresAPIKey
+        case reasoning
+    }
 
     public init(
         id: String,
@@ -23,6 +36,7 @@ public struct RaytoneProviderConfiguration: Identifiable, Codable, Equatable, Se
         models: [String],
         kind: RaytoneProviderKind,
         apiKeyEnvironmentName: String? = nil,
+        requiresAPIKey: Bool = true,
         reasoning: CodexChatReasoningSettings? = nil
     ) {
         self.id = id
@@ -32,7 +46,21 @@ public struct RaytoneProviderConfiguration: Identifiable, Codable, Equatable, Se
         self.models = models
         self.kind = kind
         self.apiKeyEnvironmentName = apiKeyEnvironmentName
+        self.requiresAPIKey = requiresAPIKey
         self.reasoning = reasoning
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.displayName = try container.decode(String.self, forKey: .displayName)
+        self.baseURL = try container.decode(String.self, forKey: .baseURL)
+        self.model = try container.decode(String.self, forKey: .model)
+        self.models = try container.decode([String].self, forKey: .models)
+        self.kind = try container.decode(RaytoneProviderKind.self, forKey: .kind)
+        self.apiKeyEnvironmentName = try container.decodeIfPresent(String.self, forKey: .apiKeyEnvironmentName)
+        self.requiresAPIKey = try container.decodeIfPresent(Bool.self, forKey: .requiresAPIKey) ?? true
+        self.reasoning = try container.decodeIfPresent(CodexChatReasoningSettings.self, forKey: .reasoning)
     }
 
     public var usesSidecar: Bool {
@@ -147,8 +175,8 @@ public extension RaytoneProviderConfiguration {
             model: "local-model",
             models: ["local-model"],
             kind: .chatCompletionsSidecar,
+            requiresAPIKey: false,
             reasoning: nil
         )
     ]
 }
-

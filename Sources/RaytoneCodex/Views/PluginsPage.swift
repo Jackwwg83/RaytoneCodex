@@ -1,11 +1,65 @@
 import RaytoneCodexCore
 import SwiftUI
 
+private func pluginShareSummary(_ shareContext: CodexRuntimePluginShareContext) -> String {
+    var pieces = ["共享"]
+    if let discoverability = shareContext.discoverability, !discoverability.isEmpty {
+        pieces.append(pluginShareDiscoverabilityName(discoverability))
+    }
+    if let creatorName = shareContext.creatorName, !creatorName.isEmpty {
+        pieces.append("来自 \(creatorName)")
+    }
+    let version = shareContext.remoteVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    pieces.append(version.isEmpty ? shareContext.remotePluginID : "\(shareContext.remotePluginID)@\(version)")
+    return pieces.joined(separator: " · ")
+}
+
+private func pluginShareRows(_ shareContext: CodexRuntimePluginShareContext) -> [String] {
+    var rows = [pluginShareSummary(shareContext)]
+    if let shareURL = shareContext.shareURL, !shareURL.isEmpty {
+        rows.append("链接 · \(shareURL)")
+    }
+    if !shareContext.sharePrincipals.isEmpty {
+        let principals = shareContext.sharePrincipals
+            .prefix(4)
+            .map { "\($0.name) · \(pluginShareRoleName($0.role)) · \(pluginSharePrincipalTypeName($0.principalType))" }
+        rows.append(contentsOf: principals)
+    }
+    return rows
+}
+
+private func pluginShareDiscoverabilityName(_ value: String) -> String {
+    switch value.uppercased() {
+    case "LISTED": "公开列出"
+    case "UNLISTED": "未列出"
+    case "PRIVATE": "私有"
+    default: value
+    }
+}
+
+private func pluginShareRoleName(_ value: String) -> String {
+    switch value.lowercased() {
+    case "reader": "可读"
+    case "editor": "可编辑"
+    case "owner": "所有者"
+    default: value
+    }
+}
+
+private func pluginSharePrincipalTypeName(_ value: String) -> String {
+    switch value.lowercased() {
+    case "user": "用户"
+    case "group": "团队"
+    case "workspace": "工作区"
+    default: value
+    }
+}
+
 struct PluginsPage: View {
     @ObservedObject var store: SessionStore
     @State private var selectedTab: PluginTab = .plugins
     @State private var search = ""
-    @State private var sourceFilter = "Built by OpenAI"
+    @State private var sourceFilter = "OpenAI 构建"
     @State private var stateFilter = "全部"
 
     private let columns = [
@@ -16,10 +70,17 @@ struct PluginsPage: View {
     private var filteredPlugins: [CodexRuntimePlugin] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return store.runtimePlugins.filter { plugin in
-            let matchesSource = sourceFilter == "全部来源" ||
-                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("OpenAI") ||
-                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("Codex official") ||
-                plugin.developerName?.localizedCaseInsensitiveContains("OpenAI") == true
+            let matchesSource: Bool
+            switch sourceFilter {
+            case "全部来源":
+                matchesSource = true
+            case "共享插件":
+                matchesSource = plugin.shareContext != nil
+            default:
+                matchesSource = plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("OpenAI") ||
+                    plugin.marketplaceDisplayName.localizedCaseInsensitiveContains("Codex official") ||
+                    plugin.developerName?.localizedCaseInsensitiveContains("OpenAI") == true
+            }
             let matchesState: Bool
             switch stateFilter {
             case "已安装":
@@ -33,7 +94,10 @@ struct PluginsPage: View {
                 plugin.displayName.localizedCaseInsensitiveContains(query) ||
                 plugin.name.localizedCaseInsensitiveContains(query) ||
                 plugin.summary.localizedCaseInsensitiveContains(query) ||
-                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains(query)
+                plugin.marketplaceDisplayName.localizedCaseInsensitiveContains(query) ||
+                plugin.shareContext?.remotePluginID.localizedCaseInsensitiveContains(query) == true ||
+                plugin.shareContext?.creatorName?.localizedCaseInsensitiveContains(query) == true ||
+                plugin.shareContext?.shareURL?.localizedCaseInsensitiveContains(query) == true
             return matchesSource && matchesState && matchesQuery
         }
     }
@@ -61,6 +125,12 @@ struct PluginsPage: View {
 
     private var stateFilterValues: [String] {
         selectedTab == .plugins ? ["全部", "已安装", "未安装"] : ["全部", "已启用", "已停用"]
+    }
+
+    private var runtimeSkillExtraRootsText: String {
+        store.runtimeSkillExtraRoots
+            .map(Project.abbreviate)
+            .joined(separator: "、")
     }
 
     var body: some View {
@@ -111,11 +181,43 @@ struct PluginsPage: View {
             }
                 .buttonStyle(ChipButtonStyle())
             Menu {
+                Button("新建本地插件模板") {
+                    selectedTab = .plugins
+                    sourceFilter = "全部来源"
+                    stateFilter = "全部"
+                    Task { await store.createLocalPluginTemplate() }
+                }
+                Button("新建本地技能模板") {
+                    selectedTab = .skills
+                    stateFilter = "全部"
+                    Task { await store.createLocalSkillTemplate() }
+                }
+                Button("添加运行时技能根目录…") {
+                    selectedTab = .skills
+                    stateFilter = "全部"
+                    store.promptAddRuntimeSkillExtraRoot()
+                }
+                Button("清除运行时技能根目录") {
+                    selectedTab = .skills
+                    Task { await store.setRuntimeSkillExtraRoots(paths: []) }
+                }
+                .disabled(store.runtimeSkillExtraRoots.isEmpty)
+                Divider()
+                Button("添加插件市场源…") {
+                    store.promptAddPluginMarketplace()
+                }
+                Button("升级插件市场源") {
+                    Task { await store.upgradePluginMarketplaces() }
+                }
+                Button("移除插件市场源…") {
+                    store.promptRemovePluginMarketplace()
+                }
+                Divider()
                 Button("打开插件目录") {
-                    store.revealCodexHomeSubfolder("plugins")
+                    Task { await store.revealCodexHomeSubfolder("plugins") }
                 }
                 Button("打开技能目录") {
-                    store.revealCodexHomeSubfolder("skills")
+                    Task { await store.revealCodexHomeSubfolder("skills") }
                 }
             } label: {
                 HStack(spacing: 5) {
@@ -174,7 +276,7 @@ struct PluginsPage: View {
             .background(Theme.fill)
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
 
-            filterMenu(selection: $sourceFilter, values: ["Built by OpenAI", "全部来源"])
+            filterMenu(selection: $sourceFilter, values: ["OpenAI 构建", "共享插件", "全部来源"])
             filterMenu(selection: $stateFilter, values: stateFilterValues)
         }
     }
@@ -234,11 +336,7 @@ struct PluginsPage: View {
                 .shadow(color: Theme.border.opacity(0.28), radius: 16, x: 0, y: 8)
 
                 Button("在对话中试用") {
-                    if let plugin = store.runtimePlugins.first(where: { $0.installed && $0.enabled }) {
-                        store.usePluginInComposer(plugin)
-                    } else {
-                        store.route = .thread
-                    }
+                    Task { await store.useFeaturedPluginInComposer() }
                 }
                 .buttonStyle(ChipButtonStyle(prominent: true))
             }
@@ -284,6 +382,60 @@ struct PluginsPage: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(2)
+            }
+
+            if !store.runtimeSkillExtraRoots.isEmpty {
+                Text("运行时技能根：\(runtimeSkillExtraRootsText)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            if let installResult = store.runtimePluginInstallResult {
+                Divider()
+                    .overlay(Theme.borderSoft)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: installResult.appsNeedingAuth.isEmpty ? "checkmark.shield" : "key")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(installResult.appsNeedingAuth.isEmpty ? Theme.success : Theme.warning)
+                        Text("plugin/install 返回")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                        Text(SessionStore.pluginAuthPolicyDisplayName(installResult.authPolicy))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                        Spacer(minLength: 0)
+                    }
+
+                    if installResult.appsNeedingAuth.isEmpty {
+                        Text("没有 app 需要额外授权。")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                    } else {
+                        ForEach(Array(installResult.appsNeedingAuth.prefix(4))) { app in
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(app.name)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(1)
+                                    Text(app.description ?? "需要在 Codex app-server 返回的 installUrl 中完成授权")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(Theme.textTertiary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                Button("授权") {
+                                    store.openPluginInstallAuthURL(app)
+                                }
+                                .buttonStyle(ChipButtonStyle(prominent: app.installURL != nil))
+                                .disabled(app.installURL == nil)
+                            }
+                        }
+                    }
+                }
             }
         }
         .padding(12)
@@ -337,6 +489,13 @@ struct PluginsPage: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.textSecondary)
                             .lineLimit(3)
+                        if let shareContext = detail.plugin.shareContext {
+                            Text(pluginShareSummary(shareContext))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
                     }
                     Spacer(minLength: 0)
                     Text(store.runtimePluginDetailStatusText)
@@ -351,9 +510,19 @@ struct PluginsPage: View {
                     pluginDetailMetric("App", detail.apps.count)
                 }
 
+                if detail.plugin.localPluginPath != nil || detail.plugin.shareContext != nil {
+                    pluginShareActions(detail.plugin, shareContext: detail.plugin.shareContext)
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
+                    if let shareContext = detail.plugin.shareContext {
+                        pluginDetailList("共享", rows: pluginShareRows(shareContext))
+                    }
                     if !detail.skills.isEmpty {
-                        pluginDetailList("技能", rows: detail.skills.map { "\($0.displayName) · \($0.enabled ? "启用" : "停用")" })
+                        pluginSkillList(detail.skills)
+                    }
+                    if store.runtimePluginSkillPreview != nil {
+                        pluginSkillPreviewCard
                     }
                     if !detail.mcpServers.isEmpty {
                         pluginDetailList("MCP 服务器", rows: detail.mcpServers)
@@ -374,6 +543,154 @@ struct PluginsPage: View {
                     .stroke(Theme.borderSoft, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        }
+    }
+
+    private func pluginSkillList(_ skills: [CodexRuntimePluginSkill]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("技能")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            ForEach(Array(skills.prefix(4))) { skill in
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(skill.displayName) · \(skill.enabled ? "启用" : "停用")")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                        Text(skill.path.map(Project.abbreviate) ?? "plugin/read 未返回 path")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        Task { await store.readRuntimePluginSkillPreview(skill) }
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: 24, height: 24)
+                            .background(Theme.fill)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(skill.path == nil)
+                    .help("读取技能内容")
+                }
+            }
+        }
+    }
+
+    private var pluginSkillPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("插件技能内容")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(store.runtimePluginSkillPreviewStatusText)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    store.clearRuntimePluginSkillPreview()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 22, height: 22)
+                        .background(Theme.fill)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let skill = store.runtimePluginSkillPreview {
+                Text(skill.path.map(Project.abbreviate) ?? skill.name)
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            ScrollView {
+                Text(store.runtimePluginSkillPreviewText.isEmpty ? "尚未读取到内容。" : store.runtimePluginSkillPreviewText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .frame(maxHeight: 180)
+            .background(Theme.transcript)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .padding(.top, 2)
+    }
+
+    private func pluginShareActions(
+        _ plugin: CodexRuntimePlugin,
+        shareContext: CodexRuntimePluginShareContext?
+    ) -> some View {
+        HStack(spacing: 8) {
+            if plugin.localPluginPath != nil {
+                Button {
+                    Task { await store.saveSharedPlugin(plugin) }
+                } label: {
+                    Label(shareContext == nil ? "创建共享链接" : "保存共享插件", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+            }
+
+            if shareContext != nil && plugin.localPluginPath == nil {
+                Button {
+                    Task { await store.checkoutSharedPlugin(plugin) }
+                } label: {
+                    Label("检出共享插件", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+            }
+
+            if let shareContext, shareContext.shareURL != nil {
+                Button {
+                    store.openPluginShareURL(plugin)
+                } label: {
+                    Label("打开链接", systemImage: "arrow.up.forward")
+                }
+                .buttonStyle(ChipButtonStyle())
+            }
+
+            if shareContext != nil {
+                Menu {
+                    Button("设为未列出链接") {
+                        Task { await store.updateSharedPluginDiscoverability(plugin, discoverability: "UNLISTED") }
+                    }
+                    Button("设为私有") {
+                        Task { await store.updateSharedPluginDiscoverability(plugin, discoverability: "PRIVATE") }
+                    }
+                } label: {
+                    Label("共享权限", systemImage: "person.2.badge.gearshape")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .buttonStyle(ChipButtonStyle())
+            }
+
+            Spacer(minLength: 0)
+
+            if shareContext != nil {
+                Button {
+                    Task { await store.deleteSharedPlugin(plugin) }
+                } label: {
+                    Label("删除分享", systemImage: "trash")
+                }
+                .buttonStyle(ChipButtonStyle(tint: Theme.danger))
+            }
         }
     }
 
@@ -421,14 +738,84 @@ struct PluginsPage: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(filteredSkills) { skill in
-                        RuntimeSkillRow(skill: skill) {
-                            Task { await store.toggleSkill(skill) }
-                        }
+                        RuntimeSkillRow(
+                            skill: skill,
+                            detail: {
+                                Task { await store.readRuntimeSkillPreview(skill) }
+                            },
+                            toggle: {
+                                Task { await store.toggleSkill(skill) }
+                            }
+                        )
+                    }
+                    if store.runtimeSkillPreview != nil {
+                        skillPreviewCard
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var skillPreviewCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("技能内容")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(store.runtimeSkillPreviewStatusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    store.clearRuntimeSkillPreview()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 24, height: 24)
+                        .background(Theme.fill)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if let skill = store.runtimeSkillPreview {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(skill.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(Project.abbreviate(skill.path))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            ScrollView {
+                Text(store.runtimeSkillPreviewText.isEmpty ? "尚未读取到内容。" : store.runtimeSkillPreviewText)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .frame(maxHeight: 260)
+            .background(Theme.fillSubtle)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .padding(14)
+        .background(Theme.transcript)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 
     private func emptyRuntimeCard(symbol: String, title: String, detail: String) -> some View {
@@ -488,6 +875,13 @@ private struct RuntimePluginRow: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
+                if let shareContext = plugin.shareContext {
+                    Text(pluginShareSummary(shareContext))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
 
             Spacer(minLength: 8)
@@ -514,7 +908,7 @@ private struct RuntimePluginRow: View {
             .disabled(plugin.installPolicy == "NOT_AVAILABLE")
         }
         .padding(.horizontal, 12)
-        .frame(height: 72)
+        .frame(height: plugin.shareContext == nil ? 72 : 84)
         .background(Theme.transcript)
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
@@ -535,6 +929,7 @@ private struct RuntimePluginRow: View {
 
 private struct RuntimeSkillRow: View {
     let skill: CodexRuntimeSkill
+    var detail: () -> Void
     var toggle: () -> Void
 
     var body: some View {
@@ -561,6 +956,16 @@ private struct RuntimeSkillRow: View {
             }
 
             Spacer(minLength: 8)
+
+            Button(action: detail) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 24, height: 24)
+                    .background(Theme.fill)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
 
             Button(skill.enabled ? "停用" : "启用", action: toggle)
                 .buttonStyle(ChipButtonStyle(prominent: !skill.enabled))

@@ -1,0 +1,76 @@
+[0/1] Planning build
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.08s)
+{
+  "appCount" : 0,
+  "email" : {
+    "count" : 0,
+    "mentions" : [
+
+    ],
+    "names" : [
+
+    ],
+    "ok" : true,
+    "prompt" : "",
+    "route" : "settings",
+    "runtimeCatalogStatus" : "集成：190 个插件 · 10 个 MCP · 3 个权限配置",
+    "settingsPane" : "connections",
+    "status" : "连接电子邮件：app\/list 0 个 · MCP 10 个 · 未发现已授权邮件连接"
+  },
+  "emailInsertedMention" : false,
+  "emailRouteOK" : true,
+  "files" : {
+    "entryCount" : 19,
+    "fileCount" : 2,
+    "filePanelStatus" : "19 项 · 已监听",
+    "ok" : true,
+    "path" : "\/Users\/jackwu\/Projects\/RaytoneCodex",
+    "preview" : [
+      ".build",
+      ".codex",
+      ".git",
+      "artifacts",
+      "audits",
+      "dist",
+      "docs",
+      "Schemas",
+      "screenshots",
+      "script",
+      "sidecar",
+      "Signing"
+    ],
+    "route" : "thread",
+    "status" : "连接文件：fs\/readDirectory ~\/Projects\/RaytoneCodex · 文件 2 个 · 19 项 · 已监听",
+    "toolPanel" : "files"
+  },
+  "initialStatus" : "app\/list 0 个 · MCP 10 个 · 文件 2 个",
+  "mcpServerCount" : 10,
+  "messaging" : {
+    "count" : 1,
+    "mentions" : [
+
+    ],
+    "names" : [
+      "codex-connectors-mcp"
+    ],
+    "ok" : true,
+    "prompt" : "",
+    "route" : "settings",
+    "runtimeCatalogStatus" : "集成：190 个插件 · 10 个 MCP · 3 个权限配置",
+    "settingsPane" : "connections",
+    "status" : "连接消息传送：app\/list 0 个 · MCP 10 个 · codex-connectors-mcp"
+  },
+  "messagingInsertedMention" : false,
+  "messagingRouteOK" : true,
+  "ok" : true,
+  "runtimeErrors" : [
+
+  ],
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "source" : "app\/list + mcpServerStatus\/list + fs\/readDirectory",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

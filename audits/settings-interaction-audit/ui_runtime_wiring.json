@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "settingsPanes": 19,
+  "toolPanels": 5,
+  "dynamicTools": 9,
+  "settingsRuntimeSpecs": 19,
+  "smokeTestFlags": 114,
+  "wiringSmokeFlags": 114,
+  "runnerSmokeFlags": 114,
+  "clientRuntimeMethods": 113,
+  "unreferencedClientMethods": [],
+  "checkedFiles": 24,
+  "failures": []
+}

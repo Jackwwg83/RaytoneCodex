@@ -26,13 +26,10 @@ struct NewThreadHeroView: View {
         .frame(maxWidth: .infinity, minHeight: 620)
         .background(Theme.transcript)
         .task {
-            await store.refreshWorkspaceBranches()
-            if store.fileEntries.isEmpty {
-                await store.loadFilePanelDirectory(store.workspacePath)
+            guard !SessionStore.startupScreenUsesNewThreadHero else {
+                return
             }
-            if store.runtimeMCPServers.isEmpty {
-                await store.refreshRuntimeMCPServers()
-            }
+            await store.refreshNewThreadHeroRuntime()
         }
     }
 
@@ -186,7 +183,7 @@ struct NewThreadHeroView: View {
 
     private var micButton: some View {
         Button {
-            store.startVoiceInput()
+            Task { await store.startVoiceInput() }
         } label: {
             Image(systemName: "mic")
                 .font(.system(size: 13))
@@ -194,7 +191,7 @@ struct NewThreadHeroView: View {
                 .frame(width: 30, height: 30)
         }
         .buttonStyle(.plain)
-        .help("语音输入")
+        .help(store.voiceInputStatusText)
     }
 
     private var sendButton: some View {
@@ -221,10 +218,10 @@ struct NewThreadHeroView: View {
         HStack(spacing: 8) {
             pillMenu(symbol: "folder", title: store.selectedProject.name) {
                 ForEach(store.projects) { project in
-                    Button(project.name) {
-                        if let thread = store.threads.first(where: { $0.projectID == project.id }) {
-                            store.selectThread(thread)
-                        }
+                    Button {
+                        store.selectProjectForNewThread(project.id)
+                    } label: {
+                        Label(project.name, systemImage: project.id == store.selectedProject.id ? "checkmark" : "folder")
                     }
                 }
             }
@@ -302,7 +299,7 @@ struct NewThreadHeroView: View {
                 subtitle: store.messagingConnectionSubtitle,
                 connected: store.messagingConnectionCount > 0
             ) {
-                store.openConnectionsSettings()
+                Task { await store.openHomeConnection(.messaging) }
             }
             ConnectionCard(
                 symbol: "envelope",
@@ -310,7 +307,7 @@ struct NewThreadHeroView: View {
                 subtitle: store.emailConnectionSubtitle,
                 connected: store.emailConnectionCount > 0
             ) {
-                store.openConnectionsSettings()
+                Task { await store.openHomeConnection(.email) }
             }
             ConnectionCard(
                 symbol: "folder",
@@ -318,7 +315,7 @@ struct NewThreadHeroView: View {
                 subtitle: store.workspaceFileConnectionSubtitle,
                 connected: store.workspaceFileConnectionCount > 0
             ) {
-                store.connectWorkspaceFiles()
+                Task { await store.openHomeConnection(.files) }
             }
         }
     }

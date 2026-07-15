@@ -1,0 +1,59 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "account" : {
+    "email" : "usage-smoke@example.com",
+    "kind" : "chatgpt",
+    "planType" : "plus"
+  },
+  "billingErrors" : [
+
+  ],
+  "billingStatus" : "账户：usage-smoke@example.com · 累计 105",
+  "clipboardPreview" : "RaytoneCodex 本地状态\nProvider：OpenAI\n模型：gpt-5.5\nProvider 类型：Codex 原生 OpenAI\nKey：已配置\nSidecar：未启动\nProvider 用量：OpenAI 账户用量已隐藏\n运行时：Environment override · fake-usage-activity\n工作区：\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-2622DEEF-3D3D-4FA9-8D00-5AE403D3492C\/workspace\n当前对话：新对话\n对话变更摘要：0 个文件，+0 −0\n来源：RaytoneCodex 本地状态，不读取 OpenAI ac",
+  "cumulative" : [
+    28,
+    105
+  ],
+  "daily" : [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14
+  ],
+  "lifetimeTokens" : 105,
+  "methodsObserved" : true,
+  "ok" : true,
+  "providerUsageStatus" : "OpenAI 账户用量已隐藏",
+  "rateLimitBuckets" : [
+    {
+      "id" : "primary",
+      "name" : "Primary Model",
+      "planType" : "plus",
+      "primaryUsedPercent" : 0.25,
+      "secondaryWindowMinutes" : 10080
+    }
+  ],
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-2622DEEF-3D3D-4FA9-8D00-5AE403D3492C\/requests.jsonl",
+  "runtimePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-2622DEEF-3D3D-4FA9-8D00-5AE403D3492C\/fake-codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "fake-usage-activity",
+  "shareStatus" : "已复制本地状态摘要",
+  "source" : "fake Codex app-server usage data + Raytone local status clipboard",
+  "weekly" : [
+    28,
+    77
+  ],
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-2622DEEF-3D3D-4FA9-8D00-5AE403D3492C\/workspace"
+}

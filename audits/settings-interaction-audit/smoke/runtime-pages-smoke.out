@@ -1,0 +1,66 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "account" : {
+    "email" : "hqwu810@gmail.com",
+    "kind" : "chatgpt",
+    "planType" : "pro",
+    "requiresOpenAIAuth" : true
+  },
+  "accountErrors" : [
+
+  ],
+  "accountStatus" : "账户：hqwu810@gmail.com · 累计 20,847,725,028",
+  "archivedErrors" : [
+
+  ],
+  "archivedStatus" : "thread\/list：1 个已归档对话",
+  "archivedThreadCount" : 1,
+  "archivedThreadsPreview" : [
+    {
+      "cwd" : "\/Users\/jackwu\/Projects\/AINative-DevOps",
+      "id" : "019e1b56-52bd-7543-9fcd-81bd0ba1f501",
+      "modelProvider" : "openai",
+      "title" : "屏蔽垃圾邮件发件人",
+      "updatedAt" : "2026-05-12T08:43:00Z"
+    }
+  ],
+  "git" : {
+    "additions" : 0,
+    "deletions" : 0,
+    "diffBytes" : 0,
+    "fallbackStatus" : "## codex\/remote-control-cloud-mode...origin\/codex\/remote-control-cloud-mode\n?? audits\/",
+    "files" : 0,
+    "sha" : "78bd97e618f5a9a951fe7f542c1b1a9daece5141"
+  },
+  "gitErrors" : [
+
+  ],
+  "gitStatus" : "command\/exec git：+0 −0 · Git 状态 1 项",
+  "ok" : true,
+  "profile" : {
+    "displayName" : "hqwu810@gmail.com",
+    "handle" : "@hqwu810",
+    "initials" : "HG",
+    "source" : "account\/read"
+  },
+  "rateLimitBucketCount" : 2,
+  "runtimeDependencies" : {
+    "bundling" : "当前开发\/测试使用外部 CLI：环境变量指定",
+    "path" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+    "ready" : true,
+    "sidecar" : "未启动",
+    "source" : "环境变量指定",
+    "version" : "codex-cli 0.0.0"
+  },
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "tokenUsage" : {
+    "dailyBucketCount" : 266,
+    "lifetimeTokens" : 20847725028,
+    "peakDailyTokens" : 1000384387
+  },
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

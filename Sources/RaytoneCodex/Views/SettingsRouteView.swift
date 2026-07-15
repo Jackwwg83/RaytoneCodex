@@ -14,11 +14,20 @@ struct SettingsRouteView: View {
     @State private var providerEndpointDraftProviderID = ""
     @State private var providerStatusMessage = "未测试"
     @State private var instructionsStatus = ""
+    @State private var gitWritingInstructionsStatus = ""
     @State private var profileStatus = ""
+    @State private var didRequestSettingsBrowserSnapshotSmoke = false
+    @State private var showFeedbackUpload = false
+    @State private var feedbackCategory: CodexFeedbackCategory = .bug
+    @State private var feedbackReason = ""
+    @State private var feedbackIncludeLogs = false
+    @State private var usageActivityScale = "每日"
     @State private var customInstructions = """
-    Prefer concise, actionable engineering updates.
-    Keep implementation notes tied to real files and runtime evidence.
+    默认使用简洁、可执行的工程说明。
+    汇报时绑定真实文件、命令和运行时证据。
     """
+    @State private var commitInstructions = ""
+    @State private var pullRequestInstructions = ""
 
     private var defaultPermissionsBinding: Binding<Bool> {
         Binding(
@@ -146,10 +155,16 @@ struct SettingsRouteView: View {
         }
         .frame(minWidth: 760)
         .background(Theme.window)
+        .sheet(isPresented: $showFeedbackUpload) {
+            feedbackUploadSheet
+        }
         .task(id: store.settingsPane) {
+            requestSettingsBrowserSnapshotSmokeIfNeeded()
             switch store.settingsPane {
-            case .profile, .usageBilling:
-                await store.refreshAccountUsageRuntime()
+            case .profile:
+                await store.refreshProviderUsageRuntime()
+            case .usageBilling:
+                await store.refreshProviderUsageRuntime()
             case .mcpServers:
                 await store.refreshRuntimeMCPServers()
             case .hooks:
@@ -162,8 +177,15 @@ struct SettingsRouteView: View {
                 await store.refreshIntegrationRuntime()
             case .worktrees:
                 await store.refreshWorkspaceWorktrees()
+            case .modelsProviders:
+                await store.refreshModelCatalog()
+                if !store.selectedProvider.usesSidecar {
+                    await store.refreshModelProviderCapabilities()
+                }
             case .configuration:
                 await store.refreshRuntimeConfiguration()
+            case .experimentalFeatures:
+                await store.refreshRuntimeExperimentalFeatures()
             case .personalization:
                 await store.refreshRuntimeCatalog()
             default:
@@ -174,7 +196,120 @@ struct SettingsRouteView: View {
             } else if let instructions = store.runtimeConfig?.instructions, !instructions.isEmpty {
                 customInstructions = instructions
             }
+            commitInstructions = store.desktopCommitInstructions
+            pullRequestInstructions = store.desktopPullRequestInstructions
         }
+        .onChange(of: search) { _, _ in
+            let matches = SettingsGroup.all.flatMap { group in
+                filteredPanes(group.panes)
+            }
+            if matches.count == 1, let pane = matches.first {
+                store.settingsPane = pane
+            }
+        }
+    }
+
+    private var feedbackUploadSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "bubble.left.and.exclamationmark.bubble.right")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 28, height: 28)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("导出本地诊断包")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("诊断包只写入本机 Application Support，不上传到 Codex 或 OpenAI 云服务。")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Text("分类")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer(minLength: 0)
+                    Picker("分类", selection: $feedbackCategory) {
+                        ForEach(CodexFeedbackCategory.allCases) { category in
+                            Text(category.title).tag(category)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                }
+
+                Text(feedbackCategory.detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle("包含当前运行时状态", isOn: $feedbackIncludeLogs)
+                    .font(.system(size: 12.5))
+                    .toggleStyle(.switch)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("补充说明")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                    TextEditor(text: $feedbackReason)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textPrimary)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(height: 96)
+                        .background(Theme.fill)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                                .stroke(Theme.borderSoft, lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                }
+
+                HStack(spacing: 8) {
+                    statusBadge(store.localDiagnosticStatusText, ok: !store.localDiagnosticBundlePath.isEmpty)
+                    if let threadID = store.selectedThread.appServerThreadID, !threadID.isEmpty {
+                        Text("当前对话 \(threadID)")
+                            .font(Theme.mono(10.5, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button("取消") {
+                    showFeedbackUpload = false
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button("导出") {
+                    Task { @MainActor in
+                        let ok = await store.exportLocalDiagnosticBundle(
+                            category: feedbackCategory,
+                            reason: feedbackReason,
+                            includeRuntimeState: feedbackIncludeLogs
+                        )
+                        if ok {
+                            showFeedbackUpload = false
+                        }
+                    }
+                }
+                .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                .disabled(store.runtimeCatalogIsRefreshing)
+            }
+        }
+        .padding(22)
+        .frame(width: 520)
+        .background(Theme.window)
     }
 
     private var settingsSidebar: some View {
@@ -238,6 +373,19 @@ struct SettingsRouteView: View {
         .background(Theme.sidebar)
     }
 
+    private func requestSettingsBrowserSnapshotSmokeIfNeeded() {
+        guard store.settingsPane == .browser,
+              ProcessInfo.processInfo.environment["RAYTONE_CODEX_SETTINGS_BROWSER_SNAPSHOT_SMOKE"] == "1",
+              !didRequestSettingsBrowserSnapshotSmoke else {
+            return
+        }
+
+        didRequestSettingsBrowserSnapshotSmoke = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            Task { await store.openBrowserSampleAndCapture() }
+        }
+    }
+
     private func filteredPanes(_ panes: [SettingsPane]) -> [SettingsPane] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return panes }
@@ -280,6 +428,8 @@ struct SettingsRouteView: View {
             appearancePane
         case .configuration:
             configurationPane
+        case .experimentalFeatures:
+            experimentalFeaturesPane
         case .personalization:
             personalizationPane
         case .usageBilling:
@@ -317,6 +467,25 @@ struct SettingsRouteView: View {
                 HStack(spacing: 12) {
                     modeCard(id: "coding", symbol: "terminal", title: "适用于编程", subtitle: "更具技术性的回复和控制")
                     modeCard(id: "daily", symbol: "sparkles", title: "适用于日常工作", subtitle: "同样强大，技术细节更少")
+                }
+                HStack(spacing: 8) {
+                    statusBadge(
+                        store.runtimeCollaborationModes.isEmpty ? "未读取 preset" : "\(store.runtimeCollaborationModes.count) 个 preset",
+                        ok: !store.runtimeCollaborationModes.isEmpty
+                    )
+                    Text(store.runtimeCollaborationModeStatusText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Button("刷新") {
+                        Task { @MainActor in
+                            await store.refreshRuntimeCollaborationModes()
+                        }
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.info)
                 }
             }
 
@@ -360,18 +529,18 @@ struct SettingsRouteView: View {
 
     private var profilePane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            HStack {
-                accountAuthControlGroup
+            HStack(alignment: .top) {
+                paneTitle("本地状态", subtitle: "RaytoneX 的本地运行时、Provider 和工作区状态")
                 Spacer(minLength: 0)
-                Button("Share") {
-                    copyProfileShareSummary()
+                Button("复制摘要") {
+                    profileStatus = store.copyRaytoneStatusSummary()
                 }
                     .buttonStyle(ChipButtonStyle())
-                Button("私有") {
-                    profileStatus = "个人资料保持私有"
+                Button("模型设置") {
+                    store.settingsPane = .modelsProviders
                 }
                     .buttonStyle(ChipButtonStyle())
-                Button("编辑") {
+                Button("编辑个性化") {
                     store.settingsPane = .personalization
                 }
                     .buttonStyle(ChipButtonStyle())
@@ -383,46 +552,62 @@ struct SettingsRouteView: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
-            VStack(spacing: 8) {
-                Text(store.runtimeProfileInitials)
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(Theme.transcript)
-                    .frame(width: 76, height: 76)
-                    .background(store.runtimeAccount == nil ? Theme.textTertiary : Theme.warning)
-                    .clipShape(Circle())
-                Text(store.runtimeProfileDisplayName)
-                    .font(.system(size: 20, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                HStack(spacing: 6) {
-                    Text(store.runtimeProfileHandle)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(store.runtimeAccount?.planType ?? accountKindName(store.runtimeAccount?.kind))
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 7)
-                        .frame(height: 20)
-                        .background(Theme.fill)
-                        .clipShape(Capsule())
-                    statusBadge(accountKindName(store.runtimeAccount?.kind), ok: store.runtimeAccount?.kind != nil && store.runtimeAccount?.kind != "notLoggedIn")
-                }
-                if let login = store.activeAccountLogin, let loginID = login.loginID {
-                    Text("正在等待登录完成 · \(loginID)")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+            SettingsCard {
+                HStack(alignment: .top, spacing: 18) {
+                    Text(providerInitials(store.selectedProvider.displayName))
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(Theme.transcript)
+                        .frame(width: 72, height: 72)
+                        .background(store.selectedProvider.usesSidecar ? Theme.accent : Theme.textTertiary)
+                        .clipShape(Circle())
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text(store.selectedProvider.displayName)
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                                .lineLimit(1)
+                            statusBadge(store.selectedProvider.usesSidecar ? "本地 sidecar" : "Codex 原生", ok: true)
+                        }
+                        Text(store.selectedProvider.usesSidecar ? store.selectedProvider.model : (store.model.isEmpty ? store.selectedProvider.model : store.model))
+                            .font(Theme.mono(12))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            statusBadge(providerCredentialBadgeText(store.selectedProvider), ok: store.hasProviderAPIKey(store.selectedProvider))
+                            statusBadge(store.sidecarStatusText, ok: store.sidecarStatusText == "直连" || store.sidecarStatusText.contains("127.0.0.1") || !store.selectedProvider.usesSidecar)
+                            statusBadge(store.connectionState.title, ok: store.connectionState.severity == .ok)
+                        }
+                    }
+                    Spacer(minLength: 0)
                 }
             }
-            .frame(maxWidth: .infinity)
-
-            statsCard
-            tokenActivityCard
 
             HStack(alignment: .top, spacing: 14) {
-                insightCard
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Provider")
+                            .font(.system(size: 13, weight: .semibold))
+                        metricRow("类型", store.selectedProvider.usesSidecar ? "Chat Completions via raytone-proxy" : "Codex 原生 OpenAI")
+                        metricRow("Base URL", store.selectedProvider.baseURL)
+                        metricRow("Key", providerCredentialBadgeText(store.selectedProvider))
+                        metricRow("用量", store.providerUsageStatusText)
+                    }
+                }
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("本地运行时")
+                            .font(.system(size: 13, weight: .semibold))
+                        metricRow("运行时", store.runtimeSummary)
+                        metricRow("CLI", Project.abbreviate(store.runtimePath))
+                        metricRow("工作区", Project.abbreviate(store.workspacePath))
+                        metricRow("当前对话", store.selectedThread.title)
+                    }
+                }
+            }
+
+            HStack(alignment: .top, spacing: 14) {
+                providerUsageSummaryCard
                 pluginsUsageCard
             }
         }
@@ -430,7 +615,14 @@ struct SettingsRouteView: View {
 
     private var modelsProvidersPane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            paneTitle("模型与提供方", subtitle: "选择 Codex 使用的模型提供方。Chat Completions 提供方会通过本地 raytone-proxy 转换为 Responses。")
+            HStack(alignment: .top) {
+                paneTitle("模型与提供方", subtitle: "选择 Codex 使用的模型提供方。Chat Completions 提供方会通过本地 raytone-proxy 转换为 Responses。")
+                Spacer(minLength: 0)
+                Button("打开向导") {
+                    store.evaluateProviderOnboarding(force: true)
+                }
+                .buttonStyle(ChipButtonStyle())
+            }
 
             HStack(alignment: .top, spacing: 16) {
                 SettingsCard {
@@ -458,6 +650,30 @@ struct SettingsRouteView: View {
                             .foregroundStyle(Theme.textPrimary)
                             .lineLimit(1)
                     }
+                    SettingsValueRow(title: "Provider 能力", description: store.selectedProvider.usesSidecar ? "来自 Raytone provider 配置和 sidecar 探测" : "来自 app-server modelProvider/capabilities/read") {
+                        HStack(spacing: 6) {
+                            if store.selectedProvider.usesSidecar {
+                                capabilityBadge("流式", enabled: true)
+                                capabilityBadge("Thinking", enabled: store.selectedProvider.reasoning?.supportsThinking == true)
+                                capabilityBadge("Keychain", enabled: store.hasProviderAPIKey(store.selectedProvider))
+                            } else if let capabilities = store.modelProviderCapabilities {
+                                capabilityBadge("命名空间工具", enabled: capabilities.namespaceTools)
+                                capabilityBadge("图像生成", enabled: capabilities.imageGeneration)
+                                capabilityBadge("网页搜索", enabled: capabilities.webSearch)
+                            } else {
+                                Text(store.modelProviderCapabilitiesStatusText)
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(1)
+                            }
+                            if !store.selectedProvider.usesSidecar {
+                                Button("刷新") {
+                                    Task { await store.refreshModelProviderCapabilities() }
+                                }
+                                .buttonStyle(ChipButtonStyle())
+                            }
+                        }
+                    }
                     SettingsValueRow(title: "Sidecar", description: "仅第三方 Chat Completions 提供方需要") {
                         let sidecarText = store.selectedProvider.usesSidecar ? store.sidecarStatusText : "不需要"
                         statusBadge(sidecarText, ok: store.selectedProvider.usesSidecar ? sidecarText.contains("127.0.0.1") : true)
@@ -476,10 +692,10 @@ struct SettingsRouteView: View {
     private var usageBillingPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                paneTitle("使用情况和计费", subtitle: "来自 app-server 的 account/read、account/usage/read、account/rateLimits/read")
+                paneTitle("Provider 用量", subtitle: "Raytone 默认只显示本地线程用量和 raytone-proxy /usage；OpenAI 账户/计费不在这里读取。")
                 Spacer(minLength: 0)
                 Button("刷新") {
-                    Task { await store.refreshAccountUsageRuntime() }
+                    Task { await store.refreshProviderUsageRuntime() }
                 }
                 .buttonStyle(ChipButtonStyle())
             }
@@ -494,147 +710,42 @@ struct SettingsRouteView: View {
                 GridItem(.flexible(), spacing: 12),
                 GridItem(.flexible(), spacing: 12)
             ], spacing: 12) {
-                accountSummaryCard
-                tokenUsageSummaryCard
+                threadTokenUsageSummaryCard
                 providerUsageSummaryCard
             }
 
-            SettingsSection(title: "速率限制") {
-                if let rateLimits = store.runtimeRateLimits, !rateLimits.buckets.isEmpty {
-                    VStack(spacing: 10) {
-                        ForEach(rateLimits.buckets) { bucket in
-                            SettingsCard {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    HStack {
-                                        Text(bucket.name)
-                                            .font(.system(size: 13.5, weight: .semibold))
-                                        Spacer(minLength: 0)
-                                        statusBadge(bucket.reachedType == nil ? "正常" : bucket.reachedType ?? "受限", ok: bucket.reachedType == nil)
-                                    }
-                                    metricRow("计划", bucket.planType ?? "未返回")
-                                    metricRow("主窗口", rateLimitWindowText(bucket.primary))
-                                    metricRow("次窗口", rateLimitWindowText(bucket.secondary))
-                                    metricRow("余额", bucket.creditsRemaining.map { formatDecimal($0) } ?? "未返回")
-                                    metricRow("已用", bucket.creditsUsed.map { formatDecimal($0) } ?? "未返回")
-                                }
-                            }
-                        }
-                    }
+            providerUsageByProviderSection
+        }
+    }
+
+    private var threadTokenUsageSummaryCard: some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Image(systemName: "waveform.path.ecg.rectangle")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("当前线程")
+                        .font(.system(size: 13.5, weight: .semibold))
+                    Spacer(minLength: 0)
+                    statusBadge(store.selectedThreadTokenUsage == nil ? "未返回" : "实时", ok: store.selectedThreadTokenUsage != nil)
+                }
+
+                if let usage = store.selectedThreadTokenUsage {
+                    metricRow("线程", threadTokenUsageThreadText(usage.threadID))
+                    metricRow("Turn", usage.turnID)
+                    metricRow("总 Token", tokenText(usage.total.totalTokens))
+                    metricRow("最近一轮", tokenText(usage.last.totalTokens))
+                    metricRow("输入 / 输出", "\(tokenText(usage.total.inputTokens)) / \(tokenText(usage.total.outputTokens))")
+                    metricRow("缓存输入", tokenText(usage.total.cachedInputTokens))
+                    metricRow("推理输出", tokenText(usage.total.reasoningOutputTokens))
+                    metricRow("上下文窗口", tokenText(usage.modelContextWindow))
+                    metricRow("来源", "thread/tokenUsage/updated")
                 } else {
-                    emptySettingsState(symbol: "chart.pie", title: "没有 rate limit 快照", detail: "app-server 没有返回账户速率限制；未登录或该账户类型可能不提供此数据。")
+                    metricRow("状态", "等待当前线程运行或历史重放")
+                    metricRow("线程", store.selectedThread.appServerThreadID.map(threadTokenUsageThreadText) ?? "本地线程")
+                    metricRow("来源", "thread/tokenUsage/updated")
                 }
-            }
-        }
-    }
-
-    private var accountSummaryCard: some View {
-        SettingsCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Image(systemName: "person.crop.circle")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                    Text("账户")
-                        .font(.system(size: 13.5, weight: .semibold))
-                    Spacer(minLength: 0)
-                    let loggedIn = store.runtimeAccount != nil && store.runtimeAccount?.kind != "notLoggedIn"
-                    statusBadge(loggedIn ? "已登录" : "未登录", ok: loggedIn)
-                }
-                metricRow("类型", accountKindName(store.runtimeAccount?.kind))
-                metricRow("账户", store.runtimeAccount.map(SessionStore.accountDisplayName) ?? "未返回")
-                metricRow("计划", store.runtimeAccount?.planType ?? "未返回")
-                metricRow("来源", "account/read")
-                Divider()
-                    .overlay(Theme.borderSoft)
-                accountAuthControlGroup
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var accountAuthControlGroup: some View {
-        HStack(spacing: 8) {
-            if store.activeAccountLogin != nil {
-                Button("取消登录") {
-                    Task { await store.cancelAccountLogin() }
-                }
-                .buttonStyle(ChipButtonStyle())
-            } else if store.runtimeAccount == nil || store.runtimeAccount?.kind == "notLoggedIn" {
-                Button("登录 Codex") {
-                    Task { await store.startAccountChatGPTLogin() }
-                }
-                .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
-                Button("API Key") {
-                    showAccountAPIKeyLogin = true
-                }
-                .buttonStyle(ChipButtonStyle())
-                .popover(isPresented: $showAccountAPIKeyLogin, arrowEdge: .bottom) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("使用 OpenAI API Key 登录")
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                        Text("API Key 会由 Codex app-server 保存到当前 CODEX_HOME，不写入 RaytoneCodex 设置。")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        SecureField("sk-...", text: $accountAPIKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12.5))
-                        HStack {
-                            Spacer(minLength: 0)
-                            Button("取消") {
-                                accountAPIKeyDraft = ""
-                                showAccountAPIKeyLogin = false
-                            }
-                            .buttonStyle(ChipButtonStyle())
-                            Button("登录") {
-                                let key = accountAPIKeyDraft
-                                Task { @MainActor in
-                                    let ok = await store.loginRuntimeAccountWithAPIKey(key)
-                                    if ok {
-                                        accountAPIKeyDraft = ""
-                                        showAccountAPIKeyLogin = false
-                                    }
-                                }
-                            }
-                            .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
-                            .disabled(accountAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                    }
-                    .padding(14)
-                    .frame(width: 330)
-                    .background(Theme.panel)
-                }
-            } else {
-                Button("退出登录") {
-                    Task { await store.logoutRuntimeAccount() }
-                }
-                .buttonStyle(ChipButtonStyle())
-            }
-            Button("刷新账户") {
-                Task { await store.refreshAccountUsageRuntime() }
-            }
-            .buttonStyle(ChipButtonStyle())
-        }
-    }
-
-    private var tokenUsageSummaryCard: some View {
-        SettingsCard {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                    Text("Token 使用")
-                        .font(.system(size: 13.5, weight: .semibold))
-                    Spacer(minLength: 0)
-                    statusBadge(store.runtimeTokenUsage == nil ? "未返回" : "已读取", ok: store.runtimeTokenUsage != nil)
-                }
-                metricRow("累计 Token", tokenText(store.runtimeTokenUsage?.lifetimeTokens))
-                metricRow("单日峰值", tokenText(store.runtimeTokenUsage?.peakDailyTokens))
-                metricRow("最长任务", durationText(store.runtimeTokenUsage?.longestRunningTurnSec))
-                metricRow("连续天数", daysText(store.runtimeTokenUsage?.currentStreakDays))
-                metricRow("最长连续", daysText(store.runtimeTokenUsage?.longestStreakDays))
             }
         }
     }
@@ -662,7 +773,7 @@ struct SettingsRouteView: View {
                     metricRow("来源", "raytone-proxy /usage")
                 } else {
                     metricRow("状态", store.providerUsageStatusText)
-                    metricRow("来源", store.selectedProvider.usesSidecar ? "raytone-proxy /usage" : "account/usage/read")
+                    metricRow("来源", store.selectedProvider.usesSidecar ? "raytone-proxy /usage" : "OpenAI 账户用量已隐藏")
                 }
                 HStack {
                     Spacer(minLength: 0)
@@ -675,11 +786,106 @@ struct SettingsRouteView: View {
         }
     }
 
+    private var providerUsageByProviderSection: some View {
+        SettingsSection(
+            title: "Provider 用量",
+            description: "第三方 provider 行来自当前 sidecar 的 /usage 快照；OpenAI 只作为可选模型 provider，不读取官方账户计费。"
+        ) {
+            SettingsCard {
+                VStack(spacing: 0) {
+                    ForEach(store.providers) { provider in
+                        providerUsageRow(provider)
+                        if provider.id != store.providers.last?.id {
+                            Divider()
+                                .overlay(Theme.borderSoft)
+                                .padding(.vertical, 10)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func providerUsageRow(_ provider: RaytoneProviderConfiguration) -> some View {
+        let usage = store.providerUsageByProviderID[provider.id]
+        let isSelected = provider.id == store.selectedProviderID
+
+        return HStack(alignment: .center, spacing: 12) {
+            Image(systemName: provider.usesSidecar ? "shippingbox" : "sparkles")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
+                .frame(width: 24, height: 24)
+                .background(Theme.fill)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(provider.displayName)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    statusBadge(providerUsageRowBadge(provider: provider, usage: usage, isSelected: isSelected),
+                                ok: provider.usesSidecar ? usage != nil : true)
+                }
+
+                Text(providerUsageRowDetail(provider: provider, usage: usage))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 0)
+
+            Button(provider.usesSidecar ? (isSelected ? "刷新" : "选择并刷新") : (isSelected ? "当前" : "选择")) {
+                Task {
+                    if provider.usesSidecar {
+                        if !isSelected {
+                            store.selectProvider(provider.id)
+                        }
+                        await store.refreshSelectedProviderUsage()
+                    } else {
+                        if !isSelected {
+                            store.selectProvider(provider.id)
+                        }
+                    }
+                }
+            }
+            .buttonStyle(ChipButtonStyle(prominent: isSelected && provider.usesSidecar))
+            .disabled(!provider.usesSidecar && isSelected)
+        }
+    }
+
+    private func providerUsageRowBadge(
+        provider: RaytoneProviderConfiguration,
+        usage: RaytoneProxyUsage?,
+        isSelected: Bool
+    ) -> String {
+        if !provider.usesSidecar {
+            return isSelected ? "当前" : "可选"
+        }
+        if usage != nil {
+            return isSelected ? "当前" : "已读取"
+        }
+        return isSelected ? "未读取" : "待选择"
+    }
+
+    private func providerUsageRowDetail(
+        provider: RaytoneProviderConfiguration,
+        usage: RaytoneProxyUsage?
+    ) -> String {
+        if !provider.usesSidecar {
+            return "模型 \(store.model.isEmpty ? provider.model : store.model) · Raytone 默认不读取 OpenAI account/usage/read"
+        }
+        if let usage {
+            return "\(usage.model) · 请求 \(usage.requests) 次 · Token \(tokenText(usage.totalTokens)) · 推理 \(tokenText(usage.reasoningTokens)) · 来源 raytone-proxy /usage"
+        }
+        return "\(provider.model) · 尚未读取真实 /usage；选择该 provider 后可刷新"
+    }
+
     private var providerUsageBadgeText: String {
         if store.selectedProvider.usesSidecar {
             store.providerUsage == nil ? "未读取" : "已读取"
         } else {
-            "Codex 账户"
+            "未读取账户"
         }
     }
 
@@ -700,7 +906,11 @@ struct SettingsRouteView: View {
             store.selectProvider(provider.id)
             providerAPIKeyDraft = ""
             syncProviderEndpointDrafts(provider)
-            providerStatusMessage = store.hasProviderAPIKey(provider) ? "Key 已就绪" : "未配置"
+            if provider.requiresAPIKey {
+                providerStatusMessage = store.hasProviderAPIKey(provider) ? "Key 已就绪" : "未配置"
+            } else {
+                providerStatusMessage = "无需 Key，请测试本地端点"
+            }
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: provider.usesSidecar ? "shippingbox" : "sparkles")
@@ -746,7 +956,7 @@ struct SettingsRouteView: View {
                             .foregroundStyle(Theme.textSecondary)
                     }
                     Spacer(minLength: 0)
-                    statusBadge(store.hasProviderAPIKey(provider) ? "可用" : "缺少 Key", ok: store.hasProviderAPIKey(provider))
+                    statusBadge(providerCredentialBadgeText(provider), ok: store.hasProviderAPIKey(provider))
                 }
                 .padding(.bottom, 12)
 
@@ -844,29 +1054,39 @@ struct SettingsRouteView: View {
                 .padding(.top, 8)
 
                 if provider.usesSidecar {
-                    SettingsValueRow(title: "API Key", description: "保存到 macOS Keychain，不写入 sidecar TOML") {
-                        SecureField(store.hasProviderAPIKey(provider) ? "已保存" : "粘贴 API Key", text: $providerAPIKeyDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12))
-                            .frame(width: 210)
+                    if provider.requiresAPIKey {
+                        SettingsValueRow(title: "API Key", description: "保存到 macOS Keychain，不写入 sidecar TOML") {
+                            SecureField(store.hasProviderAPIKey(provider) ? "已保存" : "粘贴 API Key", text: $providerAPIKeyDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 12))
+                                .frame(width: 210)
+                        }
+                    } else {
+                        SettingsValueRow(title: "API Key", description: "本地 OpenAI 兼容服务不需要鉴权时可留空") {
+                            Text("无需 Key")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.success)
+                        }
                     }
                     HStack(spacing: 8) {
-                        Button("保存 Key") {
-                            do {
-                                try store.saveProviderAPIKey(providerAPIKeyDraft, providerID: provider.id)
-                                providerAPIKeyDraft = ""
-                                providerStatusMessage = "Key 已保存"
-                            } catch {
-                                providerStatusMessage = error.localizedDescription
+                        if provider.requiresAPIKey {
+                            Button("保存 Key") {
+                                do {
+                                    try store.saveProviderAPIKey(providerAPIKeyDraft, providerID: provider.id)
+                                    providerAPIKeyDraft = ""
+                                    providerStatusMessage = "Key 已保存"
+                                } catch {
+                                    providerStatusMessage = error.localizedDescription
+                                }
                             }
+                            .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                            .disabled(providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
-                        .disabled(providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         Button("测试连接") {
                             do {
                                 let draft = providerAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if !draft.isEmpty {
+                                if provider.requiresAPIKey && !draft.isEmpty {
                                     try store.saveProviderAPIKey(draft, providerID: provider.id)
                                     providerAPIKeyDraft = ""
                                 }
@@ -906,6 +1126,25 @@ struct SettingsRouteView: View {
         providerModelDraft = provider.model
     }
 
+    private func providerCredentialBadgeText(_ provider: RaytoneProviderConfiguration) -> String {
+        if !provider.requiresAPIKey {
+            return "无需 Key"
+        }
+        return store.hasProviderAPIKey(provider) ? "可用" : "缺少 Key"
+    }
+
+    private func providerInitials(_ value: String) -> String {
+        let words = value
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+        let initials = words
+            .prefix(2)
+            .compactMap(\.first)
+            .map { String($0).uppercased() }
+            .joined()
+        return initials.isEmpty ? String(value.prefix(2)).uppercased() : initials
+    }
+
     private func statusBadge(_ text: String, ok: Bool) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .semibold))
@@ -914,6 +1153,20 @@ struct SettingsRouteView: View {
             .frame(height: 22)
             .background((ok ? Theme.success : Theme.warning).opacity(0.10))
             .clipShape(Capsule())
+    }
+
+    private func capabilityBadge(_ text: String, enabled: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: enabled ? "checkmark.circle.fill" : "minus.circle")
+                .font(.system(size: 10.5, weight: .semibold))
+            Text(text)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundStyle(enabled ? Theme.success : Theme.textTertiary)
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background((enabled ? Theme.success : Theme.textTertiary).opacity(0.10))
+        .clipShape(Capsule())
     }
 
     private var statsCard: some View {
@@ -953,8 +1206,12 @@ struct SettingsRouteView: View {
         SettingsSection(title: "Token 活动") {
             SettingsCard {
                 HStack {
+                    Text(usageActivityCaption)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
                     Spacer(minLength: 0)
-                    segmented(values: ["每日", "每周", "累计"], selection: .constant("每日"))
+                    segmented(values: ["每日", "每周", "累计"], selection: $usageActivityScale)
                 }
                 heatmap
                 HStack {
@@ -971,12 +1228,12 @@ struct SettingsRouteView: View {
 
     private var heatmap: some View {
         VStack(spacing: 3) {
-            ForEach(0..<7, id: \.self) { row in
+            ForEach(0..<heatmapRows, id: \.self) { row in
                 HStack(spacing: 3) {
                     ForEach(0..<53, id: \.self) { column in
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
                             .fill(Theme.accent.opacity(heatLevel(row: row, column: column)))
-                            .frame(width: 9, height: 9)
+                            .frame(width: 9, height: usageActivityScale == "每日" ? 9 : 18)
                     }
                 }
             }
@@ -985,16 +1242,29 @@ struct SettingsRouteView: View {
         .padding(.top, 8)
     }
 
-    private func heatLevel(row: Int, column: Int) -> Double {
-        let index = column * 7 + row
-        if let buckets = store.runtimeTokenUsage?.dailyBuckets,
-           !buckets.isEmpty,
-           index < buckets.count {
-            let maxTokens = max(buckets.map(\.tokens).max() ?? 1, 1)
-            let ratio = Double(buckets[index].tokens) / Double(maxTokens)
-            return buckets[index].tokens == 0 ? 0.08 : 0.12 + min(ratio, 1.0) * 0.65
+    private var heatmapRows: Int {
+        usageActivityScale == "每日" ? 7 : 1
+    }
+
+    private var usageActivityCaption: String {
+        let values = store.tokenUsageActivityValues(scale: usageActivityScale)
+        guard !values.isEmpty else {
+            return "\(usageActivityScale) · account/usage/read 未返回活动桶"
         }
-        return 0.08
+        let total = values.reduce(0, +)
+        return "\(usageActivityScale) · \(values.count) 个桶 · \(tokenText(total))"
+    }
+
+    private func heatLevel(row: Int, column: Int) -> Double {
+        let values = store.tokenUsageActivityValues(scale: usageActivityScale)
+        let index = usageActivityScale == "每日" ? column * 7 + row : column
+        guard !values.isEmpty,
+              index < values.count else {
+            return 0.08
+        }
+        let maxTokens = max(values.max() ?? 1, 1)
+        let ratio = Double(values[index]) / Double(maxTokens)
+        return values[index] == 0 ? 0.08 : 0.12 + min(ratio, 1.0) * 0.65
     }
 
     private var insightCard: some View {
@@ -1032,15 +1302,15 @@ struct SettingsRouteView: View {
 
     private var configurationPane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            paneTitle("配置", subtitle: "配置审批策略和沙盒设置 了解更多")
+            paneTitle("配置", subtitle: "配置审批策略、沙盒设置和 externalAgentConfig 迁移 了解更多")
 
             SettingsSection(title: "自定义 config.toml 设置") {
                 SettingsCard {
                     HStack {
-                        menuValue(store.selectedProject.name, values: store.projects.map(\.name))
+                        projectMenuValue
                         Spacer(minLength: 0)
                         Button("打开 config.toml ↗") {
-                            store.openCodexConfigFile()
+                            Task { await store.openCodexConfigFile() }
                         }
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.info)
@@ -1048,6 +1318,8 @@ struct SettingsRouteView: View {
                     }
                 }
             }
+
+            externalAgentMigrationSection
 
             SettingsSection(title: "app-server 读取结果") {
                 SettingsCard {
@@ -1057,13 +1329,20 @@ struct SettingsRouteView: View {
                     configMetric("审批路由", store.runtimeConfig?.approvalsReviewer ?? "用户")
                     configMetric("沙盒", store.runtimeConfig?.sandboxMode ?? "默认")
                     configMetric("默认权限", store.runtimeConfig?.defaultPermissions ?? store.runtimeDefaultPermissionsProfile)
+                    configMetric("允许批准策略", listPreview(store.runtimeRequirements?.allowedApprovalPolicies ?? []))
+                    configMetric("允许沙盒", listPreview(store.runtimeRequirements?.allowedSandboxModes ?? []))
+                    configMetric("允许权限配置", boolMapPreview(store.runtimeRequirements?.allowedPermissionProfiles ?? [:]))
                     configMetric("推理强度", store.runtimeConfig?.reasoningEffort ?? "默认")
                     configMetric("推理摘要", store.runtimeConfig?.reasoningSummary ?? "默认")
                     configMetric("输出详细度", store.runtimeConfig?.modelVerbosity ?? "默认")
                     configMetric("服务层级", store.runtimeConfig?.serviceTier ?? "默认")
+                    configMetric("功能要求", boolMapPreview(store.runtimeRequirements?.featureRequirements ?? [:]))
                     configMetric("生成记忆", boolMetric(store.runtimeConfig?.memoryGenerateMemories))
                     configMetric("使用记忆", boolMetric(store.runtimeConfig?.memoryUseMemories))
                     configMetric("外部上下文跳过记忆", boolMetric(store.runtimeConfig?.memoryDisableOnExternalContext))
+                    configMetric("网络约束", networkRequirementsPreview(store.runtimeRequirements))
+                    configMetric("受管 Hooks", managedHooksPreview(store.runtimeRequirements))
+                    configMetric("驻留要求", store.runtimeRequirements?.enforceResidency ?? "未配置")
                     configMetric("桌面设置", store.runtimeDesktopSettingsSummary)
                     configMetric("菜单栏", boolMetric(store.runtimeConfig?.desktopSettings.showInMenuBar))
                     configMetric("底部面板", boolMetric(store.runtimeConfig?.desktopSettings.showBottomPanel))
@@ -1096,7 +1375,7 @@ struct SettingsRouteView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
-                    SettingsValueRow(title: "Codex CLI", description: "RaytoneCodex 会优先使用 App 内置 CLI；开发模式可由 RAYTONE_CODEX_CLI 覆盖") {
+                    SettingsValueRow(title: "Codex CLI", description: "RaytoneX 会优先使用 App 内置 CLI；开发模式可由 RAYTONE_CODEX_CLI 覆盖") {
                         statusBadge(store.runtimeDependencyReady ? store.runtimeSourceDisplay : "未找到", ok: store.runtimeDependencyReady)
                     }
                     SettingsValueRow(title: "一体化状态", description: "用于确认安装包是否真正携带 Codex CLI") {
@@ -1122,9 +1401,21 @@ struct SettingsRouteView: View {
                         }
                             .buttonStyle(ChipButtonStyle())
                     }
-                    SettingsValueRow(title: "重置并安装工作空间", description: "删除本地捆绑包，重新下载后再重新加载工具") {
+                    SettingsValueRow(title: "本地诊断包", description: "导出到本机 Application Support，不调用 feedback/upload 或 OpenAI 云服务") {
+                        HStack(spacing: 8) {
+                            statusBadge(
+                                store.localDiagnosticBundlePath.isEmpty ? store.localDiagnosticStatusText : "已导出",
+                                ok: !store.localDiagnosticBundlePath.isEmpty
+                            )
+                            Button("导出") {
+                                openFeedbackUploadSheet()
+                            }
+                            .buttonStyle(ChipButtonStyle(prominent: true))
+                        }
+                    }
+                    SettingsValueRow(title: "Codex 数据目录", description: "打开当前运行时使用的 CODEX_HOME，插件、技能和配置都从这里读取") {
                         Button("打开 .codex") {
-                            store.revealCodexHomeSubfolder("")
+                            Task { await store.revealCodexHomeSubfolder("") }
                         }
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Theme.danger)
@@ -1132,6 +1423,158 @@ struct SettingsRouteView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var projectMenuValue: some View {
+        Menu {
+            ForEach(store.projects) { project in
+                Button {
+                    store.selectProjectForSettings(project.id)
+                } label: {
+                    Label(project.name, systemImage: project.id == store.selectedProject.id ? "checkmark" : "folder")
+                }
+            }
+        } label: {
+            menuLabel(store.selectedProject.name)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    private var experimentalFeaturesPane: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            paneTitle("高级功能", subtitle: "只读展示当前运行时返回的实验功能；Raytone 默认不直接修改上游 enablement。")
+
+            SettingsCard {
+                SettingsValueRow(title: "功能目录", description: store.runtimeExperimentalFeaturesStatusText) {
+                    HStack(spacing: 8) {
+                        statusBadge(store.runtimeExperimentalFeatures.isEmpty ? "未返回" : "\(store.runtimeExperimentalFeatures.count) 个", ok: !store.runtimeExperimentalFeatures.isEmpty)
+                        Button("刷新") {
+                            Task { await store.refreshRuntimeExperimentalFeatures() }
+                        }
+                        .buttonStyle(ChipButtonStyle())
+                        .disabled(store.runtimeCatalogIsRefreshing)
+                    }
+                }
+                configMetric("来源", "experimentalFeature/list")
+                configMetric("线程上下文", store.selectedThread.appServerThreadID ?? "默认配置")
+                configMetric("下一页", store.runtimeExperimentalFeaturesNextCursor ?? "无")
+            }
+
+            SettingsSection(title: "运行时功能目录", description: "这里仅作为诊断信息；需要启用上游实验功能时，请在明确验证后通过 config.toml 管理。") {
+                if store.runtimeExperimentalFeatures.isEmpty {
+                    emptySettingsState(symbol: "testtube.2", title: "没有返回实验功能", detail: "experimentalFeature/list 尚未返回功能目录，或当前 app-server 不支持该协议。")
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(store.runtimeExperimentalFeatures) { feature in
+                            experimentalFeatureReadOnlyRow(feature)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func experimentalFeatureReadOnlyRow(_ feature: CodexExperimentalFeature) -> some View {
+        SettingsCard {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(experimentalFeatureTitle(feature))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    statusBadge(experimentalFeatureStageName(feature.stage), ok: experimentalFeatureStageIsStableEnough(feature.stage))
+                    statusBadge(feature.enabled ? "当前开启" : "当前关闭", ok: feature.enabled)
+                }
+                Text(feature.name)
+                    .font(Theme.mono(11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                Text(feature.description?.isEmpty == false ? feature.description! : "上游未提供说明；Raytone 默认不会在 UI 中直接切换该实验项。")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("默认：\(feature.defaultEnabled ? "开启" : "关闭")")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+    }
+
+    private func experimentalFeatureRow(_ feature: CodexExperimentalFeature) -> some View {
+        SettingsCard {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text(experimentalFeatureTitle(feature))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        statusBadge(experimentalFeatureStageName(feature.stage), ok: experimentalFeatureStageIsStableEnough(feature.stage))
+                        statusBadge(feature.enabled ? "开启" : "关闭", ok: feature.enabled)
+                    }
+                    Text(feature.name)
+                        .font(Theme.mono(11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                    Text(feature.description?.isEmpty == false ? feature.description! : "上游未提供说明；显示真实 feature key 和当前 enablement 状态。")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let announcement = feature.announcement, !announcement.isEmpty {
+                        Text(announcement)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.top, 2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("默认：\(feature.defaultEnabled ? "开启" : "关闭")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 12)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { feature.enabled },
+                        set: { enabled in
+                            Task { await store.setRuntimeExperimentalFeature(feature, enabled: enabled) }
+                        }
+                    )
+                )
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(store.runtimeCatalogIsRefreshing)
+            }
+        }
+    }
+
+    private func experimentalFeatureTitle(_ feature: CodexExperimentalFeature) -> String {
+        if let displayName = feature.displayName, !displayName.isEmpty {
+            return displayName
+        }
+        return feature.name
+    }
+
+    private func experimentalFeatureStageName(_ stage: CodexExperimentalFeatureStage) -> String {
+        switch stage {
+        case .beta: "Beta"
+        case .underDevelopment: "开发中"
+        case .stable: "稳定"
+        case .deprecated: "已弃用"
+        case .removed: "已移除"
+        case .unknown: "未知"
+        }
+    }
+
+    private func experimentalFeatureStageIsStableEnough(_ stage: CodexExperimentalFeatureStage) -> Bool {
+        switch stage {
+        case .beta, .stable:
+            true
+        case .underDevelopment, .deprecated, .removed, .unknown:
+            false
         }
     }
 
@@ -1172,6 +1615,73 @@ struct SettingsRouteView: View {
                 }
             }
 
+            SettingsSection(title: "提交与拉取请求", description: "保存后会写入 config.toml，并在 /commit 或 /pr 生成文案时注入给 Codex。") {
+                VStack(alignment: .trailing, spacing: 12) {
+                    SettingsCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack {
+                                    Text("提交指令")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Spacer(minLength: 0)
+                                    Text("用于 /commit")
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
+                                TextEditor(text: $commitInstructions)
+                                    .font(Theme.mono(12))
+                                    .scrollContentBackground(.hidden)
+                                    .padding(10)
+                                    .frame(minHeight: 82)
+                                    .background(Theme.fillSubtle)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                            }
+
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack {
+                                    Text("拉取请求指令")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Spacer(minLength: 0)
+                                    Text("用于 /pr")
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Theme.textTertiary)
+                                }
+                                TextEditor(text: $pullRequestInstructions)
+                                    .font(Theme.mono(12))
+                                    .scrollContentBackground(.hidden)
+                                    .padding(10)
+                                    .frame(minHeight: 94)
+                                    .background(Theme.fillSubtle)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                            }
+                        }
+                    }
+
+                    HStack {
+                        Text(gitWritingInstructionsStatus.isEmpty ? store.runtimeCatalogStatusText : gitWritingInstructionsStatus)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Button("保存") {
+                            gitWritingInstructionsStatus = "正在保存…"
+                            Task {
+                                await store.saveGitWritingInstructions(
+                                    commit: commitInstructions,
+                                    pullRequest: pullRequestInstructions
+                                )
+                                gitWritingInstructionsStatus = store.runtimeCatalogStatusText
+                            }
+                        }
+                        .buttonStyle(ChipButtonStyle(prominent: true))
+                    }
+                }
+            }
+
+            realtimeVoiceSection
+
             SettingsSection(title: "记忆（实验性）", description: "设置 Codex 如何收集、保留和整合记忆。了解更多") {
                 SettingsCard {
                     SettingsToggleRow(title: "启用记忆", description: "从聊天中生成新记忆，并将其带入新聊天", isOn: memoryEnabledBinding)
@@ -1192,6 +1702,12 @@ struct SettingsRouteView: View {
                         .padding(.leading, 2)
                     }
                     SettingsToggleRow(title: "跳过工具辅助对话", description: "请勿从使用了 MCP 工具或网页搜索的对话中生成记忆", isOn: skipToolChatsBinding)
+                    SettingsValueRow(title: "当前对话记忆", description: "通过 Codex 运行时为当前线程覆盖记忆策略") {
+                        HStack(spacing: 8) {
+                            statusBadge(store.selectedThread.memoryMode?.displayName ?? "默认配置", ok: store.selectedThread.memoryMode != nil)
+                            currentThreadMemoryModeMenu
+                        }
+                    }
                     SettingsValueRow(title: "重置记忆", description: "删除所有 Codex 记忆") {
                         Button("重置") {
                             confirmResetMemory()
@@ -1201,6 +1717,25 @@ struct SettingsRouteView: View {
                             .buttonStyle(.plain)
                     }
                 }
+            }
+        }
+    }
+
+    private var realtimeVoiceSection: some View {
+        SettingsSection(title: "语音输入", description: "RaytoneX 默认使用 macOS 系统听写，不读取 OpenAI realtime voice catalog。") {
+            SettingsCard {
+                SettingsValueRow(title: "输入方式", description: "依赖本机 macOS 听写能力；第三方模型只接收转写后的文本。") {
+                    HStack(spacing: 8) {
+                        statusBadge("本机", ok: true)
+                        Button("测试听写") {
+                            Task { await store.startVoiceInput() }
+                        }
+                        .buttonStyle(ChipButtonStyle())
+                    }
+                }
+                metricRow("当前状态", store.voiceInputStatusText)
+                metricRow("云服务", "不调用 thread/realtime/listVoices")
+                metricRow("Provider", "转写文本进入当前 Provider")
             }
         }
     }
@@ -1262,6 +1797,13 @@ struct SettingsRouteView: View {
                                     VStack(alignment: .leading, spacing: 7) {
                                         ForEach(server.resources.prefix(4)) { resource in
                                             mcpResourceRow(resource, server: server)
+                                        }
+                                    }
+                                }
+                                if !server.resourceTemplates.isEmpty {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        ForEach(server.resourceTemplates.prefix(4)) { template in
+                                            mcpResourceTemplateRow(template, server: server)
                                         }
                                     }
                                 }
@@ -1380,7 +1922,7 @@ struct SettingsRouteView: View {
     private var gitPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                paneTitle("Git", subtitle: "来自 app-server 的 gitDiffToRemote 与 command/exec")
+                paneTitle("Git", subtitle: "来自 app-server 的 command/exec Git 状态")
                 Spacer(minLength: 0)
                 Button("刷新") {
                     Task {
@@ -1401,7 +1943,7 @@ struct SettingsRouteView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     metricRow("工作区", Project.abbreviate(store.workspacePath))
                     metricRow("当前分支", store.selectedProject.branch ?? "未检测到")
-                    metricRow("远端基准 SHA", store.workspaceGitDiff?.sha?.prefix(12).description ?? "未返回")
+                    metricRow("HEAD SHA", store.workspaceGitDiff?.sha?.prefix(12).description ?? "未返回")
                     let parsed = SessionStore.diffSummary(store.workspaceGitDiff?.diff ?? "")
                     metricRow("差异", "\(parsed.files) 个文件 · +\(parsed.additions) −\(parsed.deletions)")
                     metricRow("PR 状态", store.workspacePullRequestStatusText)
@@ -1411,7 +1953,7 @@ struct SettingsRouteView: View {
                 }
             }
 
-            SettingsSection(title: "远端差异预览") {
+            SettingsSection(title: "工作区差异预览") {
                 if let diff = store.workspaceGitDiff?.diff, !diff.isEmpty {
                     SettingsCard {
                         ScrollView(.horizontal) {
@@ -1433,7 +1975,7 @@ struct SettingsRouteView: View {
                         }
                     }
                 } else {
-                    emptySettingsState(symbol: "arrow.triangle.branch", title: "没有远端差异", detail: "gitDiffToRemote 返回空 diff，或当前工作区没有可比较的远端分支。")
+                    emptySettingsState(symbol: "arrow.triangle.branch", title: "没有工作区差异", detail: "command/exec 已读取 Git 状态；当前工作区没有未提交 diff。")
                 }
             }
         }
@@ -1497,17 +2039,13 @@ struct SettingsRouteView: View {
 
     private var keyboardShortcutsPane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            paneTitle("键盘快捷键", subtitle: "来自 RaytoneCodex 原生命令菜单，和顶部菜单保持一致")
+            paneTitle("键盘快捷键", subtitle: "来自 RaytoneX 原生命令菜单；状态和背后的 Codex runtime 路径实时同步")
 
             SettingsCard {
                 VStack(alignment: .leading, spacing: 12) {
-                    shortcutRow("新建对话", "⌘N", "创建本地线程并切回主对话")
-                    shortcutRow("运行", "⌘↩", "发送 Composer 内容到 Codex app-server")
-                    shortcutRow("刷新运行时", "⌘R", "重新检测内置 Codex CLI")
-                    shortcutRow("删除对话", "⌘⌫", "删除当前本地线程")
-                    shortcutRow("切换工具面板", "⌥⌘I", "显示或隐藏右侧工具面板")
-                    shortcutRow("文件 / 浏览器 / 终端", "⌘P / ⌘T / ⌃`", "打开对应工具")
-                    shortcutRow("设置", "⌘,", "进入设置页")
+                    ForEach(store.commandSurfaceShortcuts) { shortcut in
+                        shortcutRow(shortcut)
+                    }
                 }
             }
         }
@@ -1516,12 +2054,19 @@ struct SettingsRouteView: View {
     private var appSnapshotsPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                paneTitle("应用快照", subtitle: "来自 configRequirements/read.allowAppshots 和 app/list.screenshots")
+                paneTitle("本地快照", subtitle: "使用 RaytoneX 内置浏览器截图，不依赖 ChatGPT app 目录。")
                 Spacer(minLength: 0)
-                Button("刷新") {
-                    Task { await store.refreshIntegrationRuntime(forceRefetchApps: true) }
+                Button("打开示例") {
+                    Task {
+                        await store.openBrowserSample()
+                        store.route = .thread
+                    }
                 }
                 .buttonStyle(ChipButtonStyle())
+                Button("截图") {
+                    store.captureBrowserPanelScreenshot()
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
             }
 
             Text(store.runtimeCatalogStatusText)
@@ -1531,33 +2076,91 @@ struct SettingsRouteView: View {
 
             SettingsCard {
                 metricRow("受管策略", optionalBoolText(store.runtimeRequirements?.allowAppSnapshots))
-                metricRow("应用目录", "\(store.runtimeApps.count) 个 app")
-                metricRow("含快照说明", "\(store.runtimeApps.filter { !$0.screenshotPrompts.isEmpty }.count) 个 app")
-                metricRow("来源", "app/list")
+                metricRow("当前页面", store.browserURL?.absoluteString ?? "未打开")
+                metricRow("标题", store.browserTitle)
+                metricRow("截图状态", store.browserScreenshotStatusText.isEmpty ? "未截图" : store.browserScreenshotStatusText)
+                metricRow("下次对话图片", browserAttachedImageText)
+                metricRow("云端 app 目录", "已隐藏")
             }
 
-            let snapshotApps = store.runtimeApps.filter { !$0.screenshotPrompts.isEmpty }
-            if snapshotApps.isEmpty {
-                emptySettingsState(symbol: "rectangle.dashed", title: "没有应用快照元数据", detail: "app/list 没有返回 screenshots；如果远端目录不可用，会在运行时提示中显示真实错误。")
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(snapshotApps.prefix(12)) { app in
+            emptySettingsState(symbol: "rectangle.dashed", title: "ChatGPT app 快照目录已隐藏", detail: "Raytone 默认只使用本地 WKWebView 截图。需要连接第三方网页时，请在右侧浏览器面板打开 URL 后截图。")
+        }
+    }
+
+    private var externalAgentMigrationSection: some View {
+        SettingsSection(title: "外部 Agent 配置迁移") {
+            VStack(spacing: 10) {
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 28, height: 28)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("从外部 Agent 导入 Codex 配置")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text("调用 Codex app-server 的 externalAgentConfig/detect 与 externalAgentConfig/import，迁移配置、技能、插件、MCP、钩子、命令和历史会话。")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            statusBadge(store.externalAgentMigrationItems.isEmpty ? "未检测" : "\(store.externalAgentMigrationItems.count) 项", ok: !store.externalAgentMigrationItems.isEmpty)
+                        }
+
+                        Text(store.externalAgentMigrationStatusText)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(2)
+
+                        HStack(spacing: 8) {
+                            Button("检测可迁移项") {
+                                Task { await store.detectExternalAgentConfig() }
+                            }
+                            .buttonStyle(ChipButtonStyle(prominent: true))
+                            .disabled(store.runtimeCatalogIsRefreshing || store.externalAgentMigrationIsImporting)
+
+                            Button("导入全部") {
+                                Task { await store.importExternalAgentConfig() }
+                            }
+                            .buttonStyle(ChipButtonStyle())
+                            .disabled(store.externalAgentMigrationItems.isEmpty || store.externalAgentMigrationIsImporting)
+                        }
+                    }
+                }
+
+                if store.externalAgentMigrationItems.isEmpty {
+                    emptySettingsState(symbol: "tray", title: "没有可迁移项", detail: "点击“检测可迁移项”后，Codex 会扫描用户目录和当前工作区。")
+                } else {
+                    ForEach(store.externalAgentMigrationItems) { item in
                         SettingsCard {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text(app.name)
-                                        .font(.system(size: 13.5, weight: .semibold))
-                                    Spacer(minLength: 0)
-                                    statusBadge(app.isEnabled ? "启用" : "停用", ok: app.isEnabled)
-                                }
-                                if let description = app.description {
-                                    Text(description)
-                                        .font(.system(size: 12))
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: externalAgentItemSymbol(item))
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(externalAgentItemTitle(item))
+                                        .font(.system(size: 12.5, weight: .semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                    Text(item.description)
+                                        .font(.system(size: 11.5))
                                         .foregroundStyle(Theme.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Text(externalAgentItemDetail(item))
+                                        .font(Theme.mono(10.5))
+                                        .foregroundStyle(Theme.textTertiary)
                                         .lineLimit(2)
+                                        .truncationMode(.middle)
                                 }
-                                metricRow("快照提示", "\(app.screenshotPrompts.count) 条")
-                                metricRow("插件", app.pluginDisplayNames.isEmpty ? "未关联" : app.pluginDisplayNames.joined(separator: "、"))
+                                Spacer(minLength: 0)
+                                Button("导入") {
+                                    Task { await store.importExternalAgentConfig([item]) }
+                                }
+                                .buttonStyle(ChipButtonStyle())
+                                .disabled(store.externalAgentMigrationIsImporting)
                             }
                         }
                     }
@@ -1572,10 +2175,16 @@ struct SettingsRouteView: View {
                 paneTitle("浏览器", subtitle: "内置 WKWebView + Codex Browser/Chrome 插件状态")
                 Spacer(minLength: 0)
                 Button("打开示例") {
-                    store.openBrowserSample()
-                    store.route = .thread
+                    Task {
+                        await store.openBrowserSample()
+                        store.route = .thread
+                    }
                 }
                 .buttonStyle(ChipButtonStyle())
+                Button("打开并截图") {
+                    Task { await store.openBrowserSampleAndCapture() }
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
             }
 
             Text(store.runtimeCatalogStatusText)
@@ -1587,6 +2196,7 @@ struct SettingsRouteView: View {
                 metricRow("当前页面", store.browserURL?.absoluteString ?? "未打开")
                 metricRow("标题", store.browserTitle)
                 metricRow("截图状态", store.browserScreenshotStatusText.isEmpty ? "未截图" : store.browserScreenshotStatusText)
+                metricRow("下次对话图片", browserAttachedImageText)
                 metricRow("工具面板", store.toolPanel == .browser ? "浏览器已打开" : "未打开")
             }
 
@@ -1595,6 +2205,20 @@ struct SettingsRouteView: View {
                 plugins: matchingPlugins(["browser", "chrome"])
             )
         }
+    }
+
+    private var browserAttachedImageText: String {
+        store.browserAttachedSnapshotPath.isEmpty
+            ? "\(store.pendingLocalImagePaths.count) 张"
+            : Project.abbreviate(store.browserAttachedSnapshotPath)
+    }
+
+    private var windowsSandboxSetupAvailable: Bool {
+        #if os(Windows)
+        true
+        #else
+        false
+        #endif
     }
 
     private var computerControlPane: some View {
@@ -1618,6 +2242,26 @@ struct SettingsRouteView: View {
                 metricRow("权限配置", store.runtimeRequirements?.defaultPermissions ?? "未返回")
                 metricRow("受管 hooks", optionalBoolText(store.runtimeRequirements?.managedHooksOnly))
                 metricRow("来源", "configRequirements/read")
+                Divider()
+                    .overlay(Theme.borderSoft)
+                    .padding(.vertical, 8)
+                SettingsValueRow(title: "Chronicle 屏幕上下文", description: "通过 app-server 的 skills/list / mcpServerStatus/list 检测本机屏幕上下文能力") {
+                    HStack(spacing: 8) {
+                        statusBadge(store.chronicleRuntimeStatusText, ok: store.chronicleRuntimeAvailable)
+                        Button("使用") {
+                            Task { await store.useChronicleContextInComposer() }
+                        }
+                        .buttonStyle(ChipButtonStyle(prominent: store.chronicleRuntimeAvailable))
+                        Button("刷新") {
+                            Task { await store.refreshRuntimeCatalog(forceReloadSkills: true) }
+                        }
+                        .buttonStyle(ChipButtonStyle())
+                    }
+                }
+                Text(store.chronicleRuntimeDetailText)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(2)
             }
 
             integrationPluginSection(
@@ -1630,7 +2274,7 @@ struct SettingsRouteView: View {
     private var connectionsPane: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack {
-                paneTitle("连接", subtitle: "来自 remoteControl/status/read、mcpServerStatus/list 和 app/list")
+                paneTitle("连接", subtitle: "Raytone 默认只显示本地 Provider、MCP、浏览器和文件连接；官方云端 remoteControl 已隐藏。")
                 Spacer(minLength: 0)
                 Button("刷新") {
                     Task { await store.refreshIntegrationRuntime() }
@@ -1644,10 +2288,30 @@ struct SettingsRouteView: View {
             runtimeErrorsSection
 
             SettingsCard {
-                metricRow("远程控制", remoteControlName(store.runtimeRemoteControlStatus?.status))
-                metricRow("服务器", store.runtimeRemoteControlStatus?.serverName ?? "未返回")
-                metricRow("安装 ID", store.runtimeRemoteControlStatus?.installationID ?? "未返回")
-                metricRow("环境 ID", store.runtimeRemoteControlStatus?.environmentID ?? "未返回")
+                metricRow("当前 Provider", store.modelDisplayName)
+                metricRow("Sidecar", store.selectedProvider.usesSidecar ? store.sidecarStatusText : "不需要")
+                metricRow("MCP", "\(store.runtimeMCPServers.count) 个服务器")
+                metricRow("插件", "\(store.runtimePlugins.count) 个")
+                metricRow("工作区", Project.abbreviate(store.workspacePath))
+                metricRow("官方云端模式", "未启用；Raytone 默认隐藏 remoteControl/*")
+                HStack(spacing: 8) {
+                    Button("模型设置") {
+                        store.settingsPane = .modelsProviders
+                    }
+                    .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+
+                    Button("MCP 服务器") {
+                        store.settingsPane = .mcpServers
+                    }
+                    .buttonStyle(ChipButtonStyle())
+
+                    Button("打开浏览器") {
+                        store.route = .thread
+                        store.openToolPanel(.browser)
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                }
+                .padding(.top, 8)
             }
 
             SettingsSection(title: "MCP 连接") {
@@ -1676,20 +2340,6 @@ struct SettingsRouteView: View {
                 }
             }
 
-            SettingsSection(title: "应用连接") {
-                if store.runtimeApps.isEmpty {
-                    emptySettingsState(symbol: "globe", title: "没有应用目录", detail: "app/list 没有返回应用。")
-                } else {
-                    VStack(spacing: 10) {
-                        ForEach(store.runtimeApps.prefix(8)) { app in
-                            SettingsCard {
-                                metricRow(app.name, app.isAccessible ? "可访问" : "不可访问")
-                                metricRow("状态", app.isEnabled ? "启用" : "停用")
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -1715,6 +2365,94 @@ struct SettingsRouteView: View {
                 metricRow("运行时", store.runtimeSummary)
                 metricRow("Sidecar", store.sidecarStatusText)
                 metricRow("网络要求", optionalBoolText(store.runtimeRequirements?.networkEnabled))
+                metricRow("域名约束", networkDomainPreview(store.runtimeRequirements))
+                metricRow("本地监听", optionalBoolText(store.runtimeRequirements?.allowLocalBinding))
+                metricRow("上游代理", optionalBoolText(store.runtimeRequirements?.allowUpstreamProxy))
+                metricRow("Windows 沙箱", listPreview(store.runtimeRequirements?.allowedWindowsSandboxImplementations ?? []))
+                metricRow("受管 Hooks", managedHooksPreview(store.runtimeRequirements))
+            }
+
+            SettingsSection(title: "远程执行环境") {
+                SettingsCard {
+                    VStack(alignment: .leading, spacing: 12) {
+                        SettingsValueRow(title: "环境 ID", description: "传给 Codex app-server 的 environmentId") {
+                            TextField("remote-a", text: $store.runtimeEnvironmentIDDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(Theme.mono(11.5))
+                                .frame(width: 190)
+                        }
+                        SettingsValueRow(title: "执行服务器", description: "远程 exec server URL，用于 environment/add 注册") {
+                            TextField("http://127.0.0.1:8080", text: $store.runtimeEnvironmentURLDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(Theme.mono(11.5))
+                                .frame(width: 260)
+                        }
+                        SettingsValueRow(title: "工作目录", description: "thread/start 与 turn/start 选择环境时使用的 cwd") {
+                            TextField(store.workspacePath, text: $store.runtimeEnvironmentCwdDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .font(Theme.mono(11.5))
+                                .frame(width: 260)
+                        }
+                        SettingsValueRow(title: "当前选择", description: "默认本地环境不会发送 environments 字段") {
+                            Menu {
+                                Button("默认本地") {
+                                    store.selectRuntimeEnvironment(nil)
+                                }
+                                ForEach(store.runtimeRegisteredEnvironments) { environment in
+                                    Button(environment.environmentID) {
+                                        store.selectRuntimeEnvironment(environment.environmentID)
+                                    }
+                                }
+                            } label: {
+                                menuLabel(store.selectedRuntimeEnvironmentID ?? "默认本地")
+                            }
+                            .menuStyle(.borderlessButton)
+                            .menuIndicator(.hidden)
+                        }
+                        HStack(spacing: 8) {
+                            Button("注册环境") {
+                                Task { await store.registerRuntimeEnvironment() }
+                            }
+                            .buttonStyle(ChipButtonStyle(tint: Theme.accent, prominent: true))
+                            .disabled(store.runtimeCatalogIsRefreshing)
+
+                            Text(store.runtimeEnvironmentStatusText)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        if !store.runtimeRegisteredEnvironments.isEmpty {
+                            Divider()
+                                .overlay(Theme.borderSoft)
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(store.runtimeRegisteredEnvironments) { environment in
+                                    HStack(alignment: .top, spacing: 10) {
+                                        Image(systemName: environment.environmentID == store.selectedRuntimeEnvironmentID ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundStyle(environment.environmentID == store.selectedRuntimeEnvironmentID ? Theme.success : Theme.textTertiary)
+                                            .frame(width: 18)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(environment.environmentID)
+                                                .font(.system(size: 12.5, weight: .semibold))
+                                                .foregroundStyle(Theme.textPrimary)
+                                            Text(environment.execServerURL)
+                                                .font(Theme.mono(10.5))
+                                                .foregroundStyle(Theme.textSecondary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                            Text(Project.abbreviate(environment.cwd))
+                                                .font(Theme.mono(10.5))
+                                                .foregroundStyle(Theme.textTertiary)
+                                                .lineLimit(1)
+                                                .truncationMode(.middle)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             SettingsSection(title: "权限配置") {
@@ -1754,10 +2492,47 @@ struct SettingsRouteView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(store.workspaceWorktrees, id: \.self) { path in
-                        SettingsCard {
-                            metricRow(Project.abbreviate(path), path == store.workspacePath ? "当前" : "可用")
-                        }
+                        worktreeRow(path)
                     }
+                }
+            }
+        }
+    }
+
+    private func worktreeRow(_ path: String) -> some View {
+        let isCurrent = SessionStore.canonicalPath(path) == SessionStore.canonicalPath(store.workspacePath)
+        return SettingsCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isCurrent ? "checkmark.circle.fill" : "rectangle.split.3x1")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isCurrent ? Theme.success : Theme.textSecondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(Project.abbreviate(path))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(path)
+                        .font(Theme.mono(10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    statusBadge(isCurrent ? "当前" : "可切换", ok: true)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 6) {
+                    Button(isCurrent ? "当前" : "切换") {
+                        Task { await store.openWorkspaceWorktree(path) }
+                    }
+                    .buttonStyle(ChipButtonStyle(prominent: !isCurrent))
+                    .disabled(isCurrent || store.runtimeCatalogIsRefreshing)
+
+                    Button("文件") {
+                        Task { await store.openWorkspaceWorktree(path, revealFiles: true) }
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.runtimeCatalogIsRefreshing)
                 }
             }
         }
@@ -1765,7 +2540,7 @@ struct SettingsRouteView: View {
 
     private var appearancePane: some View {
         VStack(alignment: .leading, spacing: 22) {
-            paneTitle("外观", subtitle: "选择 RaytoneCodex 的显示方式")
+            paneTitle("外观", subtitle: "选择 RaytoneX 的显示方式")
             SettingsCard {
                 SettingsValueRow(title: "主题", description: "浅色、深色或跟随系统") {
                     segmented(values: ["浅色", "深色", "跟随系统"], selection: appearanceBinding)
@@ -1969,10 +2744,23 @@ struct SettingsRouteView: View {
         .menuIndicator(.hidden)
     }
 
-    private func menuValue(_ title: String, values: [String]) -> some View {
-        menuValue(title, values: values) { value in
-            store.runtimeCatalogStatusText = "\(value) 已选择"
+    private var currentThreadMemoryModeMenu: some View {
+        Menu {
+            ForEach(CodexThreadMemoryMode.allCases, id: \.self) { mode in
+                Button {
+                    Task { await store.saveSelectedThreadMemoryMode(mode) }
+                } label: {
+                    Label(
+                        mode.displayName,
+                        systemImage: store.selectedThread.memoryMode == mode ? "checkmark" : "circle"
+                    )
+                }
+            }
+        } label: {
+            menuLabel("设置")
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
     }
 
     private func menuValue(_ title: String, values: [String], onSelect: @escaping (String) -> Void) -> some View {
@@ -2033,17 +2821,34 @@ struct SettingsRouteView: View {
         .clipShape(Capsule())
     }
 
-    private func copyProfileShareSummary() {
-        let account = store.runtimeAccount.map(SessionStore.accountDisplayName) ?? "未返回账户"
-        let summary = """
-        RaytoneCodex
-        账户：\(account)
-        运行时：\(store.runtimeSummary)
-        工作区：\(Project.abbreviate(store.workspacePath))
-        """
+    private func activeAccountLoginDescription(_ login: CodexAccountLogin) -> String {
+        if login.kind == "chatgptDeviceCode" {
+            let code = login.userCode.map { " · 设备码 \($0)" } ?? ""
+            let url = login.verificationURL?.absoluteString ?? "未返回验证地址"
+            return "正在等待设备码登录 · \(url)\(code)"
+        }
+        if let loginID = login.loginID {
+            return "正在等待登录完成 · \(loginID)"
+        }
+        return "正在等待登录完成 · \(login.kind)"
+    }
+
+    private func openActiveAccountVerificationURL() {
+        guard let url = store.activeAccountLogin?.verificationURL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func copyActiveAccountUserCode() {
+        guard let userCode = store.activeAccountLogin?.userCode, !userCode.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(summary, forType: .string)
-        profileStatus = "已复制分享摘要"
+        NSPasteboard.general.setString(userCode, forType: .string)
+    }
+
+    private func openFeedbackUploadSheet() {
+        feedbackCategory = .bug
+        feedbackReason = ""
+        feedbackIncludeLogs = false
+        showFeedbackUpload = true
     }
 
     private func confirmResetMemory() {
@@ -2070,23 +2875,31 @@ struct SettingsRouteView: View {
         }
     }
 
-    private func shortcutRow(_ title: String, _ shortcut: String, _ detail: String) -> some View {
+    private func shortcutRow(_ shortcut: CommandSurfaceShortcut) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(shortcut.title)
                     .font(.system(size: 12.5, weight: .semibold))
-                Text(detail)
+                Text(shortcut.detail)
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textSecondary)
+                Text("来源：\(shortcut.source)")
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer(minLength: 0)
-            Text(shortcut)
-                .font(Theme.mono(12))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                .background(Theme.fill)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            HStack(spacing: 8) {
+                statusBadge(shortcut.isAvailable ? "可用" : "暂不可用", ok: shortcut.isAvailable)
+                Text(shortcut.shortcut)
+                    .font(Theme.mono(12))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, 8)
+                    .frame(height: 24)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
         }
     }
 
@@ -2133,20 +2946,176 @@ struct SettingsRouteView: View {
         return value ? "允许" : "禁止"
     }
 
-    private func remoteControlName(_ value: String?) -> String {
-        switch value {
-        case "connected": "已连接"
-        case "connecting": "连接中"
-        case "disconnected": "未连接"
-        case "disabled": "已停用"
-        case nil: "未返回"
-        default: value ?? "未返回"
+    private func listPreview(_ values: [String], empty: String = "未配置") -> String {
+        guard !values.isEmpty else { return empty }
+        let shown = values.prefix(4).joined(separator: "、")
+        if values.count > 4 {
+            return "\(shown) 等 \(values.count) 项"
         }
+        return shown
+    }
+
+    private func boolMapPreview(_ values: [String: Bool], empty: String = "未配置") -> String {
+        guard !values.isEmpty else { return empty }
+        let pairs = values
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+            .prefix(4)
+            .map { "\($0.key)：\($0.value ? "允许" : "禁止")" }
+            .joined(separator: "、")
+        if values.count > 4 {
+            return "\(pairs) 等 \(values.count) 项"
+        }
+        return pairs
+    }
+
+    private func stringMapPreview(_ values: [String: String], empty: String = "未配置") -> String {
+        guard !values.isEmpty else { return empty }
+        let pairs = values
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+            .prefix(4)
+            .map { "\($0.key)：\($0.value)" }
+            .joined(separator: "、")
+        if values.count > 4 {
+            return "\(pairs) 等 \(values.count) 项"
+        }
+        return pairs
+    }
+
+    private func networkDomainPreview(_ requirements: CodexRuntimeConfigRequirements?) -> String {
+        guard let requirements else { return "未配置" }
+        if !requirements.networkDomains.isEmpty {
+            return stringMapPreview(requirements.networkDomains)
+        }
+        let allowed = listPreview(requirements.networkAllowedDomains, empty: "")
+        let denied = listPreview(requirements.networkDeniedDomains, empty: "")
+        switch (allowed.isEmpty, denied.isEmpty) {
+        case (false, false):
+            return "允许 \(allowed) · 禁止 \(denied)"
+        case (false, true):
+            return "允许 \(allowed)"
+        case (true, false):
+            return "禁止 \(denied)"
+        case (true, true):
+            return "未配置"
+        }
+    }
+
+    private func networkRequirementsPreview(_ requirements: CodexRuntimeConfigRequirements?) -> String {
+        guard let requirements else { return "未配置" }
+        var parts = ["网络\(optionalBoolText(requirements.networkEnabled))"]
+        let domains = networkDomainPreview(requirements)
+        if domains != "未配置" {
+            parts.append(domains)
+        }
+        if let local = requirements.allowLocalBinding {
+            parts.append("本地监听\(local ? "允许" : "禁止")")
+        }
+        if let proxy = requirements.allowUpstreamProxy {
+            parts.append("上游代理\(proxy ? "允许" : "禁止")")
+        }
+        if let managed = requirements.managedAllowedDomainsOnly {
+            parts.append(managed ? "仅受管 allowlist" : "允许用户域名规则")
+        }
+        if let httpPort = requirements.httpPort {
+            parts.append("HTTP \(httpPort)")
+        }
+        if let socksPort = requirements.socksPort {
+            parts.append("SOCKS \(socksPort)")
+        }
+        if requirements.dangerouslyAllowAllUnixSockets == true {
+            parts.append("允许所有 Unix socket")
+        } else if !requirements.networkUnixSockets.isEmpty {
+            parts.append("Unix socket \(stringMapPreview(requirements.networkUnixSockets))")
+        } else if !requirements.allowUnixSockets.isEmpty {
+            parts.append("Unix socket \(listPreview(requirements.allowUnixSockets))")
+        }
+        if requirements.dangerouslyAllowNonLoopbackProxy == true {
+            parts.append("允许非 loopback proxy")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func managedHooksPreview(_ requirements: CodexRuntimeConfigRequirements?) -> String {
+        guard let requirements else { return "未配置" }
+        var parts: [String] = []
+        if let managedHooksOnly = requirements.managedHooksOnly {
+            parts.append(managedHooksOnly ? "仅受管 hooks" : "允许用户 hooks")
+        }
+        let enabledEvents = requirements.managedHookEventCounts
+            .filter { $0.value > 0 }
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+        if !enabledEvents.isEmpty {
+            let shown = enabledEvents.prefix(4).map { "\($0.key)×\($0.value)" }.joined(separator: "、")
+            parts.append(enabledEvents.count > 4 ? "\(shown) 等 \(enabledEvents.count) 项" : shown)
+        }
+        if let dir = requirements.managedHooksDirectory, !dir.isEmpty {
+            parts.append(Project.abbreviate(dir))
+        }
+        return parts.isEmpty ? "未配置" : parts.joined(separator: " · ")
+    }
+
+    private func externalAgentItemTitle(_ item: CodexExternalAgentMigrationItem) -> String {
+        switch item.itemType {
+        case "CONFIG": "配置文件"
+        case "SKILLS": "技能"
+        case "AGENTS_MD": "AGENTS.md 指令"
+        case "PLUGINS": "插件"
+        case "MCP_SERVER_CONFIG": "MCP 服务器配置"
+        case "SUBAGENTS": "子代理"
+        case "HOOKS": "钩子"
+        case "COMMANDS": "命令"
+        case "SESSIONS": "历史会话"
+        default: item.itemType
+        }
+    }
+
+    private func externalAgentItemSymbol(_ item: CodexExternalAgentMigrationItem) -> String {
+        switch item.itemType {
+        case "CONFIG": "doc.text"
+        case "SKILLS": "sparkles"
+        case "AGENTS_MD": "text.page"
+        case "PLUGINS": "puzzlepiece.extension"
+        case "MCP_SERVER_CONFIG": "point.3.connected.trianglepath.dotted"
+        case "SUBAGENTS": "person.2"
+        case "HOOKS": "link"
+        case "COMMANDS": "terminal"
+        case "SESSIONS": "clock.arrow.circlepath"
+        default: "shippingbox"
+        }
+    }
+
+    private func externalAgentItemDetail(_ item: CodexExternalAgentMigrationItem) -> String {
+        var parts = [
+            item.cwd?.isEmpty == false ? "工作区 \(Project.abbreviate(item.cwd ?? ""))" : "用户目录",
+            "类型 \(item.itemType)"
+        ]
+        if let details = item.details {
+            let detailParts = [
+                details["plugins"]?.arrayValue?.isEmpty == false ? "插件 \(externalAgentPluginCount(details)) 个" : nil,
+                details["sessions"]?.arrayValue?.isEmpty == false ? "会话 \(details["sessions"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["mcpServers"]?.arrayValue?.isEmpty == false ? "MCP \(details["mcpServers"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["hooks"]?.arrayValue?.isEmpty == false ? "钩子 \(details["hooks"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["subagents"]?.arrayValue?.isEmpty == false ? "子代理 \(details["subagents"]?.arrayValue?.count ?? 0) 个" : nil,
+                details["commands"]?.arrayValue?.isEmpty == false ? "命令 \(details["commands"]?.arrayValue?.count ?? 0) 个" : nil
+            ].compactMap { $0 }
+            parts.append(contentsOf: detailParts)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func externalAgentPluginCount(_ details: JSONValue) -> Int {
+        details["plugins"]?.arrayValue?.reduce(0) { total, plugin in
+            total + (plugin["pluginNames"]?.arrayValue?.count ?? 1)
+        } ?? 0
     }
 
     private func tokenText(_ value: Int?) -> String {
         guard let value else { return "未返回" }
         return SessionStore.compactNumber(value)
+    }
+
+    private func threadTokenUsageThreadText(_ threadID: String) -> String {
+        threadID.count > 12 ? "\(threadID.prefix(12))…" : threadID
     }
 
     private func daysText(_ value: Int?) -> String {
@@ -2205,6 +3174,15 @@ struct SettingsRouteView: View {
         return preview
     }
 
+    private func voiceListPreview(_ voices: [String]) -> String {
+        guard !voices.isEmpty else { return "未返回" }
+        let shown = voices.prefix(8).joined(separator: "、")
+        if voices.count > 8 {
+            return "\(shown) 等 \(voices.count) 个"
+        }
+        return shown
+    }
+
     private func configMetric(_ label: String, _ value: String) -> some View {
         SettingsValueRow(title: label, description: nil) {
             Text(value.isEmpty ? "未设置" : value)
@@ -2250,6 +3228,17 @@ struct SettingsRouteView: View {
         return Binding(
             get: { store.mcpToolArgumentText[key] ?? "{}" },
             set: { store.mcpToolArgumentText[key] = $0 }
+        )
+    }
+
+    private func mcpResourceTemplateURIBinding(
+        _ template: CodexRuntimeMCPResourceTemplate,
+        server: CodexRuntimeMCPServer
+    ) -> Binding<String> {
+        let key = store.mcpResourceTemplateKey(template, server: server)
+        return Binding(
+            get: { store.mcpResourceTemplateURIText[key] ?? template.uriTemplate },
+            set: { store.mcpResourceTemplateURIText[key] = $0 }
         )
     }
 
@@ -2336,6 +3325,56 @@ struct SettingsRouteView: View {
             }
             .buttonStyle(ChipButtonStyle())
             .disabled(store.runtimeCatalogIsRefreshing)
+        }
+        .padding(9)
+        .background(Theme.fillSubtle)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+    }
+
+    private func mcpResourceTemplateRow(
+        _ template: CodexRuntimeMCPResourceTemplate,
+        server: CodexRuntimeMCPServer
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "curlybraces")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(template.displayName)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(template.displayDescription)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Button("读取") {
+                    Task { await store.readMCPResourceTemplate(template, from: server) }
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(store.runtimeCatalogIsRefreshing)
+            }
+            HStack(spacing: 8) {
+                TextField("具体资源 URI", text: mcpResourceTemplateURIBinding(template, server: server))
+                    .font(Theme.mono(11))
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .background(Theme.fill)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                if let mimeType = template.mimeType, !mimeType.isEmpty {
+                    statusBadge(mimeType, ok: true)
+                }
+            }
+            Text(template.uriTemplate)
+                .font(Theme.mono(10.5))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
         }
         .padding(9)
         .background(Theme.fillSubtle)

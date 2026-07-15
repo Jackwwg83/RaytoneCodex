@@ -65,7 +65,7 @@ RaytoneCodex (SwiftUI)
 
 **鉴权**：协议**没有**显式 login 方法；app-server 复用宿主机 `codex login`（ChatGPT 或 API key）的凭据。未登录表现为某轮失败 `codexErrorInfo:"Unauthorized"`。→ 我们据此切 `ConnectionState.loginRequired`。
 
-**版本/实验**：schema **按 Codex 版本绑定**，用 `codex app-server generate-json-schema --out ./schemas`（或 `generate-ts`）对**所发布的同一 codex 二进制**生成并校验类型。实验方法需 `initialize` 时 `capabilities.experimentalApi:true`。
+**版本/实验**：schema **按 Codex 版本绑定**，用 `codex app-server generate-json-schema --out ./schemas` 和 `codex app-server generate-json-schema --experimental --out ./schemas/experimental`（或 `generate-ts`）对**所发布的同一 codex 二进制**生成并校验类型。实验方法需 `initialize` 时 `capabilities.experimentalApi:true`。
 
 ## 3. Swift 客户端设计（放 RaytoneCodexCore）
 新增 `CodexAppServerClient`（actor / @unchecked Sendable）：
@@ -109,7 +109,7 @@ RaytoneCodex (SwiftUI)
 - 固定版本：记下 commit/tag，和生成的 schema 一起 pin，保证协议匹配。
 - `build_and_run.sh` 的 `find_codex_cli` 优先用"源码构建产物"，否则回退现有逻辑（/Applications/Codex.app、PATH、Homebrew）。
 - bundle 带 `OPENAI_CODEX_LICENSE.txt`(Apache-2.0) + `OPENAI_CODEX_NOTICE.txt`，NOTICE 写明"基于 openai/codex@<commit> 构建/修改"。
-- 用 `codex app-server generate-json-schema --out RaytoneCodex/Schemas` 生成并提交 schema，Swift 侧据此对类型。
+- 用 `codex app-server generate-json-schema --out RaytoneCodex/Schemas` 生成稳定 schema，并用 `codex app-server generate-json-schema --experimental --out RaytoneCodex/Schemas/experimental` 生成实验 schema，一起提交；Swift 侧据此对类型。
 
 ## 6. 要"改"源码时的补丁点（fork，phase 2，非必须）
 在 `third_party/openai-codex` 开分支 `raytone/main`，小步补丁、可 rebase 跟上游：

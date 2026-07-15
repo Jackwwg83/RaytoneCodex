@@ -1,0 +1,53 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "afterDisable" : {
+    "errors" : [
+
+    ],
+    "remoteControl" : {
+      "environmentID" : "",
+      "installationID" : "36db56db-dcb7-480c-9a01-a5c8c3cbd555",
+      "serverName" : "Jack-Mac16.local",
+      "status" : "disabled",
+      "statusName" : "已停用"
+    },
+    "workspaceExecutionMode" : "本地模式"
+  },
+  "afterEnable" : {
+    "errors" : [
+
+    ],
+    "remoteControl" : {
+      "environmentID" : "env_e_6a07e277b42883319b07ef53ad54da6f",
+      "installationID" : "36db56db-dcb7-480c-9a01-a5c8c3cbd555",
+      "serverName" : "Jack-Mac16.local",
+      "status" : "connecting",
+      "statusName" : "连接中"
+    },
+    "workspaceExecutionMode" : "云端模式"
+  },
+  "catalogErrors" : [
+
+  ],
+  "catalogStatus" : "remoteControl\/enable：连接中",
+  "clientCount" : 0,
+  "clientListNextCursor" : "",
+  "initial" : {
+    "remoteControl" : {
+      "environmentID" : "env_e_6a07e277b42883319b07ef53ad54da6f",
+      "installationID" : "36db56db-dcb7-480c-9a01-a5c8c3cbd555",
+      "serverName" : "Jack-Mac16.local",
+      "status" : "connecting",
+      "statusName" : "连接中"
+    },
+    "workspaceExecutionMode" : "云端模式"
+  },
+  "ok" : true,
+  "restoredInitialEnabledState" : true,
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

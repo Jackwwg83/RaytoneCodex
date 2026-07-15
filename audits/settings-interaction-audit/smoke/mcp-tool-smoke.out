@@ -1,0 +1,19 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "callStatus" : "mcpServer\/tool\/call：调用成功",
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMCPToolSmoke-FDF42A72-8CD2-4539-9F70-5861F574E6A4\/codex-home",
+  "contentCount" : 1,
+  "ok" : true,
+  "preview" : "echo: hello from Raytone · Raytone MCP tool smoke OK 49D94BD5\n\n结构化内容\n{\n  \"echoed\" : \"hello from Raytone\",\n  \"marker\" : \"Raytone MCP tool smoke OK 49D94BD5\",\n  \"threadId\" : \"019f3d01-b2aa-74d3-a8c2-db35d67b69b2\"\n}\n\n元数据\n{\n  \"calledBy\" : \"raytone-tool-smoke\"\n}",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "serverName" : "raytone_tool",
+  "serverTitle" : "Raytone MCP Tool Smoke",
+  "threadID" : "019f3d01-b2aa-74d3-a8c2-db35d67b69b2",
+  "toolDisplayName" : "Raytone Echo Tool",
+  "toolName" : "echo_tool",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMCPToolSmoke-FDF42A72-8CD2-4539-9F70-5861F574E6A4\/workspace"
+}

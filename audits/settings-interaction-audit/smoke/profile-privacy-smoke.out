@@ -1,0 +1,19 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.06s)
+{
+  "accountKind" : "chatgpt",
+  "catalogStatus" : "account\/read：个人资料状态已刷新 · hqwu810@gmail.com",
+  "errors" : [
+
+  ],
+  "ok" : true,
+  "profileDisplayName" : "hqwu810@gmail.com",
+  "profileHandle" : "@hqwu810",
+  "profileStatus" : "个人资料保持私有；app-server 未提供 profile\/privacy 写接口，已通过 account\/read 刷新账户状态",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "source" : "account\/read",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

@@ -10,14 +10,18 @@ struct RaytoneCodexApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Raytone Codex", id: "main") {
+        WindowGroup("RaytoneX", id: "main") {
             ContentView(store: sessionStore)
                 .frame(minWidth: 1220, minHeight: 760)
                 .preferredColorScheme(sessionStore.preferredColorScheme)
                 .task {
                     await sessionStore.refreshRuntime()
-                    await sessionStore.refreshRuntimeThreads()
                     sessionStore.applyStartupScreenIfNeeded()
+                    if SessionStore.startupScreenUsesNewThreadHero {
+                        await sessionStore.refreshNewThreadHeroRuntime()
+                    }
+                    await sessionStore.refreshRuntimeThreads()
+                    sessionStore.evaluateProviderOnboarding()
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -28,12 +32,12 @@ struct RaytoneCodexApp: App {
 
         Settings {
             SettingsView(store: sessionStore)
-                .frame(width: 520)
+                .frame(minWidth: 1040, minHeight: 760)
                 .preferredColorScheme(sessionStore.preferredColorScheme)
         }
 
         MenuBarExtra(
-            "RaytoneCodex",
+            "RaytoneX",
             systemImage: "sparkles",
             isInserted: Binding(
                 get: { sessionStore.desktopShowInMenuBar },
@@ -44,7 +48,7 @@ struct RaytoneCodexApp: App {
                 }
             )
         ) {
-            Button("显示 RaytoneCodex") {
+            Button("显示 RaytoneX") {
                 showMainWindow()
             }
             Button("新建对话") {
@@ -52,7 +56,7 @@ struct RaytoneCodexApp: App {
                 showMainWindow()
             }
             Divider()
-            Button("退出 RaytoneCodex") {
+            Button("退出 RaytoneX") {
                 NSApp.terminate(nil)
             }
         }

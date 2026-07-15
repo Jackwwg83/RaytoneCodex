@@ -1,0 +1,36 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "cloud" : {
+    "claimed" : false,
+    "claimedWasReturned" : true,
+    "environmentID" : "env-smoke",
+    "manualPairingCode" : "MANUAL-SMOKE",
+    "pairingCode" : "PAIR-SMOKE",
+    "status" : "remoteControl\/pairing\/start：PAIR-SMOKE · 手动码 MANUAL-SMOKE · 等待领取",
+    "workspaceExecutionMode" : "云端模式"
+  },
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexRemoteModeSmoke-A99EFBDB-11EB-415E-A1CC-A6577B08CAD7\/fake-codex",
+  "local" : {
+    "remoteControl" : {
+      "environmentID" : "",
+      "installationID" : "install-smoke",
+      "serverName" : "raytone-fake-remote",
+      "status" : "disabled",
+      "statusName" : "已停用"
+    },
+    "status" : "remoteControl\/disable：已停用",
+    "workspaceExecutionMode" : "本地模式"
+  },
+  "methodEvidence" : {
+    "remoteControl\/disable" : true,
+    "remoteControl\/enable" : true,
+    "remoteControl\/pairing\/start" : true,
+    "remoteControl\/pairing\/status" : true
+  },
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexRemoteModeSmoke-A99EFBDB-11EB-415E-A1CC-A6577B08CAD7\/requests.jsonl",
+  "requestLogPreview" : "{\n\"method\": \"initialize\",\n\"params\": {\n\"clientInfo\": {\n\"name\": \"RaytoneCodex\",\n\"title\": \"RaytoneCodex\",\n\"version\": \"0.1.0\"\n},\n\"capabilities\": {\n\"experimentalApi\": true,\n\"optOutNotificationMethods\": []\n}\n},\n\"id\": 1\n}\n{\n\"method\": \"initialized\",\n\"params\": {}\n}\n{\n\"method\": \"remoteControl\/enable\",\n\"id\": 2\n}\n{\n\"method\": \"remoteControl\/pairing\/start\",\n\"params\": {\n\"manualCode\": true\n},\n\"id\": 3\n}\n{\n\"method\": \"remoteControl\/pairing\/status\",\n\"params\": {\n\"pairingCode\": \"PAIR-SMOKE\"\n},\n\"id\": 4\n}\n{\n\"method\": \"remoteControl\/client\/list\",\n\"params\": {\n\"order\": \"desc\",\n\"environmentId\": \"env-smoke\",\n\"limit\": 25\n},\n\"id\": 5\n}\n{\n\"method\": \"remoteControl\/disable\",\n\"id\": 6\n}\n",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexRemoteModeSmoke-A99EFBDB-11EB-415E-A1CC-A6577B08CAD7"
+}

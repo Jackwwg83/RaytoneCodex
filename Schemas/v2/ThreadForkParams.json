@@ -56,8 +56,23 @@
     "ephemeral": {
       "type": "boolean"
     },
-    "threadId": {
-      "type": "string"
+    "threadSource": {
+      "description": "Optional client-supplied analytics source classification for this forked thread.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ThreadSource"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lastTurnId": {
+      "description": "Optional last turn id to fork through, inclusive.\n\nWhen specified, turns after `last_turn_id` are omitted from the fork. The referenced turn cannot be in progress.",
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "model": {
       "description": "Configuration overrides for the forked thread, if any.",
@@ -72,6 +87,15 @@
         "null"
       ]
     },
+    "serviceTier": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "threadId": {
+      "type": "string"
+    },
     "sandbox": {
       "anyOf": [
         {
@@ -80,23 +104,6 @@
         {
           "type": "null"
         }
-      ]
-    },
-    "threadSource": {
-      "description": "Optional client-supplied analytics source classification for this forked thread.",
-      "anyOf": [
-        {
-          "$ref": "#/definitions/ThreadSource"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "serviceTier": {
-      "type": [
-        "string",
-        "null"
       ]
     }
   },
@@ -120,7 +127,6 @@
           "type": "string",
           "enum": [
             "untrusted",
-            "on-failure",
             "on-request",
             "never"
           ]
@@ -173,12 +179,7 @@
       ]
     },
     "ThreadSource": {
-      "type": "string",
-      "enum": [
-        "user",
-        "subagent",
-        "memory_consolidation"
-      ]
+      "type": "string"
     }
   }
 }

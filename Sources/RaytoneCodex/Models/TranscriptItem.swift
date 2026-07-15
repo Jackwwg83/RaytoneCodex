@@ -1,4 +1,5 @@
 import Foundation
+import RaytoneCodexCore
 
 /// A single row in a thread transcript. Models the rich item types a Codex-style
 /// agent surfaces: plain messages, reasoning summaries, command executions,
@@ -21,6 +22,8 @@ struct TranscriptItem: Identifiable, Equatable {
         case command(CommandRun)
         case fileChange(FileChange)
         case approval(ApprovalRequest)
+        case mcpElicitation(McpElicitationRequest)
+        case toolUserInput(ToolUserInputRequest)
         case notice(Notice)
     }
 }
@@ -181,6 +184,142 @@ struct ApprovalRequest: Identifiable, Equatable {
         case .patch: "doc.badge.gearshape"
         case .network: "network"
         }
+    }
+}
+
+// MARK: - MCP elicitation
+
+struct McpElicitationRequest: Identifiable, Equatable {
+    enum Mode: Equatable {
+        case form
+        case url
+        case unknown(String)
+
+        init(rawValue: String) {
+            switch rawValue {
+            case "form":
+                self = .form
+            case "url":
+                self = .url
+            default:
+                self = .unknown(rawValue)
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .form: "表单"
+            case .url: "链接"
+            case let .unknown(raw): raw
+            }
+        }
+    }
+
+    enum Action: String, Equatable {
+        case accept
+        case decline
+        case cancel
+    }
+
+    enum Status: Equatable {
+        case pending
+        case accepted
+        case declined
+        case cancelled
+        case failed(String)
+    }
+
+    let id: UUID
+    var serverName: String
+    var threadID: String?
+    var turnID: String?
+    var message: String
+    var mode: Mode
+    var urlString: String?
+    var requestedSchema: JSONValue?
+    var status: Status
+
+    init(
+        id: UUID = UUID(),
+        serverName: String,
+        threadID: String? = nil,
+        turnID: String? = nil,
+        message: String,
+        mode: Mode,
+        urlString: String? = nil,
+        requestedSchema: JSONValue? = nil,
+        status: Status = .pending
+    ) {
+        self.id = id
+        self.serverName = serverName
+        self.threadID = threadID
+        self.turnID = turnID
+        self.message = message
+        self.mode = mode
+        self.urlString = urlString
+        self.requestedSchema = requestedSchema
+        self.status = status
+    }
+
+    var url: URL? {
+        guard let urlString else { return nil }
+        return URL(string: urlString)
+    }
+}
+
+// MARK: - Tool user input
+
+struct ToolUserInputOption: Identifiable, Equatable {
+    let id: UUID
+    var label: String
+    var description: String
+
+    init(id: UUID = UUID(), label: String, description: String) {
+        self.id = id
+        self.label = label
+        self.description = description
+    }
+}
+
+struct ToolUserInputQuestion: Identifiable, Equatable {
+    var id: String
+    var header: String
+    var question: String
+    var isOther: Bool
+    var isSecret: Bool
+    var options: [ToolUserInputOption]
+}
+
+struct ToolUserInputRequest: Identifiable, Equatable {
+    enum Status: Equatable {
+        case pending
+        case submitted
+        case skipped
+        case cancelled
+        case failed(String)
+    }
+
+    let id: UUID
+    var threadID: String
+    var turnID: String
+    var itemID: String
+    var questions: [ToolUserInputQuestion]
+    var status: Status
+
+    init(
+        id: UUID = UUID(),
+        threadID: String,
+        turnID: String,
+        itemID: String,
+        questions: [ToolUserInputQuestion],
+        status: Status = .pending
+    ) {
+        self.id = id
+        self.threadID = threadID
+        self.turnID = turnID
+        self.itemID = itemID
+        self.questions = questions
+        self.status = status
     }
 }
 

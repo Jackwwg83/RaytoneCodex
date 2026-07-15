@@ -1,0 +1,61 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml",
+  "disabledHook" : {
+    "command" : "echo raytone hook controls",
+    "currentHash" : "sha256:61e030f871af9a2d881fa930a37dfd19f23a5c8a9d86952e12458e1698ddac60",
+    "enabled" : false,
+    "eventName" : "userPromptSubmit",
+    "handlerType" : "command",
+    "key" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml:user_prompt_submit:0:0",
+    "source" : "user",
+    "sourcePath" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml",
+    "trustStatus" : "trusted"
+  },
+  "enabledHook" : {
+    "command" : "echo raytone hook controls",
+    "currentHash" : "sha256:61e030f871af9a2d881fa930a37dfd19f23a5c8a9d86952e12458e1698ddac60",
+    "enabled" : true,
+    "eventName" : "userPromptSubmit",
+    "handlerType" : "command",
+    "key" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml:user_prompt_submit:0:0",
+    "source" : "user",
+    "sourcePath" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml",
+    "trustStatus" : "trusted"
+  },
+  "errors" : [
+
+  ],
+  "finalConfig" : "[features]\nhooks = true\n\n[hooks]\n\n[[hooks.UserPromptSubmit]]\n\n[[hooks.UserPromptSubmit.hooks]]\ntype = \"command\"\ncommand = \"echo raytone hook controls\"\ntimeout = 5\nasync = false\nstatusMessage = \"Raytone hook controls smoke\"\n\n[hooks.state]\n\n[hooks.state.\"\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml:user_prompt_submit:0:0\"]\ntrusted_hash = \"sha256:61e030f871af9a2d881fa930a37dfd19f23a5c8a9d86952e12458e1698ddac60\"\nenabled = true\n",
+  "initialHook" : {
+    "command" : "echo raytone hook controls",
+    "currentHash" : "sha256:61e030f871af9a2d881fa930a37dfd19f23a5c8a9d86952e12458e1698ddac60",
+    "enabled" : true,
+    "eventName" : "userPromptSubmit",
+    "handlerType" : "command",
+    "key" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml:user_prompt_submit:0:0",
+    "source" : "user",
+    "sourcePath" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml",
+    "trustStatus" : "untrusted"
+  },
+  "ok" : true,
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "status" : "启用 hook：hooks\/list 返回 1 个钩子",
+  "trustedHook" : {
+    "command" : "echo raytone hook controls",
+    "currentHash" : "sha256:61e030f871af9a2d881fa930a37dfd19f23a5c8a9d86952e12458e1698ddac60",
+    "enabled" : true,
+    "eventName" : "userPromptSubmit",
+    "handlerType" : "command",
+    "key" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml:user_prompt_submit:0:0",
+    "source" : "user",
+    "sourcePath" : "\/private\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/codex-home\/config.toml",
+    "trustStatus" : "trusted"
+  },
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHookControlsSmoke-1D111A23-1A9F-464A-A880-7568FC480FFE\/workspace"
+}

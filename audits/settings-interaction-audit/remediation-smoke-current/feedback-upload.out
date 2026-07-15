@@ -1,0 +1,11 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.06s)
+{
+  "diagnosticPath" : "\/Users\/jackwu\/Library\/Application Support\/RaytoneCodex\/Diagnostics\/raytone-diagnostics-20260707-234809.json",
+  "diagnosticPreview" : "{\n  \"category\" : \"bug\",\n  \"createdAt\" : \"2026-07-07T15:48:09Z\",\n  \"includeRuntimeState\" : true,\n  \"note\" : \"本文件由 RaytoneCodex 本地生成，不调用 Codex feedback\\\/upload 或 OpenAI 云服务。\",\n  \"provider\" : {\n    \"hasApiKey\" : true,\n    \"id\" : \"openai\",\n    \"kind\" : \"openAI\",\n    \"model\" : \"gpt-5.5\",\n    \"name\" : \"OpenAI\",\n    \"requiresApiKey\" : true,\n    \"usesSidecar\" : false\n  },\n  \"reason\" : \"Raytone local diagnostic smoke\",\n  \"runtime\" : {\n    \"catalogErrors\" : [\n\n    ],\n    \"catalogStatus\" : \"正在导出本地诊断包…\",\n    \"codexPath\" : \"\\\/Users\\\/jackwu\\\/Projects\\\/RaytoneCodex\\\/.build\\\/raytone-codex-cli\\\/codex\",\n    \"connectionState\" : \"已连接\",\n    \"sidecar\" : \"未启动\",\n    \"source\" : \"环境变量指定\",\n    \"summary\" : \"Environment override · codex-cli 0.0.0\"\n  },\n  \"schema\" : \"raytone.localDiagnostic.v1\",\n  \"thread\" : {\n    \"appServerThreadId\" : \"\",\n    \"itemCount\" : 0,\n    \"localId\" : \"64C56D47-BC85-4CF4-BFEE-B6F0580CEB4B\",\n    \"title\" : \"新对话\"\n  },\n  \"workspacePath\" : \"\\\/var\\\/folders\\\/6l\\\/l0s8rfj164z65gfxfmvkbb4m0000gn\\\/T\\\/RaytoneCodexLocalDiagnosticSmoke-1A0A14EB-8170-43E6-94EA-2D09AC52C577\\\/workspace\"\n}",
+  "diagnosticStatus" : "已导出本地诊断包 · ~\/Library\/Application Support\/RaytoneCodex\/Diagnostics\/raytone-diagnostics-20260707-234809.json",
+  "localDiagnostic" : true,
+  "ok" : true,
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexLocalDiagnosticSmoke-1A0A14EB-8170-43E6-94EA-2D09AC52C577\/workspace"
+}

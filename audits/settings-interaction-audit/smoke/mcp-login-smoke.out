@@ -1,0 +1,21 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "authStatus" : "notLoggedIn",
+  "errors" : [
+
+  ],
+  "expectedURL" : "https:\/\/auth.example.invalid\/oauth?server=raytone_login",
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMCPLoginSmoke-43BBF172-3FF0-4A7A-8CF2-C8832FA8F718\/fake-codex",
+  "loginURL" : "https:\/\/auth.example.invalid\/oauth?server=raytone_login",
+  "oauthLoginObserved" : true,
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMCPLoginSmoke-43BBF172-3FF0-4A7A-8CF2-C8832FA8F718\/requests.jsonl",
+  "requestLogPreview" : "{\"params\":{\"capabilities\":{\"experimentalApi\":true,\"optOutNotificationMethods\":[]},\"clientInfo\":{\"title\":\"RaytoneCodex\",\"name\":\"RaytoneCodex\",\"version\":\"0.1.0\"}},\"method\":\"initialize\",\"id\":1}\n{\"method\":\"initialized\",\"params\":{}}\n{\"params\":{\"detail\":\"full\",\"limit\":100},\"id\":2,\"method\":\"mcpServerStatus\/list\"}\n{\"id\":3,\"params\":{\"timeoutSecs\":120,\"name\":\"raytone_login\"},\"method\":\"mcpServer\/oauth\/login\"}\n",
+  "serverName" : "raytone_login",
+  "serverTitle" : "Raytone MCP Login Smoke",
+  "status" : "mcpServer\/oauth\/login：Raytone MCP Login Smoke · auth.example.invalid",
+  "statusListObserved" : true,
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMCPLoginSmoke-43BBF172-3FF0-4A7A-8CF2-C8832FA8F718\/workspace"
+}

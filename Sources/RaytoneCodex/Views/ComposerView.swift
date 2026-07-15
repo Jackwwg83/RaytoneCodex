@@ -127,8 +127,18 @@ struct ComposerView: View {
                 }
             }
             Divider()
-            Button("默认 OpenAI") {
-                store.chooseProviderModel(providerID: "openai", model: "gpt-5.5")
+            if let defaultOpenAIModel {
+                Button {
+                    store.chooseProviderModel(providerID: "openai", model: defaultOpenAIModel)
+                } label: {
+                    Label("默认 OpenAI：\(store.modelMenuTitle(providerID: "openai", model: defaultOpenAIModel))", systemImage: "sparkles")
+                }
+            } else {
+                Button {
+                    Task { await store.refreshModelCatalog() }
+                } label: {
+                    Label("读取 OpenAI 模型", systemImage: "arrow.clockwise")
+                }
             }
             Button {
                 Task { await store.refreshModelCatalog() }
@@ -156,9 +166,14 @@ struct ComposerView: View {
         .fixedSize()
     }
 
+    private var defaultOpenAIModel: String? {
+        store.codexModelCatalog.first(where: \.isDefault)?.id ??
+            store.providers.first(where: { $0.id == "openai" })?.models.first
+    }
+
     private var micButton: some View {
         Button {
-            store.startVoiceInput()
+            Task { await store.startVoiceInput() }
         } label: {
             Image(systemName: "mic")
                 .font(.system(size: 13))
@@ -167,7 +182,7 @@ struct ComposerView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("语音输入")
+        .help(store.voiceInputStatusText)
     }
 
     private var sendButton: some View {

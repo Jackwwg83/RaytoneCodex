@@ -152,7 +152,7 @@ struct BrowserPanelView: View {
                     .font(Theme.mono(11.5))
                     .foregroundStyle(Theme.textSecondary)
                     .onSubmit {
-                        store.openBrowserAddress(addressDraft)
+                        Task { await store.openBrowserAddress(addressDraft) }
                     }
             }
             .padding(.horizontal, 9)
@@ -178,8 +178,10 @@ struct BrowserPanelView: View {
     private var moreMenu: some View {
         Menu {
             Button("打开本地示例") {
-                store.openBrowserSample()
-                addressDraft = addressText
+                Task {
+                    await store.openBrowserSample()
+                    addressDraft = addressText
+                }
             }
             Button("截取当前网页") {
                 store.captureBrowserPanelScreenshot()
@@ -207,7 +209,7 @@ struct BrowserPanelView: View {
         _ symbol: String,
         _ help: String,
         disabled: Bool = false,
-        action: @escaping () -> Void = {}
+        action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)

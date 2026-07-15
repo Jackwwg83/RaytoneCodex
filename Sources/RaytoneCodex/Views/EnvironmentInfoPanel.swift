@@ -11,7 +11,11 @@ struct EnvironmentInfoPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     environmentRows
+                    activeGoalSection
                     progressSection
+                    if !store.recentGuardianDeniedActions.isEmpty {
+                        guardianDeniedSection
+                    }
                     sourcesSection
                 }
                 .padding(16)
@@ -24,6 +28,8 @@ struct EnvironmentInfoPanel: View {
             await store.refreshWorkspaceGitDiff()
             await store.refreshWorkspacePullRequestStatus()
             await store.refreshWorkspaceWorktrees()
+            await store.refreshLoadedRuntimeThreads()
+            await store.syncSelectedThreadGitMetadata()
         }
         .frame(width: Theme.Layout.inspectorWidth)
         .frame(maxHeight: .infinity)
@@ -99,16 +105,51 @@ struct EnvironmentInfoPanel: View {
                 .buttonStyle(GhostIconButtonStyle(size: 26))
                 .help("新建分支")
             }
+            EnvironmentInfoActionRow(symbol: "arrow.triangle.branch", title: "线程 Git", detail: store.runtimeThreadMetadataStatusText) {
+                Button {
+                    Task { await store.syncSelectedThreadGitMetadata() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help("同步到 Codex 线程")
+            }
             EnvironmentInfoActionRow(symbol: "tray.and.arrow.up", title: "提交或推送", detail: commitPushText) {
                 Button("预检") {
                     Task { await store.runGitCommitPushPreflightInTerminal() }
                 }
+                .buttonStyle(ChipButtonStyle())
+                Button("建库") {
+                    Task { await store.runGitCreateRepositoryInTerminal() }
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(store.terminalIsRunning)
+                Button("推送") {
+                    Task { await store.runGitPushCurrentBranchInTerminal() }
+                }
                 .buttonStyle(ChipButtonStyle(prominent: true))
+                .disabled(store.terminalIsRunning)
             }
             EnvironmentInfoRow(symbol: "cpu", title: store.modelDisplayName, trailing: nil)
+            EnvironmentInfoActionRow(symbol: "bubble.left.and.text.bubble.right", title: "已加载线程", detail: loadedThreadText) {
+                Button {
+                    Task { await store.refreshLoadedRuntimeThreads() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help("刷新已加载线程")
+            }
             EnvironmentInfoRow(symbol: "shippingbox", title: "Sidecar", trailing: store.sidecarStatusText)
             EnvironmentInfoRow(symbol: "rectangle.split.3x1", title: "工作树", trailing: worktreeText)
             EnvironmentInfoActionRow(symbol: "chevron.left.forwardslash.chevron.right", title: "PR 状态", detail: pullRequestStatusText, secondary: true) {
+                Button("创建") {
+                    Task { await store.runGitCreatePullRequestInTerminal() }
+                }
+                .buttonStyle(ChipButtonStyle())
+                .disabled(store.terminalIsRunning)
                 Button {
                     Task { await store.refreshWorkspacePullRequestStatus() }
                 } label: {
@@ -164,14 +205,60 @@ struct EnvironmentInfoPanel: View {
         }
     }
 
+    @ViewBuilder
+    private var activeGoalSection: some View {
+        if let goal = store.selectedThread.activeGoal {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                VStack(alignment: .leading, spacing: 10) {
+                    SectionLabel(text: "目标")
+                    ActiveGoalDetailCard(
+                        goal: goal,
+                        now: timeline.date,
+                        runtimeStatus: store.runtimeCatalogStatusText,
+                        refresh: {
+                            Task { await store.refreshSelectedRuntimeGoal() }
+                        },
+                        edit: {
+                            store.promptEditActiveGoal()
+                        },
+                        togglePause: {
+                            Task {
+                                if goal.status == .paused {
+                                    await store.resumeActiveGoal()
+                                } else {
+                                    await store.pauseActiveGoal()
+                                }
+                            }
+                        },
+                        clear: {
+                            Task { await store.clearActiveGoal() }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private var guardianDeniedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "自动审批拒绝")
+            VStack(spacing: 8) {
+                ForEach(Array(store.recentGuardianDeniedActions.prefix(3))) { denial in
+                    GuardianDeniedActionRow(denial: denial) {
+                        Task { await store.approveGuardianDeniedAction(denial) }
+                    }
+                }
+            }
+        }
+    }
+
     private var sourcesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "来源")
-            HStack(spacing: 8) {
-                ForEach(sourceChips) { chip in
-                    SourceChipView(chip: chip)
+            VStack(spacing: 8) {
+                ForEach(store.environmentSourceFacts) { fact in
+                    SourceFactRow(fact: fact)
                 }
-                Spacer(minLength: 0)
             }
         }
     }
@@ -215,6 +302,16 @@ struct EnvironmentInfoPanel: View {
         return "\(store.workspaceWorktrees.count) 个"
     }
 
+    private var loadedThreadText: String {
+        if store.runtimeLoadedThreadsStatusText != "未读取" {
+            return store.runtimeLoadedThreadsStatusText
+        }
+        if store.loadedRuntimeThreadIDs.isEmpty {
+            return "未读取"
+        }
+        return "\(store.loadedRuntimeThreadIDs.count) 个"
+    }
+
     private var pullRequestStatusText: String {
         store.workspacePullRequestStatusText
     }
@@ -247,21 +344,239 @@ struct EnvironmentInfoPanel: View {
         ]
     }
 
-    private var sourceChips: [EnvironmentSourceChip] {
-        [
-            EnvironmentSourceChip(symbol: "command", title: "命令", active: !store.commandRuns.isEmpty),
-            EnvironmentSourceChip(symbol: "globe", title: "浏览器", active: store.browserURL != nil),
-            EnvironmentSourceChip(symbol: "folder", title: "文件", active: !store.fileEntries.isEmpty || !store.fileSearchResults.isEmpty),
-            EnvironmentSourceChip(symbol: "doc.text", title: "变更", active: !store.pendingChanges.isEmpty || store.workspaceGitDiff != nil || !store.workspaceGitStatusText.isEmpty),
-            EnvironmentSourceChip(symbol: "terminal", title: "终端", active: !store.terminalRuns.isEmpty)
-        ]
-    }
-
     private static func gitStatusChangeCount(_ status: String) -> Int {
         status
             .split(separator: "\n", omittingEmptySubsequences: true)
             .filter { !$0.hasPrefix("##") }
             .count
+    }
+}
+
+private struct ActiveGoalDetailCard: View {
+    let goal: ActiveGoal
+    let now: Date
+    let runtimeStatus: String
+    let refresh: () -> Void
+    let edit: () -> Void
+    let togglePause: () -> Void
+    let clear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: statusSymbol)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(statusTint)
+                    .frame(width: 18, height: 18)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Text(statusName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Text(goal.runtimeBacked ? "thread/goal/get" : "本地状态")
+                            .font(Theme.mono(9.5, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
+                    Text(goal.title)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            VStack(spacing: 6) {
+                GoalDetailRow(label: "Token", value: tokenText)
+                GoalDetailRow(label: "预算", value: budgetText)
+                GoalDetailRow(label: "耗时", value: elapsedText)
+                GoalDetailRow(label: "最近状态", value: runtimeStatus.isEmpty ? "未刷新" : runtimeStatus)
+            }
+
+            HStack(spacing: 8) {
+                Button("刷新") {
+                    refresh()
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button("编辑") {
+                    edit()
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button(goal.status == .paused ? "继续" : "暂停") {
+                    togglePause()
+                }
+                .buttonStyle(ChipButtonStyle())
+                Button("清除") {
+                    clear()
+                }
+                .buttonStyle(ChipButtonStyle(tint: Theme.danger))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .help("来自 Codex app-server thread/goal/get 的当前目标详情")
+    }
+
+    private var statusSymbol: String {
+        switch goal.status {
+        case .active:
+            return "arrow.triangle.2.circlepath"
+        case .paused:
+            return "pause.circle.fill"
+        case .complete:
+            return "checkmark.circle.fill"
+        case .blocked, .usageLimited, .budgetLimited:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var statusTint: Color {
+        switch goal.status {
+        case .active:
+            return Theme.info
+        case .paused:
+            return Theme.warning
+        case .complete:
+            return Theme.success
+        case .blocked, .usageLimited, .budgetLimited:
+            return Theme.danger
+        }
+    }
+
+    private var statusName: String {
+        switch goal.status {
+        case .active:
+            return "进行中"
+        case .paused:
+            return "已暂停"
+        case .blocked:
+            return "已阻塞"
+        case .usageLimited:
+            return "用量受限"
+        case .budgetLimited:
+            return "预算受限"
+        case .complete:
+            return "已完成"
+        }
+    }
+
+    private var tokenText: String {
+        SessionStore.compactNumber(goal.tokensUsed)
+    }
+
+    private var budgetText: String {
+        goal.tokenBudget.map(SessionStore.compactNumber) ?? "未设置"
+    }
+
+    private var elapsedText: String {
+        let seconds = goal.status == .active
+            ? max(0, Int(now.timeIntervalSince(goal.startedAt)))
+            : max(0, goal.timeUsedSeconds)
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let secs = seconds % 60
+        return "\(days)d \(hours)h \(minutes)m \(secs)s"
+    }
+}
+
+private struct GoalDetailRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textTertiary)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
+    }
+}
+
+private struct GuardianDeniedActionRow: View {
+    let denial: GuardianDeniedAction
+    let approve: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Theme.warning)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(denial.summary)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                    Text(detailText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(3)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            HStack(spacing: 8) {
+                Text(denial.turnID.isEmpty ? denial.reviewID : denial.turnID)
+                    .font(Theme.mono(10.5, weight: .medium))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Button("批准一次") {
+                    approve()
+                }
+                .buttonStyle(ChipButtonStyle(prominent: true))
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle)
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .stroke(Theme.borderSoft, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .help("把这次被自动审批拒绝的操作发回 Codex 批准一次")
+    }
+
+    private var detailText: String {
+        var parts: [String] = []
+        if let riskLevel = denial.riskLevel, !riskLevel.isEmpty {
+            parts.append("风险 \(riskName(riskLevel))")
+        }
+        if let rationale = denial.rationale?.trimmingCharacters(in: .whitespacesAndNewlines), !rationale.isEmpty {
+            parts.append(rationale)
+        }
+        return parts.isEmpty ? "Codex 自动审批审查已拒绝此操作，可手动批准一次继续。" : parts.joined(separator: " · ")
+    }
+
+    private func riskName(_ risk: String) -> String {
+        switch risk {
+        case "low": "低"
+        case "medium": "中"
+        case "high": "高"
+        case "critical": "严重"
+        default: risk
+        }
     }
 }
 
@@ -340,29 +655,43 @@ private struct EnvironmentInfoActionRow<Actions: View>: View {
     }
 }
 
-private struct EnvironmentSourceChip: Identifiable {
-    var id: String { title }
-    var symbol: String
-    var title: String
-    var active: Bool
-}
-
-private struct SourceChipView: View {
-    let chip: EnvironmentSourceChip
+private struct SourceFactRow: View {
+    let fact: EnvironmentSourceFact
 
     var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: chip.symbol)
-                .font(.system(size: 12, weight: .medium))
-            Text(chip.title)
-                .font(.system(size: 9.5, weight: .medium))
-                .lineLimit(1)
+        HStack(spacing: 9) {
+            Image(systemName: fact.symbol)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(fact.active ? Theme.info : Theme.textTertiary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(fact.title)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(fact.active ? Theme.textPrimary : Theme.textTertiary)
+                        .lineLimit(1)
+                    Text(fact.source)
+                        .font(Theme.mono(9.5, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Text(fact.detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            Spacer(minLength: 0)
         }
-        .foregroundStyle(chip.active ? Theme.textPrimary : Theme.textSecondary)
-        .frame(width: 46, height: 42)
-        .background(chip.active ? Theme.fillStrong : Theme.fill)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .help(chip.active ? "\(chip.title) 已连接真实数据" : "\(chip.title) 暂无当前数据")
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(fact.active ? Theme.fillStrong : Theme.fill)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        .help(fact.active ? "\(fact.title)：\(fact.detail)" : "\(fact.title) 暂无当前数据")
     }
 }
 

@@ -44,13 +44,13 @@ struct ConnectionBanner: View {
 
     private var recoveryTitle: String? {
         switch state {
-        case .loginRequired: "Sign in"
-        case .updateRequired: "Update"
-        case .restartRequired: "Restart"
-        case .notInstalled: "Locate CLI"
-        case .sidecarUnavailable: "Reconnect"
+        case .loginRequired: "登录"
+        case .updateRequired: "更新"
+        case .restartRequired: "重启"
+        case .notInstalled: "定位 CLI"
+        case .sidecarUnavailable: "重新连接"
         case .providerKeyMissing, .providerUnauthorized: "设置"
-        case .disconnected: "Reconnect"
+        case .disconnected: "重新连接"
         case .connecting, .connected: nil
         }
     }

@@ -1,0 +1,25 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.06s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAutoReviewSmoke-A90A4C22-4048-443A-95D5-C5AC57E363E8",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAutoReviewSmoke-A90A4C22-4048-443A-95D5-C5AC57E363E8\/config.toml",
+  "disabled" : {
+    "accessMode" : "完全访问",
+    "configApprovalsReviewer" : "user",
+    "configText" : "approvals_reviewer = \"user\"\n",
+    "storeApprovalsReviewer" : "user"
+  },
+  "enabled" : {
+    "accessMode" : "完全访问",
+    "configApprovalsReviewer" : "auto_review",
+    "configText" : "approvals_reviewer = \"auto_review\"\n",
+    "storeApprovalsReviewer" : "auto_review"
+  },
+  "ok" : true,
+  "runtimeCatalogStatusText" : "approvals_reviewer 已写入 config.toml",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

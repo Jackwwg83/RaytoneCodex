@@ -1,0 +1,34 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexDefaultPermissionsSmoke-0E170B2D-D64C-4F43-A909-F39DA1907AF5",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexDefaultPermissionsSmoke-0E170B2D-D64C-4F43-A909-F39DA1907AF5\/config.toml",
+  "fullAccess" : {
+    "configText" : "default_permissions = \":danger-full-access\"\n",
+    "defaultEnabled" : true,
+    "fullAccess" : true,
+    "profile" : ":danger-full-access",
+    "storeProfile" : ":danger-full-access"
+  },
+  "ok" : true,
+  "readOnly" : {
+    "configText" : "default_permissions = \":read-only\"\n",
+    "defaultEnabled" : false,
+    "fullAccess" : false,
+    "profile" : ":read-only",
+    "storeProfile" : ":read-only"
+  },
+  "runtimeCatalogStatusText" : "default_permissions 已写入 config.toml：:danger-full-access",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspace" : {
+    "configText" : "default_permissions = \":workspace\"\n",
+    "defaultEnabled" : true,
+    "fullAccess" : false,
+    "profile" : ":workspace",
+    "storeProfile" : ":workspace"
+  },
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

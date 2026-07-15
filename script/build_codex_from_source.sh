@@ -6,8 +6,9 @@ SOURCE_DIR="$ROOT_DIR/third_party/openai-codex"
 BUILD_DIR="$ROOT_DIR/dist/RaytoneCodexCLI"
 CODEX_OUT="$BUILD_DIR/codex"
 SCHEMA_DIR="$ROOT_DIR/Schemas"
+EXPERIMENTAL_SCHEMA_DIR="$SCHEMA_DIR/experimental"
 
-PINNED_COMMIT="${RAYTONE_CODEX_SOURCE_COMMIT:-18ce671fed526be9033907bd88a3a63c6888bbf4}"
+PINNED_COMMIT="${RAYTONE_CODEX_SOURCE_COMMIT:-rust-v0.144.4}"
 SOURCE_REMOTE="${RAYTONE_CODEX_SOURCE_REMOTE:-https://github.com/openai/codex.git}"
 
 if [[ -d "$SOURCE_DIR" && ! -d "$SOURCE_DIR/.git" ]]; then
@@ -24,11 +25,14 @@ if [[ ! -d "$SOURCE_DIR/.git" ]]; then
 fi
 
 if [[ -d "$SOURCE_REMOTE/.git" ]]; then
-  git -C "$SOURCE_DIR" fetch origin "$PINNED_COMMIT"
+  git -C "$SOURCE_DIR" fetch origin "refs/tags/$PINNED_COMMIT:refs/tags/$PINNED_COMMIT" \
+    || git -C "$SOURCE_DIR" fetch origin "$PINNED_COMMIT"
 else
-  git -C "$SOURCE_DIR" fetch --depth 1 origin "$PINNED_COMMIT"
+  git -C "$SOURCE_DIR" fetch --depth 1 origin "refs/tags/$PINNED_COMMIT:refs/tags/$PINNED_COMMIT" \
+    || git -C "$SOURCE_DIR" fetch --depth 1 origin "$PINNED_COMMIT"
 fi
-git -C "$SOURCE_DIR" switch --detach "$PINNED_COMMIT"
+git -C "$SOURCE_DIR" switch --detach "$PINNED_COMMIT" \
+  || git -C "$SOURCE_DIR" switch --detach FETCH_HEAD
 
 mkdir -p "$BUILD_DIR"
 (
@@ -45,6 +49,8 @@ fi
 rm -rf "$SCHEMA_DIR"
 mkdir -p "$SCHEMA_DIR"
 "$CODEX_OUT" app-server generate-json-schema --out "$SCHEMA_DIR"
+mkdir -p "$EXPERIMENTAL_SCHEMA_DIR"
+"$CODEX_OUT" app-server generate-json-schema --experimental --out "$EXPERIMENTAL_SCHEMA_DIR"
 
 {
   if [[ -f "$SOURCE_DIR/NOTICE" ]]; then
@@ -63,5 +69,6 @@ printf '  "sourceRemote": "%s",\n' "$SOURCE_REMOTE"
 printf '  "commit": "%s",\n' "$PINNED_COMMIT"
 printf '  "codex": "%s",\n' "$CODEX_OUT"
 printf '  "version": "%s",\n' "$("$CODEX_OUT" --version | tr -d '\r')"
-printf '  "schemas": "%s"\n' "$SCHEMA_DIR"
+printf '  "schemas": "%s",\n' "$SCHEMA_DIR"
+printf '  "experimentalSchemas": "%s"\n' "$EXPERIMENTAL_SCHEMA_DIR"
 printf '}\n'

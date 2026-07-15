@@ -1,0 +1,44 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.08s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWorkModeSmoke-D93496A2-67CF-476A-9864-5ACC673C10BB",
+  "coding" : {
+    "collaborationModeKind" : "default",
+    "collaborationModeStatus" : "thread\/settings\/updated：default",
+    "configText" : "model_verbosity = \"high\"\n\n[projects.\"\/Users\/jackwu\/Projects\/RaytoneCodex\"]\ntrust_level = \"trusted\"\n",
+    "modelVerbosity" : "high",
+    "threadID" : "019f3d06-bbda-7910-a647-c8395eed6a73",
+    "workModeID" : "coding"
+  },
+  "collaborationModes" : [
+    {
+      "mode" : "plan",
+      "model" : "",
+      "name" : "Plan",
+      "reasoningEffort" : "medium"
+    },
+    {
+      "mode" : "default",
+      "model" : "",
+      "name" : "Default",
+      "reasoningEffort" : ""
+    }
+  ],
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWorkModeSmoke-D93496A2-67CF-476A-9864-5ACC673C10BB\/config.toml",
+  "daily" : {
+    "collaborationModeKind" : "plan",
+    "collaborationModeStatus" : "thread\/settings\/updated：plan",
+    "configText" : "model_verbosity = \"low\"\n\n[projects.\"\/Users\/jackwu\/Projects\/RaytoneCodex\"]\ntrust_level = \"trusted\"\n",
+    "modelVerbosity" : "low",
+    "threadID" : "019f3d06-bbda-7910-a647-c8395eed6a73",
+    "workModeID" : "daily"
+  },
+  "ok" : true,
+  "runtimeCatalogStatusText" : "collaborationMode\/list + thread\/settings\/update：Plan",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "source" : "collaborationMode\/list + thread\/settings\/update.collaborationMode + config\/write model_verbosity",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

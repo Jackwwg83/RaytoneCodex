@@ -78,6 +78,7 @@ public enum RaytoneProxyServiceError: LocalizedError, Sendable {
     case launchFailed(String)
     case invalidListeningLine(String)
     case healthCheckFailed(String)
+    case upstreamUnauthorized(status: Int, body: String)
 
     public var errorDescription: String? {
         switch self {
@@ -91,6 +92,8 @@ public enum RaytoneProxyServiceError: LocalizedError, Sendable {
             "Raytone provider sidecar reported an invalid startup line: \(line)"
         case let .healthCheckFailed(message):
             "Raytone provider sidecar health check failed. \(message)"
+        case let .upstreamUnauthorized(status, body):
+            "Provider 上游拒绝了当前 API Key，HTTP \(status)。\(body)"
         }
     }
 }
@@ -106,7 +109,7 @@ public actor RaytoneProxyService {
     public func start(
         executableURL: URL,
         provider: RaytoneProviderConfiguration,
-        apiKey: String
+        apiKey: String?
     ) async throws -> RaytoneProxySession {
         if let session, process?.isRunning == true {
             return session
@@ -115,7 +118,8 @@ public actor RaytoneProxyService {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             throw RaytoneProxyServiceError.executableMissing(executableURL)
         }
-        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let normalizedAPIKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedAPIKey?.isEmpty == false || !provider.requiresAPIKey else {
             throw RaytoneProxyServiceError.missingAPIKey(provider.displayName)
         }
 
@@ -139,7 +143,11 @@ public actor RaytoneProxyService {
             "--provider", provider.id
         ]
         var environment = ProcessInfo.processInfo.environment
-        environment["RAYTONE_PROVIDER_API_KEY"] = apiKey
+        if let normalizedAPIKey, !normalizedAPIKey.isEmpty {
+            environment["RAYTONE_PROVIDER_API_KEY"] = normalizedAPIKey
+        } else {
+            environment.removeValue(forKey: "RAYTONE_PROVIDER_API_KEY")
+        }
         launchedProcess.environment = environment
         launchedProcess.standardOutput = stdoutPipe
         launchedProcess.standardError = stderrPipe
@@ -189,7 +197,15 @@ public actor RaytoneProxyService {
         let url = Self.rootURL(for: session.baseURL, path: "/health/upstream")
         let (data, response) = try await URLSession.shared.data(from: url)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw RaytoneProxyServiceError.healthCheckFailed(String(data: data, encoding: .utf8) ?? "No response body.")
+            let body = String(data: data, encoding: .utf8) ?? "No response body."
+            if let http = response as? HTTPURLResponse,
+               http.statusCode == 401 || http.statusCode == 403 {
+                throw RaytoneProxyServiceError.upstreamUnauthorized(
+                    status: http.statusCode,
+                    body: body
+                )
+            }
+            throw RaytoneProxyServiceError.healthCheckFailed(body)
         }
 
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -273,10 +289,13 @@ public actor RaytoneProxyService {
             "id = \"\(Self.tomlEscape(provider.id))\"",
             "name = \"\(Self.tomlEscape(provider.displayName))\"",
             "base_url = \"\(Self.tomlEscape(provider.baseURL))\"",
-            "api_key_env = \"RAYTONE_PROVIDER_API_KEY\"",
+            "requires_api_key = \(provider.requiresAPIKey)",
             "model = \"\(Self.tomlEscape(provider.model))\"",
             "models = [\(provider.models.map { "\"\(Self.tomlEscape($0))\"" }.joined(separator: ", "))]"
         ]
+        if provider.requiresAPIKey {
+            lines.insert("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"", at: 7)
+        }
 
         if let reasoning = provider.reasoning {
             lines.append(contentsOf: [

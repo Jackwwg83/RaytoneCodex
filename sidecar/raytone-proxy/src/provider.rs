@@ -50,6 +50,8 @@ pub struct ProviderConfig {
     pub base_url: String,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
+    #[serde(default = "default_requires_api_key")]
+    pub requires_api_key: bool,
     pub model: String,
     #[serde(default)]
     pub models: Vec<String>,
@@ -62,8 +64,13 @@ pub struct ProviderRuntime {
     pub provider: Provider,
     pub base_url: String,
     pub api_key: Option<String>,
+    pub requires_api_key: bool,
     pub model: String,
     pub models: Vec<String>,
+}
+
+fn default_requires_api_key() -> bool {
+    true
 }
 
 impl ProxyConfig {
@@ -123,6 +130,7 @@ impl ProviderConfig {
             provider,
             base_url: self.base_url.clone(),
             api_key: self.resolve_api_key(),
+            requires_api_key: self.requires_api_key,
             model: self.model.clone(),
             models: catalog_models,
         }
@@ -157,4 +165,3 @@ impl ProviderConfig {
             })
     }
 }
-

@@ -1,0 +1,48 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.06s)
+{
+  "chronicleRuntime" : {
+    "available" : false,
+    "detail" : "当前 app-server catalog 没有返回 Chronicle 技能或 MCP 服务",
+    "mcpServerCount" : 0,
+    "skillCount" : 5,
+    "source" : "skills\/list",
+    "status" : "未检测到"
+  },
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMemorySettingsSmoke-6A38EF79-98E4-46ED-8786-8EFF509E1132",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMemorySettingsSmoke-6A38EF79-98E4-46ED-8786-8EFF509E1132\/config.toml",
+  "disabled" : {
+    "configText" : "[memories]\ngenerate_memories = false\nuse_memories = false\n",
+    "generateMemories" : false,
+    "runtimeMemoryEnabled" : false,
+    "useMemories" : false
+  },
+  "enabled" : {
+    "configText" : "[memories]\ngenerate_memories = true\nuse_memories = true\n",
+    "generateMemories" : true,
+    "runtimeMemoryEnabled" : true,
+    "useMemories" : true
+  },
+  "ok" : true,
+  "resetErrors" : [
+
+  ],
+  "resetRefreshing" : false,
+  "resetStatus" : "memory\/reset：记忆已重置",
+  "runtimeCatalogStatusText" : "memory\/reset：记忆已重置",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "skipDisabled" : {
+    "configText" : "[memories]\ngenerate_memories = true\nuse_memories = true\ndisable_on_external_context = false\n",
+    "disableOnExternalContext" : false,
+    "runtimeSkipToolAssistedChats" : false
+  },
+  "skipEnabled" : {
+    "configText" : "[memories]\ngenerate_memories = true\nuse_memories = true\ndisable_on_external_context = true\n",
+    "disableOnExternalContext" : true,
+    "runtimeSkipToolAssistedChats" : true
+  },
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

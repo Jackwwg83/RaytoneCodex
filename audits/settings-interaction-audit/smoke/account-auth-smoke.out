@@ -1,0 +1,23 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "activeLoginAfterCancel" : "",
+  "authURLHost" : "auth.openai.com",
+  "beforeAccountKind" : "chatgpt",
+  "cancelErrors" : [
+
+  ],
+  "cancelStatus" : "account\/login\/cancel：canceled",
+  "loginID" : "4aec582e-2004-41ec-9d90-1cbe5c98fa03",
+  "loginKind" : "chatgpt",
+  "ok" : true,
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "startErrors" : [
+
+  ],
+  "startStatus" : "account\/login\/start：auth.openai.com · 4aec582e-2004-41ec-9d90-1cbe5c98fa03",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

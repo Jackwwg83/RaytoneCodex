@@ -1,0 +1,20 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "accountKind" : "chatgpt",
+  "clipboardLength" : 269,
+  "clipboardPreview" : "RaytoneCodex\n账户：[redacted-email]\n类型：ChatGPT\n计划：pro\n运行时：Environment override · codex-cli 0.0.0\n工作区：~\/Projects\/RaytoneCodex\n累计 Token：20,847,725,028\n单日峰值：1,000,384,387\n速率限制桶：2\nProvider：OpenAI \/ gpt-5.5\n来源：account\/read + account\/usage\/read + account\/rateLimits\/read\n读取错误：无",
+  "errors" : [
+
+  ],
+  "ok" : true,
+  "profileEditRouteOK" : true,
+  "profileEditTarget" : "personalization",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "source" : "account\/read + account\/usage\/read + account\/rateLimits\/read",
+  "status" : "已复制分享摘要 · account\/read + account\/usage\/read + account\/rateLimits\/read",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

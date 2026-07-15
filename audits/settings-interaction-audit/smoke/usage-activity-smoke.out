@@ -1,0 +1,59 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "account" : {
+    "email" : "usage-smoke@example.com",
+    "kind" : "chatgpt",
+    "planType" : "plus"
+  },
+  "billingErrors" : [
+
+  ],
+  "billingStatus" : "账户：usage-smoke@example.com · 累计 105",
+  "clipboardPreview" : "RaytoneCodex\n账户：[redacted-email]\n类型：ChatGPT\n计划：plus\n运行时：Environment override · fake-usage-activity\n工作区：\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-7E90B85B-9EA6-404D-A5CD-2A02D68C070F\/workspace\n累计 Token：105\n单日峰值：14\n速率限制桶：1\nProvider：OpenAI \/ gpt-5.5\n来源：account\/read + account\/usage\/read + account\/rateLimits\/read\n读取错误：",
+  "cumulative" : [
+    28,
+    105
+  ],
+  "daily" : [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14
+  ],
+  "lifetimeTokens" : 105,
+  "methodsObserved" : true,
+  "ok" : true,
+  "providerUsageStatus" : "OpenAI 用量来自 account\/usage\/read",
+  "rateLimitBuckets" : [
+    {
+      "id" : "primary",
+      "name" : "Primary Model",
+      "planType" : "plus",
+      "primaryUsedPercent" : 0.25,
+      "secondaryWindowMinutes" : 10080
+    }
+  ],
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-7E90B85B-9EA6-404D-A5CD-2A02D68C070F\/requests.jsonl",
+  "runtimePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-7E90B85B-9EA6-404D-A5CD-2A02D68C070F\/fake-codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "fake-usage-activity",
+  "shareStatus" : "已复制分享摘要 · account\/read + account\/usage\/read + account\/rateLimits\/read",
+  "source" : "fake Codex app-server account\/read + account\/usage\/read + account\/rateLimits\/read",
+  "weekly" : [
+    28,
+    77
+  ],
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexUsageActivitySmoke-7E90B85B-9EA6-404D-A5CD-2A02D68C070F\/workspace"
+}

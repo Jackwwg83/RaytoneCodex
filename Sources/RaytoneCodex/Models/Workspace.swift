@@ -26,6 +26,14 @@ struct Project: Identifiable, Equatable {
     }
 }
 
+struct RuntimeEnvironmentRegistration: Identifiable, Equatable {
+    var id: String { environmentID }
+    var environmentID: String
+    var execServerURL: String
+    var cwd: String
+    var registeredAt: Date
+}
+
 /// A single conversation thread. Each thread carries its own transcript and a
 /// per-thread runtime configuration (model / sandbox / approval), just like a
 /// Codex conversation.
@@ -39,6 +47,7 @@ struct ChatThread: Identifiable, Equatable {
     var approval: CodexApprovalPolicy
     var approvalsReviewer: CodexApprovalsReviewer
     var personality: CodexPersonality
+    var memoryMode: CodexThreadMemoryMode?
     var activeGoal: ActiveGoal?
     var progressSteps: [ProgressStep]
     var appServerThreadID: String?
@@ -55,6 +64,7 @@ struct ChatThread: Identifiable, Equatable {
         approval: CodexApprovalPolicy = .onRequest,
         approvalsReviewer: CodexApprovalsReviewer = .user,
         personality: CodexPersonality = .friendly,
+        memoryMode: CodexThreadMemoryMode? = nil,
         activeGoal: ActiveGoal? = nil,
         progressSteps: [ProgressStep] = [],
         appServerThreadID: String? = nil,
@@ -70,6 +80,7 @@ struct ChatThread: Identifiable, Equatable {
         self.approval = approval
         self.approvalsReviewer = approvalsReviewer
         self.personality = personality
+        self.memoryMode = memoryMode
         self.activeGoal = activeGoal
         self.progressSteps = progressSteps
         self.appServerThreadID = appServerThreadID
@@ -86,6 +97,8 @@ struct ChatThread: Identifiable, Equatable {
             case let .command(run): return run.command
             case let .fileChange(change): return "Edited \(change.fileName)"
             case let .approval(req): return req.title
+            case let .mcpElicitation(request): return "MCP 请求：\(request.message)"
+            case let .toolUserInput(request): return "工具请求：\(request.questions.first?.question ?? "补充信息")"
             case let .reasoning(block): return block.title
             case let .notice(notice): return notice.text
             }
@@ -104,11 +117,27 @@ struct ChatThread: Identifiable, Equatable {
 struct ActiveGoal: Equatable {
     var title: String
     var startedAt: Date
+    var status: CodexRuntimeGoalStatus
+    var tokenBudget: Int?
+    var tokensUsed: Int
+    var timeUsedSeconds: Int
     var runtimeBacked: Bool
 
-    init(title: String, startedAt: Date, runtimeBacked: Bool = false) {
+    init(
+        title: String,
+        startedAt: Date,
+        status: CodexRuntimeGoalStatus = .active,
+        tokenBudget: Int? = nil,
+        tokensUsed: Int = 0,
+        timeUsedSeconds: Int = 0,
+        runtimeBacked: Bool = false
+    ) {
         self.title = title
         self.startedAt = startedAt
+        self.status = status
+        self.tokenBudget = tokenBudget
+        self.tokensUsed = tokensUsed
+        self.timeUsedSeconds = timeUsedSeconds
         self.runtimeBacked = runtimeBacked
     }
 }
@@ -154,6 +183,57 @@ struct ProgressStep: Identifiable, Equatable {
         self.title = title
         self.state = state
     }
+}
+
+struct GuardianDeniedAction: Identifiable, Equatable {
+    var id: String { reviewID }
+    var reviewID: String
+    var threadID: String
+    var turnID: String
+    var summary: String
+    var rationale: String?
+    var riskLevel: String?
+    var event: JSONValue
+    var createdAt: Date
+}
+
+enum CodexFeedbackCategory: String, CaseIterable, Identifiable {
+    case badResult = "bad_result"
+    case goodResult = "good_result"
+    case bug = "bug"
+    case safetyCheck = "safety_check"
+    case other = "other"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .badResult: "结果不好"
+        case .goodResult: "结果很好"
+        case .bug: "Bug"
+        case .safetyCheck: "安全检查"
+        case .other: "其他"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .badResult: "Codex 给出了错误、不完整或不实用的结果"
+        case .goodResult: "Codex 这次表现很好，帮助我们改进体验"
+        case .bug: "应用或 Codex 运行时出现崩溃、卡住或异常"
+        case .safetyCheck: "安全审查拒绝了你认为应允许的操作"
+        case .other: "其他反馈"
+        }
+    }
+}
+
+struct EnvironmentSourceFact: Identifiable, Equatable {
+    var id: String { title }
+    var symbol: String
+    var title: String
+    var detail: String
+    var source: String
+    var active: Bool
 }
 
 struct WorkspaceFileEntry: Identifiable, Equatable {
@@ -268,31 +348,31 @@ enum ConnectionState: Equatable {
 
     var title: String {
         switch self {
-        case .connecting: "Connecting"
-        case .connected: "Connected"
-        case .disconnected: "Disconnected"
-        case .loginRequired: "Sign-in required"
-        case .updateRequired: "Update required"
-        case .restartRequired: "Restart required"
-        case .notInstalled: "Codex CLI not found"
-        case .sidecarUnavailable: "Provider sidecar unavailable"
-        case .providerKeyMissing: "Provider API key required"
-        case .providerUnauthorized: "Provider authorization failed"
+        case .connecting: "正在连接"
+        case .connected: "已连接"
+        case .disconnected: "连接已断开"
+        case .loginRequired: "需要登录"
+        case .updateRequired: "需要更新"
+        case .restartRequired: "需要重启"
+        case .notInstalled: "未找到 Codex CLI"
+        case .sidecarUnavailable: "Provider sidecar 不可用"
+        case .providerKeyMissing: "需要 Provider API Key"
+        case .providerUnauthorized: "Provider 授权失败"
         }
     }
 
     var detail: String {
         switch self {
-        case .connecting: "Reaching the local Codex runtime…"
+        case .connecting: "正在连接本机 Codex runtime…"
         case let .connected(version): version
-        case .disconnected: "The app-server connection was lost."
-        case .loginRequired: "Sign in to Codex to start a session."
-        case .updateRequired: "A newer Codex runtime is required."
-        case .restartRequired: "Restart the runtime to apply changes."
-        case .notInstalled: "Bundle a Codex CLI or install Codex.app."
+        case .disconnected: "app-server 连接已丢失。"
+        case .loginRequired: "登录 Codex 后才能启动会话。"
+        case .updateRequired: "当前需要更新到较新的 Codex runtime。"
+        case .restartRequired: "重启 runtime 后配置才会生效。"
+        case .notInstalled: "请打包 Codex CLI，或安装 Codex.app。"
         case let .sidecarUnavailable(detail): detail
-        case let .providerKeyMissing(provider): "Add an API key for \(provider) in Models & Providers."
-        case let .providerUnauthorized(provider): "\(provider) rejected the API key. Update it and test again."
+        case let .providerKeyMissing(provider): "请在「模型与提供方」里补充 \(provider) 的 API Key。"
+        case let .providerUnauthorized(provider): "\(provider) 拒绝了当前 API Key，请更新后重新测试。"
         }
     }
 
@@ -333,21 +413,21 @@ struct SlashCommand: Identifiable, Equatable, Hashable {
     }
 
     static let all: [SlashCommand] = [
-        SlashCommand(name: "/init", summary: "Generate an AGENTS.md for this project", symbol: "doc.badge.plus"),
-        SlashCommand(name: "/diff", summary: "Show pending working-tree changes", symbol: "plus.forwardslash.minus"),
-        SlashCommand(name: "/review", summary: "Review the current changes", symbol: "checklist"),
-        SlashCommand(name: "/test", summary: "Run the project test suite", symbol: "testtube.2"),
-        SlashCommand(name: "/explain", summary: "Explain a file or symbol", symbol: "text.magnifyingglass"),
-        SlashCommand(name: "/clear", summary: "Start a fresh thread", symbol: "trash")
+        SlashCommand(name: "/init", summary: "为当前项目生成 AGENTS.md", symbol: "doc.badge.plus"),
+        SlashCommand(name: "/diff", summary: "查看当前工作区变更", symbol: "plus.forwardslash.minus"),
+        SlashCommand(name: "/review", summary: "审查当前变更", symbol: "checklist"),
+        SlashCommand(name: "/test", summary: "运行项目测试", symbol: "testtube.2"),
+        SlashCommand(name: "/explain", summary: "解释文件或符号", symbol: "text.magnifyingglass"),
+        SlashCommand(name: "/clear", summary: "开始新对话", symbol: "trash")
     ]
 }
 
 /// Right-hand inspector tabs (side panels).
 enum InspectorTab: String, CaseIterable, Identifiable {
-    case runtime = "Runtime"
-    case changes = "Changes"
-    case terminal = "Terminal"
-    case files = "Files"
+    case runtime = "运行时"
+    case changes = "变更"
+    case terminal = "终端"
+    case files = "文件"
 
     var id: String { rawValue }
 

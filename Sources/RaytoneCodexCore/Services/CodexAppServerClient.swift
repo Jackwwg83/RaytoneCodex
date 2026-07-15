@@ -163,6 +163,7 @@ public struct CodexAppServerThread: Equatable, Sendable {
     public var approvalPolicy: String?
     public var approvalsReviewer: CodexApprovalsReviewer?
     public var sandboxSummary: String?
+    public var memoryMode: CodexThreadMemoryMode?
 
     public init(
         id: String,
@@ -171,7 +172,8 @@ public struct CodexAppServerThread: Equatable, Sendable {
         cliVersion: String? = nil,
         approvalPolicy: String? = nil,
         approvalsReviewer: CodexApprovalsReviewer? = nil,
-        sandboxSummary: String? = nil
+        sandboxSummary: String? = nil,
+        memoryMode: CodexThreadMemoryMode? = nil
     ) {
         self.id = id
         self.sessionID = sessionID
@@ -180,6 +182,7 @@ public struct CodexAppServerThread: Equatable, Sendable {
         self.approvalPolicy = approvalPolicy
         self.approvalsReviewer = approvalsReviewer
         self.sandboxSummary = sandboxSummary
+        self.memoryMode = memoryMode
     }
 }
 
@@ -191,6 +194,79 @@ public struct CodexAppServerTurn: Equatable, Sendable {
         self.id = id
         self.status = status
     }
+}
+
+public struct CodexThreadElicitationCounter: Equatable, Sendable {
+    public var count: Int
+    public var paused: Bool
+
+    public init(count: Int, paused: Bool) {
+        self.count = count
+        self.paused = paused
+    }
+}
+
+public struct CodexTurnEnvironment: Equatable, Sendable {
+    public var environmentID: String
+    public var cwd: String
+
+    public init(environmentID: String, cwd: String) {
+        self.environmentID = environmentID
+        self.cwd = cwd
+    }
+
+    fileprivate var jsonValue: JSONValue {
+        .object([
+            "environmentId": .string(environmentID),
+            "cwd": .string(cwd)
+        ])
+    }
+}
+
+public struct CodexCollaborationModePreset: Equatable, Sendable, Identifiable {
+    public var id: String { mode ?? name }
+    public var name: String
+    public var mode: String?
+    public var model: String?
+    public var reasoningEffort: String?
+
+    public init(name: String, mode: String?, model: String?, reasoningEffort: String?) {
+        self.name = name
+        self.mode = mode
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+    }
+
+    public func collaborationModeValue(effectiveModel: String) -> JSONValue {
+        .object([
+            "mode": .string(mode ?? "default"),
+            "settings": .object([
+                "model": .string(model?.isEmpty == false ? model! : effectiveModel),
+                "reasoning_effort": reasoningEffort.map(JSONValue.string) ?? .null,
+                "developer_instructions": .null
+            ])
+        ])
+    }
+}
+
+public struct CodexFeedbackUploadResult: Equatable, Sendable {
+    public var threadID: String
+
+    public init(threadID: String) {
+        self.threadID = threadID
+    }
+}
+
+public enum CodexWindowsSandboxReadiness: String, Equatable, Sendable {
+    case ready
+    case notConfigured
+    case updateRequired
+    case unknown
+}
+
+public enum CodexWindowsSandboxSetupMode: String, Equatable, Sendable, CaseIterable {
+    case elevated
+    case unelevated
 }
 
 public enum CodexReviewDelivery: String, Sendable {
@@ -382,20 +458,127 @@ public struct CodexRuntimePluginCatalog: Equatable, Sendable {
     }
 }
 
+public struct CodexRuntimePluginSharePrincipal: Equatable, Sendable, Identifiable {
+    public var id: String { principalID }
+    public var principalID: String
+    public var principalType: String
+    public var role: String
+    public var name: String
+
+    public init(principalID: String, principalType: String, role: String, name: String) {
+        self.principalID = principalID
+        self.principalType = principalType
+        self.role = role
+        self.name = name
+    }
+}
+
+public struct CodexRuntimePluginShareTarget: Equatable, Sendable, Identifiable {
+    public var id: String { "\(principalType):\(principalID):\(role)" }
+    public var principalID: String
+    public var principalType: String
+    public var role: String
+
+    public init(principalID: String, principalType: String, role: String) {
+        self.principalID = principalID
+        self.principalType = principalType
+        self.role = role
+    }
+}
+
+public struct CodexRuntimePluginShareContext: Equatable, Sendable {
+    public var remotePluginID: String
+    public var remoteVersion: String?
+    public var discoverability: String?
+    public var shareURL: String?
+    public var creatorAccountUserID: String?
+    public var creatorName: String?
+    public var sharePrincipals: [CodexRuntimePluginSharePrincipal]
+
+    public init(
+        remotePluginID: String,
+        remoteVersion: String?,
+        discoverability: String?,
+        shareURL: String?,
+        creatorAccountUserID: String?,
+        creatorName: String?,
+        sharePrincipals: [CodexRuntimePluginSharePrincipal]
+    ) {
+        self.remotePluginID = remotePluginID
+        self.remoteVersion = remoteVersion
+        self.discoverability = discoverability
+        self.shareURL = shareURL
+        self.creatorAccountUserID = creatorAccountUserID
+        self.creatorName = creatorName
+        self.sharePrincipals = sharePrincipals
+    }
+}
+
+public struct CodexRuntimePluginShareSaveResult: Equatable, Sendable {
+    public var remotePluginID: String
+    public var shareURL: String
+
+    public init(remotePluginID: String, shareURL: String) {
+        self.remotePluginID = remotePluginID
+        self.shareURL = shareURL
+    }
+}
+
+public struct CodexRuntimePluginShareUpdateResult: Equatable, Sendable {
+    public var discoverability: String
+    public var principals: [CodexRuntimePluginSharePrincipal]
+
+    public init(discoverability: String, principals: [CodexRuntimePluginSharePrincipal]) {
+        self.discoverability = discoverability
+        self.principals = principals
+    }
+}
+
+public struct CodexRuntimePluginShareCheckoutResult: Equatable, Sendable {
+    public var remotePluginID: String
+    public var pluginID: String
+    public var pluginName: String
+    public var pluginPath: String
+    public var marketplaceName: String
+    public var marketplacePath: String
+    public var remoteVersion: String?
+
+    public init(
+        remotePluginID: String,
+        pluginID: String,
+        pluginName: String,
+        pluginPath: String,
+        marketplaceName: String,
+        marketplacePath: String,
+        remoteVersion: String?
+    ) {
+        self.remotePluginID = remotePluginID
+        self.pluginID = pluginID
+        self.pluginName = pluginName
+        self.pluginPath = pluginPath
+        self.marketplaceName = marketplaceName
+        self.marketplacePath = marketplacePath
+        self.remoteVersion = remoteVersion
+    }
+}
+
 public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
     public var id: String
+    public var remotePluginID: String?
     public var name: String
     public var displayName: String
     public var summary: String
     public var marketplaceName: String
     public var marketplaceDisplayName: String
     public var marketplacePath: String?
+    public var localPluginPath: String?
     public var category: String?
     public var developerName: String?
     public var sourceType: String
     public var installPolicy: String
     public var authPolicy: String
     public var availability: String
+    public var shareContext: CodexRuntimePluginShareContext?
     public var installed: Bool
     public var enabled: Bool
 
@@ -405,34 +588,40 @@ public struct CodexRuntimePlugin: Equatable, Sendable, Identifiable {
 
     public init(
         id: String,
+        remotePluginID: String? = nil,
         name: String,
         displayName: String,
         summary: String,
         marketplaceName: String,
         marketplaceDisplayName: String,
         marketplacePath: String?,
+        localPluginPath: String?,
         category: String?,
         developerName: String?,
         sourceType: String,
         installPolicy: String,
         authPolicy: String,
         availability: String,
+        shareContext: CodexRuntimePluginShareContext? = nil,
         installed: Bool,
         enabled: Bool
     ) {
         self.id = id
+        self.remotePluginID = remotePluginID
         self.name = name
         self.displayName = displayName
         self.summary = summary
         self.marketplaceName = marketplaceName
         self.marketplaceDisplayName = marketplaceDisplayName
         self.marketplacePath = marketplacePath
+        self.localPluginPath = localPluginPath
         self.category = category
         self.developerName = developerName
         self.sourceType = sourceType
         self.installPolicy = installPolicy
         self.authPolicy = authPolicy
         self.availability = availability
+        self.shareContext = shareContext
         self.installed = installed
         self.enabled = enabled
     }
@@ -480,6 +669,14 @@ public struct CodexRuntimePluginSkill: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexRuntimePluginSkillReadResult: Equatable, Sendable {
+    public var contents: String?
+
+    public init(contents: String?) {
+        self.contents = contents
+    }
+}
+
 public struct CodexRuntimePluginHook: Equatable, Sendable, Identifiable {
     public var id: String { key }
     public var key: String
@@ -504,6 +701,64 @@ public struct CodexRuntimePluginApp: Equatable, Sendable, Identifiable {
         self.description = description
         self.needsAuth = needsAuth
         self.installURL = installURL
+    }
+}
+
+public struct CodexRuntimePluginInstallResult: Equatable, Sendable {
+    public var authPolicy: String
+    public var appsNeedingAuth: [CodexRuntimePluginApp]
+
+    public init(authPolicy: String, appsNeedingAuth: [CodexRuntimePluginApp]) {
+        self.authPolicy = authPolicy
+        self.appsNeedingAuth = appsNeedingAuth
+    }
+}
+
+public struct CodexMarketplaceAddResult: Equatable, Sendable {
+    public var marketplaceName: String
+    public var installedRoot: String
+    public var alreadyAdded: Bool
+
+    public init(marketplaceName: String, installedRoot: String, alreadyAdded: Bool) {
+        self.marketplaceName = marketplaceName
+        self.installedRoot = installedRoot
+        self.alreadyAdded = alreadyAdded
+    }
+}
+
+public struct CodexMarketplaceRemoveResult: Equatable, Sendable {
+    public var marketplaceName: String
+    public var installedRoot: String?
+
+    public init(marketplaceName: String, installedRoot: String?) {
+        self.marketplaceName = marketplaceName
+        self.installedRoot = installedRoot
+    }
+}
+
+public struct CodexMarketplaceUpgradeError: Equatable, Sendable {
+    public var marketplaceName: String
+    public var message: String
+
+    public init(marketplaceName: String, message: String) {
+        self.marketplaceName = marketplaceName
+        self.message = message
+    }
+}
+
+public struct CodexMarketplaceUpgradeResult: Equatable, Sendable {
+    public var selectedMarketplaces: [String]
+    public var upgradedRoots: [String]
+    public var errors: [CodexMarketplaceUpgradeError]
+
+    public init(
+        selectedMarketplaces: [String],
+        upgradedRoots: [String],
+        errors: [CodexMarketplaceUpgradeError]
+    ) {
+        self.selectedMarketplaces = selectedMarketplaces
+        self.upgradedRoots = upgradedRoots
+        self.errors = errors
     }
 }
 
@@ -623,6 +878,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
     public var tools: [CodexRuntimeMCPTool]
     public var toolNames: [String]
     public var resources: [CodexRuntimeMCPResource]
+    public var resourceTemplates: [CodexRuntimeMCPResourceTemplate]
     public var resourceCount: Int
     public var resourceTemplateCount: Int
 
@@ -634,6 +890,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         tools: [CodexRuntimeMCPTool] = [],
         toolNames: [String],
         resources: [CodexRuntimeMCPResource] = [],
+        resourceTemplates: [CodexRuntimeMCPResourceTemplate] = [],
         resourceCount: Int,
         resourceTemplateCount: Int
     ) {
@@ -644,6 +901,7 @@ public struct CodexRuntimeMCPServer: Equatable, Sendable, Identifiable {
         self.tools = tools
         self.toolNames = toolNames
         self.resources = resources
+        self.resourceTemplates = resourceTemplates
         self.resourceCount = resourceCount
         self.resourceTemplateCount = resourceTemplateCount
     }
@@ -695,6 +953,34 @@ public struct CodexRuntimeMCPResource: Equatable, Sendable, Identifiable {
 
     public var displayName: String {
         title?.isEmpty == false ? title! : name
+    }
+}
+
+public struct CodexRuntimeMCPResourceTemplate: Equatable, Sendable, Identifiable {
+    public var id: String { uriTemplate }
+    public var name: String
+    public var title: String?
+    public var uriTemplate: String
+    public var description: String?
+    public var mimeType: String?
+
+    public init(name: String, title: String?, uriTemplate: String, description: String?, mimeType: String?) {
+        self.name = name
+        self.title = title
+        self.uriTemplate = uriTemplate
+        self.description = description
+        self.mimeType = mimeType
+    }
+
+    public var displayName: String {
+        title?.isEmpty == false ? title! : name
+    }
+
+    public var displayDescription: String {
+        guard let description, !description.isEmpty else {
+            return uriTemplate
+        }
+        return description
     }
 }
 
@@ -843,6 +1129,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
     public var memoryDisableOnExternalContext: Bool?
     public var instructions: String?
     public var developerInstructions: String?
+    public var raytoneCommitInstructions: String?
+    public var raytonePullRequestInstructions: String?
     public var desktopKeys: [String]
     public var desktopSettings: CodexRuntimeDesktopSettings
     public var raytoneSelectedProviderID: String?
@@ -866,6 +1154,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         memoryDisableOnExternalContext: Bool?,
         instructions: String?,
         developerInstructions: String?,
+        raytoneCommitInstructions: String?,
+        raytonePullRequestInstructions: String?,
         desktopKeys: [String],
         desktopSettings: CodexRuntimeDesktopSettings,
         raytoneSelectedProviderID: String?,
@@ -888,6 +1178,8 @@ public struct CodexRuntimeConfig: Equatable, Sendable {
         self.memoryDisableOnExternalContext = memoryDisableOnExternalContext
         self.instructions = instructions
         self.developerInstructions = developerInstructions
+        self.raytoneCommitInstructions = raytoneCommitInstructions
+        self.raytonePullRequestInstructions = raytonePullRequestInstructions
         self.desktopKeys = desktopKeys
         self.desktopSettings = desktopSettings
         self.raytoneSelectedProviderID = raytoneSelectedProviderID
@@ -969,6 +1261,50 @@ public struct CodexRuntimeTokenUsageBucket: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexRuntimeThreadTokenUsage: Equatable, Sendable {
+    public var threadID: String
+    public var turnID: String
+    public var total: CodexRuntimeThreadTokenUsageBreakdown
+    public var last: CodexRuntimeThreadTokenUsageBreakdown
+    public var modelContextWindow: Int?
+
+    public init(
+        threadID: String,
+        turnID: String,
+        total: CodexRuntimeThreadTokenUsageBreakdown,
+        last: CodexRuntimeThreadTokenUsageBreakdown,
+        modelContextWindow: Int?
+    ) {
+        self.threadID = threadID
+        self.turnID = turnID
+        self.total = total
+        self.last = last
+        self.modelContextWindow = modelContextWindow
+    }
+}
+
+public struct CodexRuntimeThreadTokenUsageBreakdown: Equatable, Sendable {
+    public var totalTokens: Int
+    public var inputTokens: Int
+    public var cachedInputTokens: Int
+    public var outputTokens: Int
+    public var reasoningOutputTokens: Int
+
+    public init(
+        totalTokens: Int,
+        inputTokens: Int,
+        cachedInputTokens: Int,
+        outputTokens: Int,
+        reasoningOutputTokens: Int
+    ) {
+        self.totalTokens = totalTokens
+        self.inputTokens = inputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.outputTokens = outputTokens
+        self.reasoningOutputTokens = reasoningOutputTokens
+    }
+}
+
 public struct CodexRuntimeRateLimits: Equatable, Sendable {
     public var buckets: [CodexRuntimeRateLimitBucket]
 
@@ -1020,6 +1356,77 @@ public struct CodexRuntimeRateLimitWindow: Equatable, Sendable {
     }
 }
 
+public struct CodexModelProviderCapabilities: Equatable, Sendable {
+    public var namespaceTools: Bool
+    public var imageGeneration: Bool
+    public var webSearch: Bool
+
+    public init(namespaceTools: Bool, imageGeneration: Bool, webSearch: Bool) {
+        self.namespaceTools = namespaceTools
+        self.imageGeneration = imageGeneration
+        self.webSearch = webSearch
+    }
+}
+
+public enum CodexAddCreditsNudgeCreditType: String, Equatable, Sendable {
+    case credits
+    case usageLimit = "usage_limit"
+}
+
+public enum CodexAddCreditsNudgeEmailStatus: String, Equatable, Sendable {
+    case sent
+    case cooldownActive = "cooldown_active"
+    case unknown
+}
+
+public enum CodexExperimentalFeatureStage: String, Equatable, Sendable {
+    case beta
+    case underDevelopment
+    case stable
+    case deprecated
+    case removed
+    case unknown
+}
+
+public struct CodexExperimentalFeature: Equatable, Sendable, Identifiable {
+    public var id: String { name }
+    public var name: String
+    public var stage: CodexExperimentalFeatureStage
+    public var enabled: Bool
+    public var defaultEnabled: Bool
+    public var displayName: String?
+    public var description: String?
+    public var announcement: String?
+
+    public init(
+        name: String,
+        stage: CodexExperimentalFeatureStage,
+        enabled: Bool,
+        defaultEnabled: Bool,
+        displayName: String?,
+        description: String?,
+        announcement: String?
+    ) {
+        self.name = name
+        self.stage = stage
+        self.enabled = enabled
+        self.defaultEnabled = defaultEnabled
+        self.displayName = displayName
+        self.description = description
+        self.announcement = announcement
+    }
+}
+
+public struct CodexExperimentalFeatureCatalog: Equatable, Sendable {
+    public var features: [CodexExperimentalFeature]
+    public var nextCursor: String?
+
+    public init(features: [CodexExperimentalFeature], nextCursor: String?) {
+        self.features = features
+        self.nextCursor = nextCursor
+    }
+}
+
 public struct CodexRuntimeThreadCatalog: Equatable, Sendable {
     public var threads: [CodexRuntimeThreadSummary]
     public var nextCursor: String?
@@ -1029,6 +1436,64 @@ public struct CodexRuntimeThreadCatalog: Equatable, Sendable {
         self.threads = threads
         self.nextCursor = nextCursor
         self.backwardsCursor = backwardsCursor
+    }
+}
+
+public struct CodexRuntimeThreadSearchCatalog: Equatable, Sendable {
+    public var results: [CodexRuntimeThreadSearchResult]
+    public var nextCursor: String?
+    public var backwardsCursor: String?
+
+    public init(results: [CodexRuntimeThreadSearchResult], nextCursor: String?, backwardsCursor: String?) {
+        self.results = results
+        self.nextCursor = nextCursor
+        self.backwardsCursor = backwardsCursor
+    }
+}
+
+public struct CodexRuntimeThreadSearchResult: Equatable, Sendable, Identifiable {
+    public var thread: CodexRuntimeThreadSummary
+    public var snippet: String
+
+    public var id: String { thread.id }
+
+    public init(thread: CodexRuntimeThreadSummary, snippet: String) {
+        self.thread = thread
+        self.snippet = snippet
+    }
+}
+
+public struct CodexRuntimeThreadTurnsPage: Equatable, Sendable {
+    public var turns: [JSONValue]
+    public var nextCursor: String?
+    public var backwardsCursor: String?
+
+    public init(turns: [JSONValue], nextCursor: String?, backwardsCursor: String?) {
+        self.turns = turns
+        self.nextCursor = nextCursor
+        self.backwardsCursor = backwardsCursor
+    }
+}
+
+public struct CodexRuntimeThreadItemsPage: Equatable, Sendable {
+    public var items: [JSONValue]
+    public var nextCursor: String?
+    public var backwardsCursor: String?
+
+    public init(items: [JSONValue], nextCursor: String?, backwardsCursor: String?) {
+        self.items = items
+        self.nextCursor = nextCursor
+        self.backwardsCursor = backwardsCursor
+    }
+}
+
+public struct CodexRuntimeLoadedThreadCatalog: Equatable, Sendable {
+    public var threadIDs: [String]
+    public var nextCursor: String?
+
+    public init(threadIDs: [String], nextCursor: String?) {
+        self.threadIDs = threadIDs
+        self.nextCursor = nextCursor
     }
 }
 
@@ -1045,6 +1510,7 @@ public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
     public var gitBranch: String?
     public var gitSHA: String?
     public var gitOriginURL: String?
+    public var memoryMode: CodexThreadMemoryMode?
 
     public init(
         id: String,
@@ -1058,7 +1524,8 @@ public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
         archived: Bool,
         gitBranch: String?,
         gitSHA: String?,
-        gitOriginURL: String?
+        gitOriginURL: String?,
+        memoryMode: CodexThreadMemoryMode? = nil
     ) {
         self.id = id
         self.title = title
@@ -1072,6 +1539,7 @@ public struct CodexRuntimeThreadSummary: Equatable, Sendable, Identifiable {
         self.gitBranch = gitBranch
         self.gitSHA = gitSHA
         self.gitOriginURL = gitOriginURL
+        self.memoryMode = memoryMode
     }
 }
 
@@ -1141,30 +1609,87 @@ public struct CodexRuntimeConfigRequirements: Equatable, Sendable {
     public var allowedApprovalPolicies: [String]
     public var allowedSandboxModes: [String]
     public var allowedWebSearchModes: [String]
+    public var allowedWindowsSandboxImplementations: [String]
+    public var allowedPermissionProfiles: [String: Bool]
+    public var featureRequirements: [String: Bool]
     public var defaultPermissions: String?
     public var allowAppSnapshots: Bool?
     public var allowLockedComputerUse: Bool?
     public var networkEnabled: Bool?
+    public var networkAllowedDomains: [String]
+    public var networkDeniedDomains: [String]
+    public var networkDomains: [String: String]
+    public var networkUnixSockets: [String: String]
+    public var allowLocalBinding: Bool?
+    public var allowUpstreamProxy: Bool?
+    public var allowUnixSockets: [String]
+    public var dangerouslyAllowAllUnixSockets: Bool?
+    public var dangerouslyAllowNonLoopbackProxy: Bool?
+    public var managedAllowedDomainsOnly: Bool?
+    public var httpPort: Int?
+    public var socksPort: Int?
     public var managedHooksOnly: Bool?
+    public var managedHookEventCounts: [String: Int]
+    public var managedHooksDirectory: String?
+    public var windowsManagedHooksDirectory: String?
+    public var enforceResidency: String?
 
     public init(
         allowedApprovalPolicies: [String],
         allowedSandboxModes: [String],
         allowedWebSearchModes: [String],
+        allowedWindowsSandboxImplementations: [String],
+        allowedPermissionProfiles: [String: Bool],
+        featureRequirements: [String: Bool],
         defaultPermissions: String?,
         allowAppSnapshots: Bool?,
         allowLockedComputerUse: Bool?,
         networkEnabled: Bool?,
-        managedHooksOnly: Bool?
+        networkAllowedDomains: [String],
+        networkDeniedDomains: [String],
+        networkDomains: [String: String],
+        networkUnixSockets: [String: String],
+        allowLocalBinding: Bool?,
+        allowUpstreamProxy: Bool?,
+        allowUnixSockets: [String],
+        dangerouslyAllowAllUnixSockets: Bool?,
+        dangerouslyAllowNonLoopbackProxy: Bool?,
+        managedAllowedDomainsOnly: Bool?,
+        httpPort: Int?,
+        socksPort: Int?,
+        managedHooksOnly: Bool?,
+        managedHookEventCounts: [String: Int],
+        managedHooksDirectory: String?,
+        windowsManagedHooksDirectory: String?,
+        enforceResidency: String?
     ) {
         self.allowedApprovalPolicies = allowedApprovalPolicies
         self.allowedSandboxModes = allowedSandboxModes
         self.allowedWebSearchModes = allowedWebSearchModes
+        self.allowedWindowsSandboxImplementations = allowedWindowsSandboxImplementations
+        self.allowedPermissionProfiles = allowedPermissionProfiles
+        self.featureRequirements = featureRequirements
         self.defaultPermissions = defaultPermissions
         self.allowAppSnapshots = allowAppSnapshots
         self.allowLockedComputerUse = allowLockedComputerUse
         self.networkEnabled = networkEnabled
+        self.networkAllowedDomains = networkAllowedDomains
+        self.networkDeniedDomains = networkDeniedDomains
+        self.networkDomains = networkDomains
+        self.networkUnixSockets = networkUnixSockets
+        self.allowLocalBinding = allowLocalBinding
+        self.allowUpstreamProxy = allowUpstreamProxy
+        self.allowUnixSockets = allowUnixSockets
+        self.dangerouslyAllowAllUnixSockets = dangerouslyAllowAllUnixSockets
+        self.dangerouslyAllowNonLoopbackProxy = dangerouslyAllowNonLoopbackProxy
+        self.managedAllowedDomainsOnly = managedAllowedDomainsOnly
+        self.httpPort = httpPort
+        self.socksPort = socksPort
         self.managedHooksOnly = managedHooksOnly
+        self.managedHookEventCounts = managedHookEventCounts
+        self.managedHooksDirectory = managedHooksDirectory
+        self.windowsManagedHooksDirectory = windowsManagedHooksDirectory
+        self.enforceResidency = enforceResidency
     }
 }
 
@@ -1179,6 +1704,107 @@ public struct CodexRuntimeRemoteControlStatus: Equatable, Sendable {
         self.serverName = serverName
         self.installationID = installationID
         self.environmentID = environmentID
+    }
+}
+
+public struct CodexRemoteControlPairing: Equatable, Sendable {
+    public var pairingCode: String
+    public var manualPairingCode: String?
+    public var environmentID: String
+    public var expiresAt: Int
+
+    public init(pairingCode: String, manualPairingCode: String?, environmentID: String, expiresAt: Int) {
+        self.pairingCode = pairingCode
+        self.manualPairingCode = manualPairingCode
+        self.environmentID = environmentID
+        self.expiresAt = expiresAt
+    }
+}
+
+public struct CodexRemoteControlPairingStatus: Equatable, Sendable {
+    public var claimed: Bool
+
+    public init(claimed: Bool) {
+        self.claimed = claimed
+    }
+}
+
+public struct CodexRemoteControlClient: Equatable, Identifiable, Sendable {
+    public var id: String { clientID }
+
+    public var clientID: String
+    public var displayName: String?
+    public var deviceType: String?
+    public var platform: String?
+    public var osVersion: String?
+    public var deviceModel: String?
+    public var appVersion: String?
+    public var lastSeenAt: Int?
+
+    public init(
+        clientID: String,
+        displayName: String?,
+        deviceType: String?,
+        platform: String?,
+        osVersion: String?,
+        deviceModel: String?,
+        appVersion: String?,
+        lastSeenAt: Int?
+    ) {
+        self.clientID = clientID
+        self.displayName = displayName
+        self.deviceType = deviceType
+        self.platform = platform
+        self.osVersion = osVersion
+        self.deviceModel = deviceModel
+        self.appVersion = appVersion
+        self.lastSeenAt = lastSeenAt
+    }
+}
+
+public struct CodexRemoteControlClientCatalog: Equatable, Sendable {
+    public var clients: [CodexRemoteControlClient]
+    public var nextCursor: String?
+
+    public init(clients: [CodexRemoteControlClient], nextCursor: String?) {
+        self.clients = clients
+        self.nextCursor = nextCursor
+    }
+}
+
+public struct CodexRealtimeVoices: Equatable, Sendable {
+    public var v1: [String]
+    public var v2: [String]
+    public var defaultV1: String
+    public var defaultV2: String
+
+    public init(v1: [String], v2: [String], defaultV1: String, defaultV2: String) {
+        self.v1 = v1
+        self.v2 = v2
+        self.defaultV1 = defaultV1
+        self.defaultV2 = defaultV2
+    }
+}
+
+public struct CodexRealtimeAudioChunk: Equatable, Sendable {
+    public var data: String
+    public var sampleRate: Int
+    public var numChannels: Int
+    public var samplesPerChannel: Int?
+    public var itemID: String?
+
+    public init(
+        data: String,
+        sampleRate: Int,
+        numChannels: Int,
+        samplesPerChannel: Int? = nil,
+        itemID: String? = nil
+    ) {
+        self.data = data
+        self.sampleRate = sampleRate
+        self.numChannels = numChannels
+        self.samplesPerChannel = samplesPerChannel
+        self.itemID = itemID
     }
 }
 
@@ -1199,10 +1825,17 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
     public var category: String?
     public var developer: String?
     public var website: String?
+    public var installURL: String?
     public var isAccessible: Bool
     public var isEnabled: Bool
     public var pluginDisplayNames: [String]
     public var screenshotPrompts: [String]
+    public var mentionPath: String {
+        "app://\(id)"
+    }
+    public var inputSlug: String {
+        Self.slug(for: name)
+    }
 
     public init(
         id: String,
@@ -1211,6 +1844,7 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
         category: String?,
         developer: String?,
         website: String?,
+        installURL: String?,
         isAccessible: Bool,
         isEnabled: Bool,
         pluginDisplayNames: [String],
@@ -1222,10 +1856,27 @@ public struct CodexRuntimeAppInfo: Equatable, Sendable, Identifiable {
         self.category = category
         self.developer = developer
         self.website = website
+        self.installURL = installURL
         self.isAccessible = isAccessible
         self.isEnabled = isEnabled
         self.pluginDisplayNames = pluginDisplayNames
         self.screenshotPrompts = screenshotPrompts
+    }
+
+    public static func slug(for value: String) -> String {
+        let lowercased = value.lowercased()
+        var scalars: [UnicodeScalar] = []
+        var previousWasDash = false
+        for scalar in lowercased.unicodeScalars {
+            if (scalar.value >= 97 && scalar.value <= 122) || (scalar.value >= 48 && scalar.value <= 57) {
+                scalars.append(scalar)
+                previousWasDash = false
+            } else if !previousWasDash {
+                scalars.append("-")
+                previousWasDash = true
+            }
+        }
+        return String(String.UnicodeScalarView(scalars)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 }
 
@@ -1249,6 +1900,50 @@ public struct CodexRuntimePermissionProfile: Equatable, Sendable, Identifiable {
     }
 }
 
+public struct CodexExternalAgentConfigDetectResult: Equatable, Sendable {
+    public var items: [CodexExternalAgentMigrationItem]
+
+    public init(items: [CodexExternalAgentMigrationItem]) {
+        self.items = items
+    }
+}
+
+public struct CodexExternalAgentConfigImportResult: Equatable, Sendable {
+    public init() {}
+}
+
+public struct CodexExternalAgentMigrationItem: Equatable, Sendable, Identifiable {
+    public var id: String {
+        [
+            itemType,
+            cwd ?? "home",
+            description,
+            details?.prettyJSONString ?? "none"
+        ].joined(separator: "|")
+    }
+
+    public var itemType: String
+    public var description: String
+    public var cwd: String?
+    public var details: JSONValue?
+
+    public init(itemType: String, description: String, cwd: String?, details: JSONValue?) {
+        self.itemType = itemType
+        self.description = description
+        self.cwd = cwd
+        self.details = details
+    }
+
+    public var jsonValue: JSONValue {
+        .object([
+            "itemType": .string(itemType),
+            "description": .string(description),
+            "cwd": cwd.map(JSONValue.string) ?? .null,
+            "details": details ?? .null
+        ])
+    }
+}
+
 public struct CodexAppServerOptions: Equatable, Sendable {
     public var workspaceURL: URL
     public var model: String?
@@ -1256,6 +1951,8 @@ public struct CodexAppServerOptions: Equatable, Sendable {
     public var approvalPolicy: CodexApprovalPolicy
     public var approvalsReviewer: CodexApprovalsReviewer
     public var personality: CodexPersonality?
+    public var collaborationMode: CodexCollaborationModePreset?
+    public var environments: [CodexTurnEnvironment]?
 
     public init(
         workspaceURL: URL,
@@ -1263,7 +1960,9 @@ public struct CodexAppServerOptions: Equatable, Sendable {
         sandbox: CodexSandboxMode = .workspaceWrite,
         approvalPolicy: CodexApprovalPolicy = .onRequest,
         approvalsReviewer: CodexApprovalsReviewer = .user,
-        personality: CodexPersonality? = nil
+        personality: CodexPersonality? = nil,
+        collaborationMode: CodexCollaborationModePreset? = nil,
+        environments: [CodexTurnEnvironment]? = nil
     ) {
         self.workspaceURL = workspaceURL
         self.model = model
@@ -1271,12 +1970,60 @@ public struct CodexAppServerOptions: Equatable, Sendable {
         self.approvalPolicy = approvalPolicy
         self.approvalsReviewer = approvalsReviewer
         self.personality = personality
+        self.collaborationMode = collaborationMode
+        self.environments = environments
     }
 }
 
 public enum CodexAppServerApprovalDecision: String, Sendable {
     case accept
     case acceptForSession
+    case decline
+    case cancel
+}
+
+public enum CodexAppServerLegacyReviewDecision: String, Sendable {
+    case approved
+    case approvedForSession = "approved_for_session"
+    case denied
+    case abort
+}
+
+public enum CodexThreadUnsubscribeStatus: Equatable, Sendable {
+    case notLoaded
+    case notSubscribed
+    case unsubscribed
+    case unknown(String)
+
+    public init(rawValue: String) {
+        switch rawValue {
+        case "notLoaded":
+            self = .notLoaded
+        case "notSubscribed":
+            self = .notSubscribed
+        case "unsubscribed":
+            self = .unsubscribed
+        default:
+            self = .unknown(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case .notLoaded:
+            return "notLoaded"
+        case .notSubscribed:
+            return "notSubscribed"
+        case .unsubscribed:
+            return "unsubscribed"
+        case let .unknown(rawValue):
+            return rawValue
+        }
+    }
+}
+
+public enum CodexAppServerElicitationAction: String, Sendable {
+    case accept
     case decline
     case cancel
 }
@@ -1334,6 +2081,7 @@ public actor CodexAppServerClient {
     private let workspaceURL: URL
     private let environmentOverrides: [String: String]
     private let experimentalApi: Bool
+    private let remoteControl: Bool
     private let eventContinuation: AsyncStream<ServerEvent>.Continuation
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -1355,12 +2103,14 @@ public actor CodexAppServerClient {
         executable: CodexExecutable,
         workspaceURL: URL,
         environmentOverrides: [String: String] = [:],
-        experimentalApi: Bool = true
+        experimentalApi: Bool = true,
+        remoteControl: Bool = false
     ) {
         self.executable = executable
         self.workspaceURL = workspaceURL
         self.environmentOverrides = environmentOverrides
         self.experimentalApi = experimentalApi
+        self.remoteControl = remoteControl
         self.debugEnabled = ProcessInfo.processInfo.environment["RAYTONE_CODEX_APP_SERVER_DEBUG"] == "1"
         let stream = AsyncStream<ServerEvent>.makeStream()
         self.events = stream.stream
@@ -1377,7 +2127,12 @@ public actor CodexAppServerClient {
         let stderrPipe = Pipe()
         let launchedProcess = Process()
         launchedProcess.executableURL = executable.url
-        launchedProcess.arguments = ["app-server", "--listen", "stdio://"]
+        var arguments = ["app-server"]
+        if remoteControl {
+            arguments.append("--remote-control")
+        }
+        arguments += ["--listen", "stdio://"]
+        launchedProcess.arguments = arguments
         launchedProcess.currentDirectoryURL = workspaceURL
         launchedProcess.standardInput = stdinPipe
         launchedProcess.standardOutput = stdoutPipe
@@ -1416,8 +2171,8 @@ public actor CodexAppServerClient {
 
         let params: JSONValue = .object([
             "clientInfo": .object([
-                "name": .string("RaytoneCodex"),
-                "title": .string("RaytoneCodex"),
+                "name": .string("RaytoneX"),
+                "title": .string("RaytoneX"),
                 "version": .string("0.1.0")
             ]),
             "capabilities": .object([
@@ -1436,14 +2191,18 @@ public actor CodexAppServerClient {
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
             "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
             "sandbox": .string(options.sandbox.rawValue),
-            "serviceName": .string("RaytoneCodex"),
-            "sessionStartSource": .string("startup")
+            "serviceName": .string("RaytoneX"),
+            "sessionStartSource": .string("startup"),
+            "dynamicTools": .array(Self.raytoneDynamicTools())
         ]
         if let model = options.model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
             params["model"] = .string(model)
         }
         if let personality = options.personality {
             params["personality"] = .string(personality.rawValue)
+        }
+        if let environments = options.environments {
+            params["environments"] = .array(environments.map(\.jsonValue))
         }
 
         let result = try await request(method: "thread/start", params: .object(params))
@@ -1463,7 +2222,8 @@ public actor CodexAppServerClient {
             cliVersion: thread["cliVersion"]?.stringValue,
             approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
             approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
-            sandboxSummary: Self.stringDescription(from: result["sandbox"])
+            sandboxSummary: Self.stringDescription(from: result["sandbox"]),
+            memoryMode: Self.threadMemoryMode(from: thread["memoryMode"] ?? thread["memory_mode"])
         )
     }
 
@@ -1491,6 +2251,15 @@ public actor CodexAppServerClient {
         }
         if let personality = options.personality {
             params["personality"] = .string(personality.rawValue)
+        }
+        if let collaborationMode = options.collaborationMode {
+            let effectiveModel = options.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+            params["collaborationMode"] = collaborationMode.collaborationModeValue(
+                effectiveModel: effectiveModel?.isEmpty == false ? effectiveModel! : "gpt-5.5"
+            )
+        }
+        if let environments = options.environments {
+            params["environments"] = .array(environments.map(\.jsonValue))
         }
 
         let result = try await request(method: "turn/start", params: .object(params))
@@ -1576,6 +2345,213 @@ public actor CodexAppServerClient {
         return .array(items)
     }
 
+    public static func raytoneDynamicTools() -> [JSONValue] {
+        [
+            .object([
+                "namespace": .string("raytone_context"),
+                "name": .string("workspace_snapshot"),
+                "description": .string("返回 RaytoneX 当前工作区、线程、模型、权限和变更摘要。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "includeDiffStats": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否包含当前 transcript 和 git diff 的变更统计。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_context"),
+                "name": .string("list_workspace_files"),
+                "description": .string("通过 Codex app-server 的 fs/readDirectory 列出当前工作区内某个目录的文件。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object([
+                            "type": .string("string"),
+                            "description": .string("工作区内的相对路径，默认当前工作区根目录。也允许工作区内的绝对路径。")
+                        ]),
+                        "maxEntries": .object([
+                            "type": .string("integer"),
+                            "minimum": .number(1),
+                            "maximum": .number(200),
+                            "description": .string("最多返回多少个目录项，默认 80。")
+                        ]),
+                        "includeHidden": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否包含以点开头的隐藏文件，默认 false。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_context"),
+                "name": .string("read_workspace_file"),
+                "description": .string("通过 Codex app-server 的 fs/readFile 读取当前工作区内某个文本文件。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "path": .object([
+                            "type": .string("string"),
+                            "description": .string("工作区内的相对文件路径。也允许工作区内的绝对路径。")
+                        ]),
+                        "maxBytes": .object([
+                            "type": .string("integer"),
+                            "minimum": .number(1),
+                            "maximum": .number(200_000),
+                            "description": .string("最多返回多少字节，默认 32768。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("path")
+                    ])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_browser"),
+                "name": .string("current_page"),
+                "description": .string("返回 RaytoneX 内置浏览器当前页面、导航状态和已附加截图路径。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "includeSnapshotPath": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否返回已加入下一轮对话的浏览器截图文件路径，默认 true。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_browser"),
+                "name": .string("open_url"),
+                "description": .string("在 RaytoneX 右侧内置浏览器打开 URL 或工作区内本地文件，并返回导航状态。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "url": .object([
+                            "type": .string("string"),
+                            "description": .string("要打开的 URL、域名、工作区内相对路径或工作区内绝对路径。")
+                        ]),
+                        "captureSnapshot": .object([
+                            "type": .string("boolean"),
+                            "description": .string("打开后是否立即请求浏览器面板截图，默认 false。")
+                        ]),
+                        "includeSnapshotPath": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否返回已附加或待生成截图路径，默认 true。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("url")
+                    ])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_browser"),
+                "name": .string("capture_snapshot"),
+                "description": .string("请求 RaytoneX 内置浏览器为当前页面截图，截图完成后会自动加入下一轮对话图片。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "includeSnapshotPath": .object([
+                            "type": .string("boolean"),
+                            "description": .string("是否返回已附加或待生成截图路径，默认 true。")
+                        ])
+                    ]),
+                    "required": .array([])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_terminal"),
+                "name": .string("run_command"),
+                "description": .string("通过 Codex app-server 的 command/exec 在当前工作区运行一个终端命令，并把输出显示到 RaytoneX 终端面板。"),
+                "deferLoading": .bool(false),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "command": .object([
+                            "type": .string("string"),
+                            "description": .string("要交给 /bin/zsh -lc 执行的命令。")
+                        ]),
+                        "cwd": .object([
+                            "type": .string("string"),
+                            "description": .string("工作区内运行目录，默认当前工作区根目录。")
+                        ]),
+                        "timeoutSeconds": .object([
+                            "type": .string("integer"),
+                            "minimum": .number(1),
+                            "maximum": .number(120),
+                            "description": .string("命令超时时间，默认 30 秒，最多 120 秒。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("command")
+                    ])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_mcp"),
+                "name": .string("read_resource"),
+                "description": .string("通过 Codex app-server 的 mcpServer/resource/read 读取已配置 MCP 服务器资源。"),
+                "deferLoading": .bool(true),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "server": .object([
+                            "type": .string("string"),
+                            "description": .string("MCP 服务器名称，来自 mcpServerStatus/list 的 name。")
+                        ]),
+                        "uri": .object([
+                            "type": .string("string"),
+                            "description": .string("要读取的 MCP 资源 URI。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("server"),
+                        .string("uri")
+                    ])
+                ])
+            ]),
+            .object([
+                "namespace": .string("raytone_mcp"),
+                "name": .string("call_tool"),
+                "description": .string("通过 Codex app-server 的 mcpServer/tool/call 调用当前线程已配置 MCP 服务器工具。"),
+                "deferLoading": .bool(true),
+                "inputSchema": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "server": .object([
+                            "type": .string("string"),
+                            "description": .string("MCP 服务器名称，来自 mcpServerStatus/list 的 name。")
+                        ]),
+                        "tool": .object([
+                            "type": .string("string"),
+                            "description": .string("MCP 工具名称。")
+                        ]),
+                        "arguments": .object([
+                            "type": .string("object"),
+                            "description": .string("传给 MCP 工具的 JSON 参数。")
+                        ])
+                    ]),
+                    "required": .array([
+                        .string("server"),
+                        .string("tool")
+                    ])
+                ])
+            ])
+        ]
+    }
+
     public func interrupt(threadID: String, turnID: String) async throws {
         let params: JSONValue = .object([
             "threadId": .string(threadID),
@@ -1618,6 +2594,40 @@ public actor CodexAppServerClient {
         } ?? []
     }
 
+    public func readModelProviderCapabilities() async throws -> CodexModelProviderCapabilities {
+        let result = try await request(method: "modelProvider/capabilities/read", params: .object([:]))
+        return CodexModelProviderCapabilities(
+            namespaceTools: result["namespaceTools"]?.boolValue ?? false,
+            imageGeneration: result["imageGeneration"]?.boolValue ?? false,
+            webSearch: result["webSearch"]?.boolValue ?? false
+        )
+    }
+
+    public func listExperimentalFeatures(
+        threadID: String? = nil,
+        limit: Int = 200,
+        cursor: String? = nil
+    ) async throws -> CodexExperimentalFeatureCatalog {
+        var params: [String: JSONValue] = [
+            "limit": .number(Double(limit))
+        ]
+        if let threadID {
+            params["threadId"] = .string(threadID)
+        }
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+        let result = try await request(method: "experimentalFeature/list", params: .object(params))
+        return Self.experimentalFeatureCatalog(from: result)
+    }
+
+    public func setExperimentalFeatureEnablement(_ enablement: [String: Bool]) async throws -> [String: Bool] {
+        let result = try await request(method: "experimentalFeature/enablement/set", params: .object([
+            "enablement": .object(enablement.mapValues(JSONValue.bool))
+        ]))
+        return result["enablement"]?.objectValue?.compactMapValues(\.boolValue) ?? [:]
+    }
+
     public func listPluginCatalog(cwds: [String]? = nil) async throws -> CodexRuntimePluginCatalog {
         var params: [String: JSONValue] = [:]
         if let cwds {
@@ -1634,6 +2644,97 @@ public actor CodexAppServerClient {
         }
         let result = try await request(method: "plugin/installed", params: .object(params))
         return Self.pluginCatalog(from: result)
+    }
+
+    public func listSharedPluginCatalog() async throws -> CodexRuntimePluginCatalog {
+        let result = try await request(method: "plugin/share/list", params: .object([:]))
+        return Self.sharedPluginCatalog(from: result)
+    }
+
+    public func checkoutSharedPlugin(remotePluginID: String) async throws -> CodexRuntimePluginShareCheckoutResult {
+        let result = try await request(method: "plugin/share/checkout", params: .object([
+            "remotePluginId": .string(remotePluginID)
+        ]))
+        return try Self.pluginShareCheckoutResult(from: result)
+    }
+
+    public func saveSharedPlugin(
+        pluginPath: String,
+        remotePluginID: String? = nil,
+        discoverability: String? = nil,
+        shareTargets: [CodexRuntimePluginShareTarget]? = nil
+    ) async throws -> CodexRuntimePluginShareSaveResult {
+        var params: [String: JSONValue] = [
+            "pluginPath": .string(pluginPath)
+        ]
+        if let remotePluginID, !remotePluginID.isEmpty {
+            params["remotePluginId"] = .string(remotePluginID)
+        }
+        if let discoverability, !discoverability.isEmpty {
+            params["discoverability"] = .string(discoverability)
+        }
+        if let shareTargets {
+            params["shareTargets"] = .array(shareTargets.map(Self.pluginShareTargetPayload))
+        }
+        let result = try await request(method: "plugin/share/save", params: .object(params))
+        return try Self.pluginShareSaveResult(from: result)
+    }
+
+    public func updateSharedPluginTargets(
+        remotePluginID: String,
+        discoverability: String,
+        shareTargets: [CodexRuntimePluginShareTarget] = []
+    ) async throws -> CodexRuntimePluginShareUpdateResult {
+        let result = try await request(method: "plugin/share/updateTargets", params: .object([
+            "remotePluginId": .string(remotePluginID),
+            "discoverability": .string(discoverability),
+            "shareTargets": .array(shareTargets.map(Self.pluginShareTargetPayload))
+        ]))
+        return Self.pluginShareUpdateResult(from: result)
+    }
+
+    public func deleteSharedPlugin(remotePluginID: String) async throws {
+        _ = try await request(method: "plugin/share/delete", params: .object([
+            "remotePluginId": .string(remotePluginID)
+        ]))
+    }
+
+    public func addPluginMarketplace(
+        source: String,
+        refName: String? = nil,
+        sparsePaths: [String]? = nil
+    ) async throws -> CodexMarketplaceAddResult {
+        var params: [String: JSONValue] = [
+            "source": .string(source)
+        ]
+        if let refName, !refName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            params["refName"] = .string(refName)
+        }
+        if let sparsePaths, !sparsePaths.isEmpty {
+            params["sparsePaths"] = .array(sparsePaths.map(JSONValue.string))
+        }
+
+        let result = try await request(method: "marketplace/add", params: .object(params))
+        return try Self.marketplaceAddResult(from: result)
+    }
+
+    public func removePluginMarketplace(name: String) async throws -> CodexMarketplaceRemoveResult {
+        let result = try await request(method: "marketplace/remove", params: .object([
+            "marketplaceName": .string(name)
+        ]))
+        return try Self.marketplaceRemoveResult(from: result)
+    }
+
+    public func upgradePluginMarketplaces(
+        marketplaceName: String? = nil
+    ) async throws -> CodexMarketplaceUpgradeResult {
+        var params: [String: JSONValue] = [:]
+        if let marketplaceName, !marketplaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            params["marketplaceName"] = .string(marketplaceName)
+        }
+
+        let result = try await request(method: "marketplace/upgrade", params: .object(params))
+        return try Self.marketplaceUpgradeResult(from: result)
     }
 
     public func readPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginDetail {
@@ -1653,7 +2754,20 @@ public actor CodexAppServerClient {
         return Self.pluginDetail(from: detail, fallback: plugin)
     }
 
-    public func installPlugin(_ plugin: CodexRuntimePlugin) async throws {
+    public func readRemotePluginSkill(
+        remoteMarketplaceName: String,
+        remotePluginID: String,
+        skillName: String
+    ) async throws -> CodexRuntimePluginSkillReadResult {
+        let result = try await request(method: "plugin/skill/read", params: .object([
+            "remoteMarketplaceName": .string(remoteMarketplaceName),
+            "remotePluginId": .string(remotePluginID),
+            "skillName": .string(skillName)
+        ]))
+        return Self.pluginSkillReadResult(from: result)
+    }
+
+    public func installPlugin(_ plugin: CodexRuntimePlugin) async throws -> CodexRuntimePluginInstallResult {
         var params: [String: JSONValue] = [
             "pluginName": .string(plugin.name)
         ]
@@ -1662,7 +2776,8 @@ public actor CodexAppServerClient {
         } else {
             params["remoteMarketplaceName"] = .string(plugin.marketplaceName)
         }
-        _ = try await request(method: "plugin/install", params: .object(params))
+        let result = try await request(method: "plugin/install", params: .object(params))
+        return Self.pluginInstallResult(from: result)
     }
 
     public func uninstallPlugin(_ plugin: CodexRuntimePlugin) async throws {
@@ -1677,6 +2792,12 @@ public actor CodexAppServerClient {
             "forceReload": .bool(forceReload)
         ]))
         return Self.skillCatalog(from: result)
+    }
+
+    public func setSkillExtraRoots(_ extraRoots: [String]) async throws {
+        _ = try await request(method: "skills/extraRoots/set", params: .object([
+            "extraRoots": .array(extraRoots.map(JSONValue.string))
+        ]))
     }
 
     public func setSkillEnabled(_ skill: CodexRuntimeSkill, enabled: Bool) async throws {
@@ -1696,6 +2817,37 @@ public actor CodexAppServerClient {
         }
         let result = try await request(method: "config/read", params: .object(params))
         return Self.runtimeConfig(from: result)
+    }
+
+    public func detectExternalAgentConfig(
+        includeHome: Bool = true,
+        cwds: [String]? = nil
+    ) async throws -> CodexExternalAgentConfigDetectResult {
+        var params: [String: JSONValue] = [
+            "includeHome": .bool(includeHome)
+        ]
+        if let cwds {
+            params["cwds"] = .array(cwds.map(JSONValue.string))
+        }
+
+        let result = try await request(method: "externalAgentConfig/detect", params: .object(params))
+        return CodexExternalAgentConfigDetectResult(
+            items: result["items"]?.arrayValue?.compactMap(Self.externalAgentMigrationItem(from:)) ?? []
+        )
+    }
+
+    @discardableResult
+    public func importExternalAgentConfig(
+        items: [CodexExternalAgentMigrationItem]
+    ) async throws -> CodexExternalAgentConfigImportResult {
+        _ = try await request(method: "externalAgentConfig/import", params: .object([
+            "migrationItems": .array(items.map(\.jsonValue))
+        ]))
+        return CodexExternalAgentConfigImportResult()
+    }
+
+    public func readExternalAgentConfigImportHistories() async throws -> JSONValue {
+        try await request(method: "externalAgentConfig/import/readHistories", params: nil)
     }
 
     public func writeConfigValue(keyPath: String, value: JSONValue, filePath: String? = nil) async throws {
@@ -1832,6 +2984,83 @@ public actor CodexAppServerClient {
         return Self.runtimeRateLimits(from: result)
     }
 
+    public func consumeAccountRateLimitResetCredit(
+        creditID: String? = nil,
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> JSONValue {
+        var params: [String: JSONValue] = [
+            "idempotencyKey": .string(idempotencyKey)
+        ]
+        params["creditId"] = creditID.map(JSONValue.string) ?? .null
+        return try await request(method: "account/rateLimitResetCredit/consume", params: .object(params))
+    }
+
+    public func readWorkspaceMessages() async throws -> JSONValue {
+        try await request(method: "account/workspaceMessages/read", params: nil)
+    }
+
+    public func sendAddCreditsNudgeEmail(
+        creditType: CodexAddCreditsNudgeCreditType
+    ) async throws -> CodexAddCreditsNudgeEmailStatus {
+        let result = try await request(method: "account/sendAddCreditsNudgeEmail", params: .object([
+            "creditType": .string(creditType.rawValue)
+        ]))
+        let rawStatus = result["status"]?.stringValue ?? ""
+        return CodexAddCreditsNudgeEmailStatus(rawValue: rawStatus) ?? .unknown
+    }
+
+    public func uploadFeedback(
+        classification: String,
+        reason: String? = nil,
+        threadID: String? = nil,
+        includeLogs: Bool = false,
+        extraLogFiles: [String]? = nil,
+        tags: [String: String]? = nil
+    ) async throws -> CodexFeedbackUploadResult {
+        var params: [String: JSONValue] = [
+            "classification": .string(classification),
+            "includeLogs": .bool(includeLogs)
+        ]
+        if let reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            params["reason"] = .string(reason)
+        }
+        if let threadID, !threadID.isEmpty {
+            params["threadId"] = .string(threadID)
+        }
+        if let extraLogFiles {
+            params["extraLogFiles"] = .array(extraLogFiles.map(JSONValue.string))
+        }
+        if let tags, !tags.isEmpty {
+            params["tags"] = .object(tags.mapValues(JSONValue.string))
+        }
+
+        let result = try await request(method: "feedback/upload", params: .object(params))
+        guard let threadID = result["threadId"]?.stringValue, !threadID.isEmpty else {
+            throw CodexAppServerError.invalidResponse("Missing feedback/upload threadId.")
+        }
+        return CodexFeedbackUploadResult(threadID: threadID)
+    }
+
+    public func readWindowsSandboxReadiness() async throws -> CodexWindowsSandboxReadiness {
+        let result = try await request(method: "windowsSandbox/readiness", params: nil)
+        let rawStatus = result["status"]?.stringValue ?? ""
+        return CodexWindowsSandboxReadiness(rawValue: rawStatus) ?? .unknown
+    }
+
+    public func startWindowsSandboxSetup(
+        mode: CodexWindowsSandboxSetupMode,
+        cwd: String? = nil
+    ) async throws -> Bool {
+        var params: [String: JSONValue] = [
+            "mode": .string(mode.rawValue)
+        ]
+        if let cwd, !cwd.isEmpty {
+            params["cwd"] = .string(cwd)
+        }
+        let result = try await request(method: "windowsSandbox/setupStart", params: .object(params))
+        return result["started"]?.boolValue ?? false
+    }
+
     public func startChatGPTAccountLogin(codexStreamlinedLogin: Bool = false) async throws -> CodexAccountLogin {
         let result = try await request(method: "account/login/start", params: .object([
             "type": .string("chatgpt"),
@@ -1894,10 +3123,206 @@ public actor CodexAppServerClient {
         return Self.threadCatalog(from: result)
     }
 
+    public func searchThreads(
+        searchTerm: String,
+        archived: Bool? = false,
+        limit: Int = 25,
+        cursor: String? = nil
+    ) async throws -> CodexRuntimeThreadSearchCatalog {
+        var params: [String: JSONValue] = [
+            "searchTerm": .string(searchTerm),
+            "limit": .number(Double(limit)),
+            "sortKey": .string("updated_at"),
+            "sortDirection": .string("desc")
+        ]
+        if let archived {
+            params["archived"] = .bool(archived)
+        }
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/search", params: .object(params))
+        return Self.threadSearchCatalog(from: result)
+    }
+
+    public func listLoadedThreads(limit: Int? = 100, cursor: String? = nil) async throws -> CodexRuntimeLoadedThreadCatalog {
+        var params: [String: JSONValue] = [:]
+        if let limit {
+            params["limit"] = .number(Double(limit))
+        }
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/loaded/list", params: .object(params))
+        return Self.loadedThreadCatalog(from: result)
+    }
+
+    @discardableResult
+    public func unsubscribeThread(id threadID: String) async throws -> CodexThreadUnsubscribeStatus {
+        let result = try await request(method: "thread/unsubscribe", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return CodexThreadUnsubscribeStatus(rawValue: result["status"]?.stringValue ?? "unknown")
+    }
+
+    public func incrementThreadElicitation(threadID: String) async throws -> CodexThreadElicitationCounter {
+        let result = try await request(method: "thread/increment_elicitation", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return Self.threadElicitationCounter(from: result)
+    }
+
+    public func decrementThreadElicitation(threadID: String) async throws -> CodexThreadElicitationCounter {
+        let result = try await request(method: "thread/decrement_elicitation", params: .object([
+            "threadId": .string(threadID)
+        ]))
+        return Self.threadElicitationCounter(from: result)
+    }
+
     public func readThread(id threadID: String, includeTurns: Bool = true) async throws -> JSONValue {
         try await request(method: "thread/read", params: .object([
             "threadId": .string(threadID),
             "includeTurns": .bool(includeTurns)
+        ]))
+    }
+
+    public func listThreadTurns(
+        id threadID: String,
+        limit: Int = 100,
+        cursor: String? = nil,
+        sortDirection: String = "asc",
+        itemsView: String = "full"
+    ) async throws -> CodexRuntimeThreadTurnsPage {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "limit": .number(Double(limit)),
+            "sortDirection": .string(sortDirection),
+            "itemsView": .string(itemsView)
+        ]
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/turns/list", params: .object(params))
+        return Self.threadTurnsPage(from: result)
+    }
+
+    public func listThreadTurnItems(
+        id threadID: String,
+        turnID: String,
+        limit: Int = 100,
+        cursor: String? = nil,
+        sortDirection: String = "asc"
+    ) async throws -> CodexRuntimeThreadItemsPage {
+        try await listThreadItems(
+            id: threadID,
+            turnID: turnID,
+            limit: limit,
+            cursor: cursor,
+            sortDirection: sortDirection
+        )
+    }
+
+    public func listThreadItems(
+        id threadID: String,
+        turnID: String? = nil,
+        limit: Int = 100,
+        cursor: String? = nil,
+        sortDirection: String = "asc"
+    ) async throws -> CodexRuntimeThreadItemsPage {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "limit": .number(Double(limit)),
+            "sortDirection": .string(sortDirection)
+        ]
+        if let turnID {
+            params["turnId"] = .string(turnID)
+        }
+        if let cursor {
+            params["cursor"] = .string(cursor)
+        }
+
+        let result = try await request(method: "thread/items/list", params: .object(params))
+        return Self.threadItemsPage(from: result)
+    }
+
+    public func updateThreadGitMetadata(
+        threadID: String,
+        branch: String? = nil,
+        sha: String? = nil,
+        originURL: String? = nil
+    ) async throws -> CodexRuntimeThreadSummary {
+        var gitInfo: [String: JSONValue] = [:]
+        if let branch {
+            gitInfo["branch"] = branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .null : .string(branch)
+        }
+        if let sha {
+            gitInfo["sha"] = sha.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .null : .string(sha)
+        }
+        if let originURL {
+            gitInfo["originUrl"] = originURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .null : .string(originURL)
+        }
+
+        let result = try await request(method: "thread/metadata/update", params: .object([
+            "threadId": .string(threadID),
+            "gitInfo": .object(gitInfo)
+        ]))
+        guard let threadValue = result["thread"],
+              let summary = Self.threadSummary(from: threadValue) else {
+            throw CodexAppServerError.invalidResponse("Missing thread/metadata/update thread.")
+        }
+        return summary
+    }
+
+    public func runThreadShellCommand(threadID: String, command: String) async throws {
+        _ = try await request(method: "thread/shellCommand", params: .object([
+            "threadId": .string(threadID),
+            "command": .string(command)
+        ]))
+    }
+
+    public func cleanThreadBackgroundTerminals(threadID: String) async throws {
+        _ = try await request(method: "thread/backgroundTerminals/clean", params: .object([
+            "threadId": .string(threadID)
+        ]))
+    }
+
+    public func listThreadBackgroundTerminals(
+        threadID: String,
+        limit: Int? = 100,
+        cursor: String? = nil
+    ) async throws -> JSONValue {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID)
+        ]
+        if let limit {
+            params["limit"] = .number(Double(limit))
+        }
+        params["cursor"] = cursor.map(JSONValue.string) ?? .null
+        return try await request(method: "thread/backgroundTerminals/list", params: .object(params))
+    }
+
+    public func terminateThreadBackgroundTerminal(threadID: String, processID: String) async throws -> Bool {
+        let result = try await request(method: "thread/backgroundTerminals/terminate", params: .object([
+            "threadId": .string(threadID),
+            "processId": .string(processID)
+        ]))
+        return result["terminated"]?.boolValue ?? false
+    }
+
+    public func approveGuardianDeniedAction(threadID: String, event: JSONValue) async throws {
+        _ = try await request(method: "thread/approveGuardianDeniedAction", params: .object([
+            "threadId": .string(threadID),
+            "event": event
+        ]))
+    }
+
+    public func injectThreadItems(threadID: String, items: [JSONValue]) async throws {
+        _ = try await request(method: "thread/inject_items", params: .object([
+            "threadId": .string(threadID),
+            "items": .array(items)
         ]))
     }
 
@@ -1908,13 +3333,76 @@ public actor CodexAppServerClient {
         ]))
     }
 
-    public func resumeThread(id threadID: String, options: CodexAppServerOptions) async throws -> CodexAppServerThread {
+    public func updateThreadExecutionSettings(
+        threadID: String,
+        model: String? = nil,
+        approvalPolicy: CodexApprovalPolicy? = nil,
+        approvalsReviewer: CodexApprovalsReviewer? = nil,
+        sandbox: CodexSandboxMode? = nil
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID)
+        ]
+
+        if let model = model?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !model.isEmpty {
+            params["model"] = .string(model)
+        }
+        if let approvalPolicy {
+            params["approvalPolicy"] = .string(approvalPolicy.appServerValue)
+        }
+        if let approvalsReviewer {
+            params["approvalsReviewer"] = .string(approvalsReviewer.rawValue)
+        }
+        if let sandbox {
+            params["sandboxPolicy"] = sandbox.appServerSandboxPolicy
+        }
+
+        _ = try await request(method: "thread/settings/update", params: .object(params))
+    }
+
+    public func listCollaborationModes() async throws -> [CodexCollaborationModePreset] {
+        let result = try await request(method: "collaborationMode/list", params: .object([:]))
+        let items = result["data"]?.arrayValue ?? result.arrayValue ?? []
+        return items.map(Self.collaborationModePreset(from:))
+    }
+
+    public func addEnvironment(environmentID: String, execServerURL: String) async throws {
+        _ = try await request(method: "environment/add", params: .object([
+            "environmentId": .string(environmentID),
+            "execServerUrl": .string(execServerURL)
+        ]))
+    }
+
+    public func readEnvironmentInfo(environmentID: String) async throws -> JSONValue {
+        try await request(method: "environment/info", params: .object([
+            "environmentId": .string(environmentID)
+        ]))
+    }
+
+    public func updateThreadCollaborationMode(
+        threadID: String,
+        preset: CodexCollaborationModePreset,
+        effectiveModel: String
+    ) async throws {
+        _ = try await request(method: "thread/settings/update", params: .object([
+            "threadId": .string(threadID),
+            "collaborationMode": preset.collaborationModeValue(effectiveModel: effectiveModel)
+        ]))
+    }
+
+    public func resumeThread(
+        id threadID: String,
+        options: CodexAppServerOptions,
+        excludeTurns: Bool = true
+    ) async throws -> CodexAppServerThread {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
             "cwd": .string(options.workspaceURL.path),
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
             "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
-            "sandbox": .string(options.sandbox.rawValue)
+            "sandbox": .string(options.sandbox.rawValue),
+            "excludeTurns": .bool(excludeTurns)
         ]
         if let model = options.model {
             params["model"] = .string(model)
@@ -1934,7 +3422,8 @@ public actor CodexAppServerClient {
             cliVersion: thread["cliVersion"]?.stringValue,
             approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
             approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
-            sandboxSummary: Self.stringDescription(from: result["sandbox"])
+            sandboxSummary: Self.stringDescription(from: result["sandbox"]),
+            memoryMode: Self.threadMemoryMode(from: thread["memoryMode"] ?? thread["memory_mode"])
         )
     }
 
@@ -1944,11 +3433,41 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func deleteThread(id threadID: String) async throws {
+        _ = try await request(method: "thread/delete", params: .object([
+            "threadId": .string(threadID)
+        ]))
+    }
+
     public func setThreadName(id threadID: String, name: String) async throws {
         _ = try await request(method: "thread/name/set", params: .object([
             "threadId": .string(threadID),
             "name": .string(name)
         ]))
+    }
+
+    public func setThreadMemoryMode(threadID: String, mode: CodexThreadMemoryMode) async throws {
+        _ = try await request(method: "thread/memoryMode/set", params: .object([
+            "threadId": .string(threadID),
+            "mode": .string(mode.rawValue)
+        ]))
+    }
+
+    public func startThreadCompaction(threadID: String) async throws {
+        _ = try await request(method: "thread/compact/start", params: .object([
+            "threadId": .string(threadID)
+        ]))
+    }
+
+    public func rollbackThread(id threadID: String, numTurns: Int = 1) async throws -> JSONValue {
+        let result = try await request(method: "thread/rollback", params: .object([
+            "threadId": .string(threadID),
+            "numTurns": .number(Double(max(1, numTurns)))
+        ]))
+        guard result["thread"] != nil else {
+            throw CodexAppServerError.invalidResponse("Missing thread/rollback thread.")
+        }
+        return result
     }
 
     public func setThreadGoal(
@@ -2018,7 +3537,8 @@ public actor CodexAppServerClient {
             cliVersion: result["model"]?.stringValue,
             approvalPolicy: Self.stringDescription(from: result["approvalPolicy"]),
             approvalsReviewer: Self.approvalsReviewer(from: result["approvalsReviewer"]),
-            sandboxSummary: Self.stringDescription(from: result["sandbox"])
+            sandboxSummary: Self.stringDescription(from: result["sandbox"]),
+            memoryMode: Self.threadMemoryMode(from: thread["memoryMode"] ?? thread["memory_mode"])
         )
     }
 
@@ -2033,16 +3553,6 @@ public actor CodexAppServerClient {
         return Self.threadSummary(from: thread)
     }
 
-    public func gitDiffToRemote(cwd: String) async throws -> CodexRuntimeGitDiff {
-        let result = try await request(method: "gitDiffToRemote", params: .object([
-            "cwd": .string(cwd)
-        ]))
-        return CodexRuntimeGitDiff(
-            sha: result["sha"]?.stringValue ?? result["sha"]?["hash"]?.stringValue,
-            diff: result["diff"]?.stringValue ?? ""
-        )
-    }
-
     public func readConfigRequirements() async throws -> CodexRuntimeConfigRequirements {
         let result = try await request(method: "configRequirements/read", params: nil)
         return Self.configRequirements(from: result)
@@ -2051,6 +3561,130 @@ public actor CodexAppServerClient {
     public func readRemoteControlStatus() async throws -> CodexRuntimeRemoteControlStatus {
         let result = try await request(method: "remoteControl/status/read", params: nil)
         return Self.remoteControlStatus(from: result)
+    }
+
+    public func enableRemoteControl() async throws -> CodexRuntimeRemoteControlStatus {
+        let result = try await request(method: "remoteControl/enable", params: nil)
+        return Self.remoteControlStatus(from: result)
+    }
+
+    public func disableRemoteControl() async throws -> CodexRuntimeRemoteControlStatus {
+        let result = try await request(method: "remoteControl/disable", params: nil)
+        return Self.remoteControlStatus(from: result)
+    }
+
+    public func startRemoteControlPairing(manualCode: Bool = false) async throws -> CodexRemoteControlPairing {
+        let result = try await request(method: "remoteControl/pairing/start", params: .object([
+            "manualCode": .bool(manualCode)
+        ]))
+        return CodexRemoteControlPairing(
+            pairingCode: result["pairingCode"]?.stringValue ?? "",
+            manualPairingCode: result["manualPairingCode"]?.stringValue,
+            environmentID: result["environmentId"]?.stringValue ?? "",
+            expiresAt: result["expiresAt"]?.intValue ?? 0
+        )
+    }
+
+    public func readRemoteControlPairingStatus(
+        pairingCode: String? = nil,
+        manualPairingCode: String? = nil
+    ) async throws -> CodexRemoteControlPairingStatus {
+        var params: [String: JSONValue] = [:]
+        if let pairingCode, !pairingCode.isEmpty {
+            params["pairingCode"] = .string(pairingCode)
+        }
+        if let manualPairingCode, !manualPairingCode.isEmpty {
+            params["manualPairingCode"] = .string(manualPairingCode)
+        }
+        let result = try await request(method: "remoteControl/pairing/status", params: .object(params))
+        return CodexRemoteControlPairingStatus(claimed: result["claimed"]?.boolValue ?? false)
+    }
+
+    public func listRemoteControlClients(
+        environmentID: String,
+        cursor: String? = nil,
+        limit: Int = 25,
+        order: String = "desc"
+    ) async throws -> CodexRemoteControlClientCatalog {
+        var params: [String: JSONValue] = [
+            "environmentId": .string(environmentID),
+            "limit": .number(Double(limit)),
+            "order": .string(order)
+        ]
+        if let cursor, !cursor.isEmpty {
+            params["cursor"] = .string(cursor)
+        }
+        let result = try await request(method: "remoteControl/client/list", params: .object(params))
+        return Self.remoteControlClientCatalog(from: result)
+    }
+
+    public func revokeRemoteControlClient(environmentID: String, clientID: String) async throws {
+        _ = try await request(method: "remoteControl/client/revoke", params: .object([
+            "environmentId": .string(environmentID),
+            "clientId": .string(clientID)
+        ]))
+    }
+
+    public func listRealtimeVoices() async throws -> CodexRealtimeVoices {
+        let result = try await request(method: "thread/realtime/listVoices", params: .object([:]))
+        return Self.realtimeVoices(from: result["voices"] ?? result)
+    }
+
+    public func startRealtime(
+        threadID: String,
+        outputModality: String = "text",
+        prompt: String? = nil,
+        realtimeSessionID: String? = nil,
+        voice: String? = nil
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID),
+            "outputModality": .string(outputModality),
+            "realtimeSessionId": realtimeSessionID.map(JSONValue.string) ?? .null,
+            "transport": .null,
+            "voice": voice.map(JSONValue.string) ?? .null
+        ]
+        if let prompt {
+            params["prompt"] = .string(prompt)
+        }
+        _ = try await request(method: "thread/realtime/start", params: .object(params))
+    }
+
+    public func appendRealtimeText(threadID: String, text: String) async throws {
+        _ = try await request(method: "thread/realtime/appendText", params: .object([
+            "threadId": .string(threadID),
+            "text": .string(text)
+        ]))
+    }
+
+    public func appendRealtimeAudio(threadID: String, audio: CodexRealtimeAudioChunk) async throws {
+        var audioPayload: [String: JSONValue] = [
+            "data": .string(audio.data),
+            "sampleRate": .number(Double(max(0, audio.sampleRate))),
+            "numChannels": .number(Double(max(0, audio.numChannels)))
+        ]
+        if let samplesPerChannel = audio.samplesPerChannel {
+            audioPayload["samplesPerChannel"] = .number(Double(max(0, samplesPerChannel)))
+        }
+        audioPayload["itemId"] = audio.itemID.map(JSONValue.string) ?? .null
+
+        _ = try await request(method: "thread/realtime/appendAudio", params: .object([
+            "threadId": .string(threadID),
+            "audio": .object(audioPayload)
+        ]))
+    }
+
+    public func appendRealtimeSpeech(threadID: String, text: String) async throws {
+        _ = try await request(method: "thread/realtime/appendSpeech", params: .object([
+            "threadId": .string(threadID),
+            "text": .string(text)
+        ]))
+    }
+
+    public func stopRealtime(threadID: String) async throws {
+        _ = try await request(method: "thread/realtime/stop", params: .object([
+            "threadId": .string(threadID)
+        ]))
     }
 
     public func resetMemory() async throws {
@@ -2067,6 +3701,10 @@ public actor CodexAppServerClient {
         }
         let result = try await request(method: "app/list", params: .object(params))
         return Self.appCatalog(from: result)
+    }
+
+    public static func runtimeAppCatalog(from result: JSONValue) -> CodexRuntimeAppCatalog {
+        appCatalog(from: result)
     }
 
     public func listPermissionProfiles(cwd: String? = nil, limit: Int = 100) async throws -> CodexRuntimePermissionProfileCatalog {
@@ -2162,6 +3800,26 @@ public actor CodexAppServerClient {
         }
 
         return files.compactMap(Self.fuzzyFileSearchResult(from:))
+    }
+
+    public func startFuzzyFileSearchSession(sessionID: String, roots: [String]) async throws {
+        _ = try await request(method: "fuzzyFileSearch/sessionStart", params: .object([
+            "sessionId": .string(sessionID),
+            "roots": .array(roots.map(JSONValue.string))
+        ]))
+    }
+
+    public func updateFuzzyFileSearchSession(sessionID: String, query: String) async throws {
+        _ = try await request(method: "fuzzyFileSearch/sessionUpdate", params: .object([
+            "sessionId": .string(sessionID),
+            "query": .string(query)
+        ]))
+    }
+
+    public func stopFuzzyFileSearchSession(sessionID: String) async throws {
+        _ = try await request(method: "fuzzyFileSearch/sessionStop", params: .object([
+            "sessionId": .string(sessionID)
+        ]))
     }
 
     public func readFile(path: String) async throws -> Data {
@@ -2309,6 +3967,66 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func spawnProcess(
+        _ command: [String],
+        processHandle: String,
+        cwd: URL,
+        tty: Bool = false,
+        streamStdin: Bool = false,
+        streamStdoutStderr: Bool = false,
+        rows: Int = 30,
+        cols: Int = 100
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "command": .array(command.map(JSONValue.string)),
+            "processHandle": .string(processHandle),
+            "cwd": .string(cwd.path),
+            "tty": .bool(tty),
+            "streamStdin": .bool(streamStdin),
+            "streamStdoutStderr": .bool(streamStdoutStderr),
+            "outputBytesCap": .null,
+            "timeoutMs": .null
+        ]
+        if tty {
+            params["size"] = .object([
+                "rows": .number(Double(rows)),
+                "cols": .number(Double(cols))
+            ])
+        }
+        _ = try await request(method: "process/spawn", params: .object(params))
+    }
+
+    public func writeProcessInput(
+        processHandle: String,
+        data: Data,
+        closeStdin: Bool = false
+    ) async throws {
+        var params: [String: JSONValue] = [
+            "processHandle": .string(processHandle),
+            "closeStdin": .bool(closeStdin)
+        ]
+        if !data.isEmpty {
+            params["deltaBase64"] = .string(data.base64EncodedString())
+        }
+        _ = try await request(method: "process/writeStdin", params: .object(params))
+    }
+
+    public func killProcess(processHandle: String) async throws {
+        _ = try await request(method: "process/kill", params: .object([
+            "processHandle": .string(processHandle)
+        ]))
+    }
+
+    public func resizeProcessPty(processHandle: String, rows: Int, cols: Int) async throws {
+        _ = try await request(method: "process/resizePty", params: .object([
+            "processHandle": .string(processHandle),
+            "size": .object([
+                "rows": .number(Double(rows)),
+                "cols": .number(Double(cols))
+            ])
+        ]))
+    }
+
     public func respondApproval(
         requestID: CodexAppServerRequestID,
         decision: CodexAppServerApprovalDecision
@@ -2316,6 +4034,97 @@ public actor CodexAppServerClient {
         try respond(requestID: requestID, result: .object([
             "decision": .string(decision.rawValue)
         ]))
+    }
+
+    public func respondLegacyApproval(
+        requestID: CodexAppServerRequestID,
+        decision: CodexAppServerLegacyReviewDecision
+    ) async throws {
+        try respond(requestID: requestID, result: .object([
+            "decision": .string(decision.rawValue)
+        ]))
+    }
+
+    public func respondPermissionsApproval(
+        requestID: CodexAppServerRequestID,
+        permissions: JSONValue,
+        scope: String = "turn",
+        strictAutoReview: Bool? = nil
+    ) async throws {
+        var result: [String: JSONValue] = [
+            "permissions": permissions,
+            "scope": .string(scope)
+        ]
+        if let strictAutoReview {
+            result["strictAutoReview"] = .bool(strictAutoReview)
+        }
+        try respond(requestID: requestID, result: .object(result))
+    }
+
+    public func respondMcpElicitation(
+        requestID: CodexAppServerRequestID,
+        action: CodexAppServerElicitationAction,
+        content: JSONValue? = nil,
+        meta: JSONValue? = nil
+    ) async throws {
+        var result: [String: JSONValue] = [
+            "action": .string(action.rawValue)
+        ]
+        if let content {
+            result["content"] = content
+        }
+        if let meta {
+            result["_meta"] = meta
+        }
+        try respond(requestID: requestID, result: .object(result))
+    }
+
+    public func respondToolUserInput(
+        requestID: CodexAppServerRequestID,
+        answers: [String: [String]]
+    ) async throws {
+        let answerValues = answers.mapValues { values in
+            JSONValue.object([
+                "answers": .array(values.map(JSONValue.string))
+            ])
+        }
+        try respond(requestID: requestID, result: .object([
+            "answers": .object(answerValues)
+        ]))
+    }
+
+    public func respondDynamicToolCall(
+        requestID: CodexAppServerRequestID,
+        success: Bool,
+        text: String
+    ) async throws {
+        try respond(requestID: requestID, result: .object([
+            "success": .bool(success),
+            "contentItems": .array([
+                .object([
+                    "type": .string("inputText"),
+                    "text": .string(text)
+                ])
+            ])
+        ]))
+    }
+
+    public func respondCurrentTime(requestID: CodexAppServerRequestID, date: Date = Date()) async throws {
+        try respond(requestID: requestID, result: .object([
+            "currentTimeAt": .number(Double(Int(date.timeIntervalSince1970)))
+        ]))
+    }
+
+    public func respondError(
+        requestID: CodexAppServerRequestID,
+        code: Int = -32_000,
+        message: String,
+        data: JSONValue? = nil
+    ) throws {
+        try write(CodexAppServerMessage(
+            id: requestID,
+            error: CodexAppServerRPCError(code: code, message: message, data: data)
+        ))
     }
 
     public func stop() {
@@ -2494,6 +4303,28 @@ public actor CodexAppServerClient {
         }
     }
 
+    private static func experimentalFeatureCatalog(from result: JSONValue) -> CodexExperimentalFeatureCatalog {
+        let features = result["data"]?.arrayValue?.compactMap { value -> CodexExperimentalFeature? in
+            guard let name = value["name"]?.stringValue else {
+                return nil
+            }
+            let stage = CodexExperimentalFeatureStage(rawValue: value["stage"]?.stringValue ?? "") ?? .unknown
+            return CodexExperimentalFeature(
+                name: name,
+                stage: stage,
+                enabled: value["enabled"]?.boolValue ?? false,
+                defaultEnabled: value["defaultEnabled"]?.boolValue ?? false,
+                displayName: value["displayName"]?.stringValue,
+                description: value["description"]?.stringValue,
+                announcement: value["announcement"]?.stringValue
+            )
+        } ?? []
+        return CodexExperimentalFeatureCatalog(
+            features: features,
+            nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
     private static func pluginCatalog(from result: JSONValue) -> CodexRuntimePluginCatalog {
         let featuredPluginIds = result["featuredPluginIds"]?.arrayValue?.compactMap(\.stringValue) ?? []
         let loadErrors = result["marketplaceLoadErrors"]?.arrayValue?.compactMap { value -> String? in
@@ -2535,12 +4366,37 @@ public actor CodexAppServerClient {
         )
     }
 
+    private static func sharedPluginCatalog(from result: JSONValue) -> CodexRuntimePluginCatalog {
+        let plugins = result["data"]?.arrayValue?.compactMap { itemValue -> CodexRuntimePlugin? in
+            guard let item = itemValue.objectValue,
+                  let plugin = item["plugin"]?.objectValue else {
+                return nil
+            }
+            var parsed = runtimePlugin(
+                from: plugin,
+                marketplaceName: "workspace-shared-with-me",
+                marketplaceDisplayName: "共享插件",
+                marketplacePath: item["localPluginPath"]?.pathString
+            )
+            if parsed?.localPluginPath == nil {
+                parsed?.localPluginPath = item["localPluginPath"]?.pathString
+            }
+            return parsed
+        } ?? []
+
+        return CodexRuntimePluginCatalog(
+            plugins: plugins.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending },
+            featuredPluginIds: [],
+            marketplaceLoadErrors: []
+        )
+    }
+
     private static func pluginDetail(from value: JSONValue, fallback: CodexRuntimePlugin) -> CodexRuntimePluginDetail {
         let object = value.objectValue ?? [:]
         let marketplaceName = object["marketplaceName"]?.stringValue ?? fallback.marketplaceName
         let marketplacePath = object["marketplacePath"]?.pathString ?? fallback.marketplacePath
         let summary = object["summary"]?.objectValue
-        let plugin = summary.flatMap {
+        var plugin = summary.flatMap {
             runtimePlugin(
                 from: $0,
                 marketplaceName: marketplaceName,
@@ -2548,6 +4404,12 @@ public actor CodexAppServerClient {
                 marketplacePath: marketplacePath
             )
         } ?? fallback
+        if plugin.shareContext == nil {
+            plugin.shareContext = fallback.shareContext
+        }
+        if plugin.remotePluginID == nil {
+            plugin.remotePluginID = fallback.remotePluginID
+        }
 
         return CodexRuntimePluginDetail(
             plugin: plugin,
@@ -2573,22 +4435,184 @@ public actor CodexAppServerClient {
             ?? interface?["longDescription"]?.stringValue
             ?? plugin["keywords"]?.stringList.joined(separator: " · ")
             ?? "Codex 插件"
+        let source = plugin["source"]?.objectValue
+        let sourceType = source?["type"]?.stringValue ?? "unknown"
+        let localPluginPath = sourceType == "local" ? source?["path"]?.pathString : nil
         return CodexRuntimePlugin(
             id: plugin["id"]?.stringValue ?? "\(name)@\(marketplaceName)",
+            remotePluginID: plugin["remotePluginId"]?.stringValue,
             name: name,
             displayName: displayName,
             summary: summary,
             marketplaceName: marketplaceName,
             marketplaceDisplayName: marketplaceDisplayName,
             marketplacePath: marketplacePath,
+            localPluginPath: localPluginPath,
             category: interface?["category"]?.stringValue,
             developerName: interface?["developerName"]?.stringValue,
-            sourceType: plugin["source"]?["type"]?.stringValue ?? "unknown",
+            sourceType: sourceType,
             installPolicy: plugin["installPolicy"]?.stringValue ?? "UNKNOWN",
             authPolicy: plugin["authPolicy"]?.stringValue ?? "UNKNOWN",
             availability: plugin["availability"]?.stringValue ?? "AVAILABLE",
+            shareContext: pluginShareContext(from: plugin["shareContext"]),
             installed: plugin["installed"]?.boolValue ?? false,
             enabled: plugin["enabled"]?.boolValue ?? false
+        )
+    }
+
+    public static func pluginShareContext(from value: JSONValue?) -> CodexRuntimePluginShareContext? {
+        guard let object = value?.objectValue,
+              let remotePluginID = object["remotePluginId"]?.stringValue,
+              !remotePluginID.isEmpty else {
+            return nil
+        }
+
+        let principals = object["sharePrincipals"]?.arrayValue?.compactMap { principalValue -> CodexRuntimePluginSharePrincipal? in
+            guard let principal = principalValue.objectValue,
+                  let principalID = principal["principalId"]?.stringValue,
+                  let principalType = principal["principalType"]?.stringValue,
+                  let role = principal["role"]?.stringValue,
+                  let name = principal["name"]?.stringValue else {
+                return nil
+            }
+            return CodexRuntimePluginSharePrincipal(
+                principalID: principalID,
+                principalType: principalType,
+                role: role,
+                name: name
+            )
+        } ?? []
+
+        return CodexRuntimePluginShareContext(
+            remotePluginID: remotePluginID,
+            remoteVersion: object["remoteVersion"]?.stringValue,
+            discoverability: object["discoverability"]?.stringValue,
+            shareURL: object["shareUrl"]?.stringValue,
+            creatorAccountUserID: object["creatorAccountUserId"]?.stringValue,
+            creatorName: object["creatorName"]?.stringValue,
+            sharePrincipals: principals
+        )
+    }
+
+    private static func pluginShareTargetPayload(_ target: CodexRuntimePluginShareTarget) -> JSONValue {
+        .object([
+            "principalId": .string(target.principalID),
+            "principalType": .string(target.principalType),
+            "role": .string(target.role)
+        ])
+    }
+
+    public static func pluginShareSaveResult(from result: JSONValue) throws -> CodexRuntimePluginShareSaveResult {
+        guard let remotePluginID = result["remotePluginId"]?.stringValue,
+              let shareURL = result["shareUrl"]?.stringValue else {
+            throw CodexAppServerError.invalidResponse("Missing plugin/share/save response fields.")
+        }
+        return CodexRuntimePluginShareSaveResult(remotePluginID: remotePluginID, shareURL: shareURL)
+    }
+
+    public static func pluginShareUpdateResult(from result: JSONValue) -> CodexRuntimePluginShareUpdateResult {
+        let principals = result["principals"]?.arrayValue?.compactMap { principalValue -> CodexRuntimePluginSharePrincipal? in
+            guard let principal = principalValue.objectValue,
+                  let principalID = principal["principalId"]?.stringValue,
+                  let principalType = principal["principalType"]?.stringValue,
+                  let role = principal["role"]?.stringValue,
+                  let name = principal["name"]?.stringValue else {
+                return nil
+            }
+            return CodexRuntimePluginSharePrincipal(
+                principalID: principalID,
+                principalType: principalType,
+                role: role,
+                name: name
+            )
+        } ?? []
+        return CodexRuntimePluginShareUpdateResult(
+            discoverability: result["discoverability"]?.stringValue ?? "",
+            principals: principals
+        )
+    }
+
+    public static func pluginShareCheckoutResult(from result: JSONValue) throws -> CodexRuntimePluginShareCheckoutResult {
+        guard let remotePluginID = result["remotePluginId"]?.stringValue,
+              let pluginID = result["pluginId"]?.stringValue,
+              let pluginName = result["pluginName"]?.stringValue,
+              let pluginPath = result["pluginPath"]?.pathString,
+              let marketplaceName = result["marketplaceName"]?.stringValue,
+              let marketplacePath = result["marketplacePath"]?.pathString else {
+            throw CodexAppServerError.invalidResponse("Missing plugin/share/checkout response fields.")
+        }
+
+        return CodexRuntimePluginShareCheckoutResult(
+            remotePluginID: remotePluginID,
+            pluginID: pluginID,
+            pluginName: pluginName,
+            pluginPath: pluginPath,
+            marketplaceName: marketplaceName,
+            marketplacePath: marketplacePath,
+            remoteVersion: result["remoteVersion"]?.stringValue
+        )
+    }
+
+    public static func pluginInstallResult(from result: JSONValue) -> CodexRuntimePluginInstallResult {
+        CodexRuntimePluginInstallResult(
+            authPolicy: result["authPolicy"]?.stringValue
+                ?? result["auth_policy"]?.stringValue
+                ?? "UNKNOWN",
+            appsNeedingAuth: (
+                result["appsNeedingAuth"]?.arrayValue
+                    ?? result["apps_needing_auth"]?.arrayValue
+                    ?? []
+            ).compactMap(pluginApp(from:))
+        )
+    }
+
+    public static func marketplaceAddResult(from result: JSONValue) throws -> CodexMarketplaceAddResult {
+        guard let marketplaceName = result["marketplaceName"]?.stringValue,
+              let installedRoot = result["installedRoot"]?.pathString,
+              let alreadyAdded = result["alreadyAdded"]?.boolValue else {
+            throw CodexAppServerError.invalidResponse("Missing marketplace/add response fields.")
+        }
+
+        return CodexMarketplaceAddResult(
+            marketplaceName: marketplaceName,
+            installedRoot: installedRoot,
+            alreadyAdded: alreadyAdded
+        )
+    }
+
+    public static func marketplaceRemoveResult(from result: JSONValue) throws -> CodexMarketplaceRemoveResult {
+        guard let marketplaceName = result["marketplaceName"]?.stringValue else {
+            throw CodexAppServerError.invalidResponse("Missing marketplace/remove response marketplaceName.")
+        }
+
+        return CodexMarketplaceRemoveResult(
+            marketplaceName: marketplaceName,
+            installedRoot: result["installedRoot"]?.pathString
+        )
+    }
+
+    public static func marketplaceUpgradeResult(from result: JSONValue) throws -> CodexMarketplaceUpgradeResult {
+        guard let selectedMarketplaces = result["selectedMarketplaces"]?.stringList,
+              let upgradedRoots = result["upgradedRoots"]?.arrayValue else {
+            throw CodexAppServerError.invalidResponse("Missing marketplace/upgrade response fields.")
+        }
+
+        let errors = result["errors"]?.arrayValue?.compactMap { value -> CodexMarketplaceUpgradeError? in
+            guard let object = value.objectValue,
+                  let marketplaceName = object["marketplaceName"]?.stringValue,
+                  let message = object["message"]?.stringValue else {
+                return nil
+            }
+            return CodexMarketplaceUpgradeError(
+                marketplaceName: marketplaceName,
+                message: message
+            )
+        } ?? []
+
+        return CodexMarketplaceUpgradeResult(
+            selectedMarketplaces: selectedMarketplaces,
+            upgradedRoots: upgradedRoots.compactMap(\.pathString),
+            errors: errors
         )
     }
 
@@ -2635,6 +4659,10 @@ public actor CodexAppServerClient {
             needsAuth: object["needsAuth"]?.boolValue ?? false,
             installURL: object["installUrl"]?.stringValue
         )
+    }
+
+    private static func pluginSkillReadResult(from result: JSONValue) -> CodexRuntimePluginSkillReadResult {
+        CodexRuntimePluginSkillReadResult(contents: result["contents"]?.stringValue)
     }
 
     private static func skillCatalog(from result: JSONValue) -> CodexRuntimeSkillCatalog {
@@ -2740,6 +4768,7 @@ public actor CodexAppServerClient {
             .sorted { $0.name < $1.name }
             let toolNames = tools.map(\.name)
             let resources = server["resources"]?.arrayValue?.compactMap(Self.mcpResource(from:)) ?? []
+            let resourceTemplates = server["resourceTemplates"]?.arrayValue?.compactMap(Self.mcpResourceTemplate(from:)) ?? []
             return CodexRuntimeMCPServer(
                 name: name,
                 title: info?["title"]?.stringValue ?? info?["name"]?.stringValue ?? name,
@@ -2748,8 +4777,9 @@ public actor CodexAppServerClient {
                 tools: tools,
                 toolNames: toolNames,
                 resources: resources,
+                resourceTemplates: resourceTemplates,
                 resourceCount: server["resources"]?.arrayValue?.count ?? 0,
-                resourceTemplateCount: server["resourceTemplates"]?.arrayValue?.count ?? 0
+                resourceTemplateCount: resourceTemplates.count
             )
         } ?? []
 
@@ -2794,6 +4824,21 @@ public actor CodexAppServerClient {
         )
     }
 
+    private static func mcpResourceTemplate(from value: JSONValue) -> CodexRuntimeMCPResourceTemplate? {
+        guard let object = value.objectValue,
+              let name = object["name"]?.stringValue,
+              let uriTemplate = object["uriTemplate"]?.stringValue ?? object["uri_template"]?.stringValue else {
+            return nil
+        }
+        return CodexRuntimeMCPResourceTemplate(
+            name: name,
+            title: object["title"]?.stringValue,
+            uriTemplate: uriTemplate,
+            description: object["description"]?.stringValue,
+            mimeType: object["mimeType"]?.stringValue ?? object["mime_type"]?.stringValue
+        )
+    }
+
     private static func mcpResourceContent(from value: JSONValue) -> CodexMCPResourceContent? {
         guard let object = value.objectValue,
               let uri = object["uri"]?.stringValue else {
@@ -2830,6 +4875,8 @@ public actor CodexAppServerClient {
             memoryDisableOnExternalContext: memories?["disable_on_external_context"]?.boolValue ?? memories?["disableOnExternalContext"]?.boolValue,
             instructions: config?["instructions"]?.stringValue,
             developerInstructions: config?["developer_instructions"]?.stringValue,
+            raytoneCommitInstructions: configString(raytoneDesktop, snake: "commit_instructions", camel: "commitInstructions"),
+            raytonePullRequestInstructions: configString(raytoneDesktop, snake: "pull_request_instructions", camel: "pullRequestInstructions"),
             desktopKeys: desktopKeys,
             desktopSettings: CodexRuntimeDesktopSettings(
                 showInMenuBar: configBool(raytoneDesktop, snake: "show_in_menu_bar", camel: "showInMenuBar"),
@@ -2879,6 +4926,7 @@ public actor CodexAppServerClient {
             models: object["models"]?.arrayValue?.compactMap(\.stringValue) ?? [model],
             kind: kind,
             apiKeyEnvironmentName: object["apiKeyEnvironmentName"]?.stringValue ?? object["api_key_environment_name"]?.stringValue,
+            requiresAPIKey: object["requiresAPIKey"]?.boolValue ?? object["requires_api_key"]?.boolValue ?? true,
             reasoning: reasoningSettings(from: object["reasoning"])
         )
     }
@@ -2965,6 +5013,45 @@ public actor CodexAppServerClient {
         )
     }
 
+    public static func runtimeThreadTokenUsage(from params: JSONValue?) -> CodexRuntimeThreadTokenUsage? {
+        guard let threadID = params?["threadId"]?.stringValue,
+              let turnID = params?["turnId"]?.stringValue,
+              let tokenUsage = params?["tokenUsage"],
+              let total = runtimeThreadTokenUsageBreakdown(from: tokenUsage["total"]),
+              let last = runtimeThreadTokenUsageBreakdown(from: tokenUsage["last"]) else {
+            return nil
+        }
+
+        return CodexRuntimeThreadTokenUsage(
+            threadID: threadID,
+            turnID: turnID,
+            total: total,
+            last: last,
+            modelContextWindow: tokenUsage["modelContextWindow"]?.intValue
+        )
+    }
+
+    private static func runtimeThreadTokenUsageBreakdown(
+        from value: JSONValue?
+    ) -> CodexRuntimeThreadTokenUsageBreakdown? {
+        guard let value,
+              let totalTokens = value["totalTokens"]?.intValue,
+              let inputTokens = value["inputTokens"]?.intValue,
+              let cachedInputTokens = value["cachedInputTokens"]?.intValue,
+              let outputTokens = value["outputTokens"]?.intValue,
+              let reasoningOutputTokens = value["reasoningOutputTokens"]?.intValue else {
+            return nil
+        }
+
+        return CodexRuntimeThreadTokenUsageBreakdown(
+            totalTokens: totalTokens,
+            inputTokens: inputTokens,
+            cachedInputTokens: cachedInputTokens,
+            outputTokens: outputTokens,
+            reasoningOutputTokens: reasoningOutputTokens
+        )
+    }
+
     private static func runtimeRateLimits(from result: JSONValue) -> CodexRuntimeRateLimits {
         var buckets: [CodexRuntimeRateLimitBucket] = []
 
@@ -3022,6 +5109,55 @@ public actor CodexAppServerClient {
         )
     }
 
+    private static func threadSearchCatalog(from result: JSONValue) -> CodexRuntimeThreadSearchCatalog {
+        CodexRuntimeThreadSearchCatalog(
+            results: result["data"]?.arrayValue?.compactMap(threadSearchResult(from:)) ?? [],
+            nextCursor: result["nextCursor"]?.stringValue,
+            backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func threadSearchResult(from value: JSONValue) -> CodexRuntimeThreadSearchResult? {
+        guard let threadValue = value["thread"],
+              let thread = threadSummary(from: threadValue) else {
+            return nil
+        }
+        return CodexRuntimeThreadSearchResult(
+            thread: thread,
+            snippet: value["snippet"]?.stringValue ?? ""
+        )
+    }
+
+    private static func loadedThreadCatalog(from result: JSONValue) -> CodexRuntimeLoadedThreadCatalog {
+        CodexRuntimeLoadedThreadCatalog(
+            threadIDs: result["data"]?.arrayValue?.compactMap(\.stringValue) ?? [],
+            nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    private static func threadTurnsPage(from result: JSONValue) -> CodexRuntimeThreadTurnsPage {
+        CodexRuntimeThreadTurnsPage(
+            turns: result["data"]?.arrayValue ?? [],
+            nextCursor: result["nextCursor"]?.stringValue,
+            backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func threadItemsPage(from result: JSONValue) -> CodexRuntimeThreadItemsPage {
+        CodexRuntimeThreadItemsPage(
+            items: result["data"]?.arrayValue ?? [],
+            nextCursor: result["nextCursor"]?.stringValue,
+            backwardsCursor: result["backwardsCursor"]?.stringValue
+        )
+    }
+
+    private static func threadElicitationCounter(from result: JSONValue) -> CodexThreadElicitationCounter {
+        CodexThreadElicitationCounter(
+            count: result["count"]?.intValue ?? 0,
+            paused: result["paused"]?.boolValue ?? false
+        )
+    }
+
     private static func threadSummary(from value: JSONValue) -> CodexRuntimeThreadSummary? {
         guard let id = value["id"]?.stringValue else {
             return nil
@@ -3040,7 +5176,24 @@ public actor CodexAppServerClient {
             archived: value["archived"]?.boolValue ?? true,
             gitBranch: gitInfo?["branch"]?.stringValue,
             gitSHA: gitInfo?["sha"]?.stringValue,
-            gitOriginURL: gitInfo?["originUrl"]?.stringValue
+            gitOriginURL: gitInfo?["originUrl"]?.stringValue,
+            memoryMode: threadMemoryMode(from: value["memoryMode"] ?? value["memory_mode"])
+        )
+    }
+
+    private static func threadMemoryMode(from value: JSONValue?) -> CodexThreadMemoryMode? {
+        guard let rawValue = value?.stringValue else {
+            return nil
+        }
+        return CodexThreadMemoryMode(rawValue: rawValue)
+    }
+
+    private static func collaborationModePreset(from value: JSONValue) -> CodexCollaborationModePreset {
+        CodexCollaborationModePreset(
+            name: value["name"]?.stringValue ?? value["mode"]?.stringValue ?? "default",
+            mode: value["mode"]?.stringValue,
+            model: value["model"]?.stringValue,
+            reasoningEffort: value["reasoning_effort"]?.stringValue ?? value["reasoningEffort"]?.stringValue
         )
     }
 
@@ -3075,24 +5228,103 @@ public actor CodexAppServerClient {
 
     private static func configRequirements(from result: JSONValue) -> CodexRuntimeConfigRequirements {
         let requirements = result["requirements"]
+        let network = requirements?["network"]
+        let hooks = requirements?["hooks"]
         return CodexRuntimeConfigRequirements(
             allowedApprovalPolicies: requirements?["allowedApprovalPolicies"]?.stringList ?? [],
             allowedSandboxModes: requirements?["allowedSandboxModes"]?.stringList ?? [],
             allowedWebSearchModes: requirements?["allowedWebSearchModes"]?.stringList ?? [],
+            allowedWindowsSandboxImplementations: requirements?["allowedWindowsSandboxImplementations"]?.stringList ?? [],
+            allowedPermissionProfiles: boolMap(from: requirements?["allowedPermissionProfiles"]),
+            featureRequirements: boolMap(from: requirements?["featureRequirements"]),
             defaultPermissions: requirements?["defaultPermissions"]?.stringValue,
             allowAppSnapshots: requirements?["allowAppshots"]?.boolValue,
             allowLockedComputerUse: requirements?["computerUse"]?["allowLockedComputerUse"]?.boolValue,
-            networkEnabled: requirements?["network"]?["enabled"]?.boolValue,
-            managedHooksOnly: requirements?["allowManagedHooksOnly"]?.boolValue
+            networkEnabled: network?["enabled"]?.boolValue,
+            networkAllowedDomains: network?["allowedDomains"]?.stringList ?? [],
+            networkDeniedDomains: network?["deniedDomains"]?.stringList ?? [],
+            networkDomains: stringMap(from: network?["domains"]),
+            networkUnixSockets: stringMap(from: network?["unixSockets"]),
+            allowLocalBinding: network?["allowLocalBinding"]?.boolValue,
+            allowUpstreamProxy: network?["allowUpstreamProxy"]?.boolValue,
+            allowUnixSockets: network?["allowUnixSockets"]?.stringList ?? [],
+            dangerouslyAllowAllUnixSockets: network?["dangerouslyAllowAllUnixSockets"]?.boolValue,
+            dangerouslyAllowNonLoopbackProxy: network?["dangerouslyAllowNonLoopbackProxy"]?.boolValue,
+            managedAllowedDomainsOnly: network?["managedAllowedDomainsOnly"]?.boolValue,
+            httpPort: network?["httpPort"]?.intValue,
+            socksPort: network?["socksPort"]?.intValue,
+            managedHooksOnly: requirements?["allowManagedHooksOnly"]?.boolValue,
+            managedHookEventCounts: hookEventCounts(from: hooks),
+            managedHooksDirectory: hooks?["managedDir"]?.stringValue,
+            windowsManagedHooksDirectory: hooks?["windowsManagedDir"]?.stringValue,
+            enforceResidency: requirements?["enforceResidency"]?.stringValue
         )
     }
 
-    private static func remoteControlStatus(from result: JSONValue) -> CodexRuntimeRemoteControlStatus {
+    private static func boolMap(from value: JSONValue?) -> [String: Bool] {
+        value?.objectValue?.reduce(into: [String: Bool]()) { result, pair in
+            if let bool = pair.value.boolValue {
+                result[pair.key] = bool
+            }
+        } ?? [:]
+    }
+
+    private static func stringMap(from value: JSONValue?) -> [String: String] {
+        value?.objectValue?.reduce(into: [String: String]()) { result, pair in
+            if let string = pair.value.stringValue {
+                result[pair.key] = string
+            }
+        } ?? [:]
+    }
+
+    private static func hookEventCounts(from value: JSONValue?) -> [String: Int] {
+        value?.objectValue?.reduce(into: [String: Int]()) { result, pair in
+            guard pair.key != "managedDir",
+                  pair.key != "windowsManagedDir",
+                  let count = pair.value.arrayValue?.count else {
+                return
+            }
+            result[pair.key] = count
+        } ?? [:]
+    }
+
+    public static func remoteControlStatus(from result: JSONValue?) -> CodexRuntimeRemoteControlStatus {
         CodexRuntimeRemoteControlStatus(
-            status: result["status"]?.stringValue ?? "unknown",
-            serverName: result["serverName"]?.stringValue ?? "",
-            installationID: result["installationId"]?.stringValue ?? "",
-            environmentID: result["environmentId"]?.stringValue
+            status: result?["status"]?.stringValue ?? "unknown",
+            serverName: result?["serverName"]?.stringValue ?? "",
+            installationID: result?["installationId"]?.stringValue ?? "",
+            environmentID: result?["environmentId"]?.stringValue
+        )
+    }
+
+    private static func remoteControlClientCatalog(from result: JSONValue) -> CodexRemoteControlClientCatalog {
+        let clients = result["data"]?.arrayValue?.compactMap { value -> CodexRemoteControlClient? in
+            guard let clientID = value["clientId"]?.stringValue else {
+                return nil
+            }
+            return CodexRemoteControlClient(
+                clientID: clientID,
+                displayName: value["displayName"]?.stringValue,
+                deviceType: value["deviceType"]?.stringValue,
+                platform: value["platform"]?.stringValue,
+                osVersion: value["osVersion"]?.stringValue,
+                deviceModel: value["deviceModel"]?.stringValue,
+                appVersion: value["appVersion"]?.stringValue,
+                lastSeenAt: value["lastSeenAt"]?.intValue
+            )
+        } ?? []
+        return CodexRemoteControlClientCatalog(
+            clients: clients,
+            nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    public static func realtimeVoices(from result: JSONValue?) -> CodexRealtimeVoices {
+        CodexRealtimeVoices(
+            v1: result?["v1"]?.stringList ?? [],
+            v2: result?["v2"]?.stringList ?? [],
+            defaultV1: result?["defaultV1"]?.stringValue ?? "",
+            defaultV2: result?["defaultV2"]?.stringValue ?? ""
         )
     }
 
@@ -3115,6 +5347,7 @@ public actor CodexAppServerClient {
                 category: branding?["category"]?.stringValue ?? metadata?["categories"]?.stringList.first,
                 developer: branding?["developer"]?.stringValue ?? metadata?["developer"]?.stringValue,
                 website: branding?["website"]?.stringValue,
+                installURL: value["installUrl"]?.stringValue,
                 isAccessible: value["isAccessible"]?.boolValue ?? false,
                 isEnabled: value["isEnabled"]?.boolValue ?? true,
                 pluginDisplayNames: value["pluginDisplayNames"]?.stringList ?? [],
@@ -3142,6 +5375,27 @@ public actor CodexAppServerClient {
         return CodexRuntimePermissionProfileCatalog(
             profiles: profiles.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending },
             nextCursor: result["nextCursor"]?.stringValue
+        )
+    }
+
+    private static func externalAgentMigrationItem(from value: JSONValue) -> CodexExternalAgentMigrationItem? {
+        guard let itemType = value["itemType"]?.stringValue,
+              let description = value["description"]?.stringValue else {
+            return nil
+        }
+
+        let details: JSONValue?
+        if let rawDetails = value["details"], rawDetails != .null {
+            details = rawDetails
+        } else {
+            details = nil
+        }
+
+        return CodexExternalAgentMigrationItem(
+            itemType: itemType,
+            description: description,
+            cwd: value["cwd"]?.stringValue,
+            details: details
         )
     }
 

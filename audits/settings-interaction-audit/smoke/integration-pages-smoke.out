@@ -1,0 +1,193 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "appCount" : 2040,
+  "appInstallAction" : {
+    "app" : "% Arabica UAE",
+    "attempted" : true,
+    "ok" : true,
+    "status" : "app\/list：打开 % Arabica UAE 安装链接",
+    "url" : "https:\/\/chatgpt.com\/apps\/arabica-uae\/asdk_app_698cee7c18848191b0568392d52f01ed"
+  },
+  "appPreview" : [
+    {
+      "accessible" : false,
+      "description" : "Order % Arabica coffee UAE",
+      "enabled" : true,
+      "id" : "asdk_app_698cee7c18848191b0568392d52f01ed",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/arabica-uae\/asdk_app_698cee7c18848191b0568392d52f01ed",
+      "name" : "% Arabica UAE",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    },
+    {
+      "accessible" : false,
+      "description" : "Broadband, Online Network, 5G",
+      "enabled" : true,
+      "id" : "asdk_app_6963c1dcd0308191aa3857d94c4cb909",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/0-100-wifi-internet-speed-test\/asdk_app_6963c1dcd0308191aa3857d94c4cb909",
+      "name" : "0-100 WiFi Internet Speed Test",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    },
+    {
+      "accessible" : false,
+      "description" : "Work with recipes in ChatGPT!",
+      "enabled" : true,
+      "id" : "asdk_app_69c3ec0db7fc81918cc29e50d3c57643",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/1-2-3-cook\/asdk_app_69c3ec0db7fc81918cc29e50d3c57643",
+      "name" : "1-2-3-Cook!",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    },
+    {
+      "accessible" : false,
+      "description" : "Make + use lists with ChatGPT!",
+      "enabled" : true,
+      "id" : "asdk_app_6985dfc09de88191acde51ff45121169",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/1-2-3-list\/asdk_app_6985dfc09de88191acde51ff45121169",
+      "name" : "1-2-3-List",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    },
+    {
+      "accessible" : false,
+      "description" : "AI context for every 1:1",
+      "enabled" : true,
+      "id" : "asdk_app_69fa6610711c8191bffd677557adee04",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/1to1-mate\/asdk_app_69fa6610711c8191bffd677557adee04",
+      "name" : "1to1 Mate",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    },
+    {
+      "accessible" : false,
+      "description" : "Math\/Sci, Percent+Fractions...",
+      "enabled" : true,
+      "id" : "asdk_app_6952983fa5948191b986f6b93c9e80bd",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/2-2-calculator\/asdk_app_6952983fa5948191b986f6b93c9e80bd",
+      "name" : "2+2 Calculator",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    },
+    {
+      "accessible" : false,
+      "description" : "Ready... set... go!",
+      "enabled" : true,
+      "id" : "asdk_app_6963ccfca5008191a5190d17f0cce5a4",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/3-2-1-go-stopwatch\/asdk_app_6963ccfca5008191a5190d17f0cce5a4",
+      "name" : "3-2-1 Go Stopwatch",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    },
+    {
+      "accessible" : false,
+      "description" : "Find håndværkere hurtigt",
+      "enabled" : true,
+      "id" : "asdk_app_6a31181dfff0819196a718a6558e5904",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/3byggetilbud-dk\/asdk_app_6a31181dfff0819196a718a6558e5904",
+      "name" : "3byggetilbud.dk",
+      "pluginDisplayNames" : [
+
+      ],
+      "screenshotPromptCount" : 0
+    }
+  ],
+  "appsWithScreenshotMetadata" : 0,
+  "browserPluginCount" : 2,
+  "computerPluginCount" : 1,
+  "homeConnectionCards" : {
+    "email" : {
+      "connected" : false,
+      "count" : 0,
+      "names" : [
+
+      ],
+      "subtitle" : "未发现已授权邮件连接"
+    },
+    "files" : {
+      "connected" : true,
+      "count" : 2,
+      "path" : "\/Users\/jackwu\/Projects\/RaytoneCodex",
+      "subtitle" : "已读取 2 个工作区文件"
+    },
+    "messaging" : {
+      "connected" : true,
+      "count" : 2,
+      "names" : [
+        "Slack",
+        "codex-connectors-mcp"
+      ],
+      "subtitle" : "已连接 2 个消息来源"
+    },
+    "refreshed" : true,
+    "source" : "app\/list + mcpServerStatus\/list + files\/readDirectory",
+    "status" : "app\/list 2040 个 · MCP 12 个 · 文件 2 个"
+  },
+  "integrationErrors" : [
+
+  ],
+  "integrationStatus" : "集成：2040 个 app · 190 个插件 · 12 个 MCP · 3 个权限配置",
+  "mcpServerCount" : 12,
+  "ok" : true,
+  "permissionProfileCount" : 3,
+  "remoteControl" : {
+    "environmentID" : "env_e_6a07e277b42883319b07ef53ad54da6f",
+    "serverName" : "Jack-Mac16.local",
+    "status" : "errored"
+  },
+  "requirements" : {
+    "allowAppSnapshots" : null,
+    "allowedApprovalPolicies" : [
+
+    ],
+    "allowedPermissionProfiles" : {
+
+    },
+    "allowedSandboxModes" : [
+
+    ],
+    "allowLockedComputerUse" : null,
+    "defaultPermissions" : "",
+    "enforceResidency" : "",
+    "featureRequirements" : {
+
+    },
+    "managedHookEventCounts" : {
+
+    },
+    "networkDomains" : {
+
+    },
+    "networkEnabled" : null,
+    "networkUnixSockets" : {
+
+    }
+  },
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex",
+  "worktreeErrors" : [
+
+  ],
+  "worktrees" : [
+    "\/Users\/jackwu\/Projects\/RaytoneCodex"
+  ],
+  "worktreeStatus" : "git worktree：1 个工作树"
+}

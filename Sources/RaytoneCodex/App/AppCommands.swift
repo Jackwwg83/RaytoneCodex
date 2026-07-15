@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The native macOS menu bar for RaytoneCodex. Standard 编辑 / 窗口 menus are
+/// The native macOS menu bar for RaytoneX. Standard 编辑 / 窗口 menus are
 /// provided by the system; this adds About, 文件 items, 视图, and the custom
 /// 对话 / 工具 / 帮助 menus, all wired to the session store.
 struct AppCommands: Commands {
@@ -10,7 +10,7 @@ struct AppCommands: Commands {
     var body: some Commands {
         // App menu → About
         CommandGroup(replacing: .appInfo) {
-            Button("关于 RaytoneCodex") {
+            Button("关于 RaytoneX") {
                 NSApplication.shared.orderFrontStandardAboutPanel(nil)
             }
         }
@@ -90,7 +90,13 @@ struct AppCommands: Commands {
 
         // 帮助
         CommandGroup(replacing: .help) {
-            Button("RaytoneCodex 帮助") {
+            Button("运行时诊断") {
+                Task { await store.diagnoseWorkspaceRuntime() }
+            }
+
+            Divider()
+
+            Button("RaytoneX 帮助") {
                 if let url = URL(string: "https://github.com/openai/codex") {
                     NSWorkspace.shared.open(url)
                 }

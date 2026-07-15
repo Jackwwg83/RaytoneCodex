@@ -65,7 +65,6 @@ outputFormat = "reasoning_details"
 id = "local-vllm"
 name = "Local vLLM"
 base_url = "http://127.0.0.1:8000/v1"
-api_key = "local"
+requires_api_key = false
 model = "local-model"
 models = ["local-model"]
-

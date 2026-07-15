@@ -1,0 +1,20 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943",
+  "configExists" : true,
+  "configSourceObserved" : true,
+  "configStatus" : "fs\/createDirectory + fs\/getMetadata (+ fs\/writeFile if missing)：已准备 config.toml · \/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943\/config.toml",
+  "configURL" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943\/config.toml",
+  "directorySourceObserved" : true,
+  "directoryStatus" : "fs\/createDirectory + fs\/getMetadata：已准备 Codex home 目录 · \/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943",
+  "homeExists" : true,
+  "homeURL" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943",
+  "ok" : true,
+  "pluginExists" : true,
+  "pluginsURL" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943\/plugins",
+  "skillsExists" : true,
+  "skillsURL" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943\/skills",
+  "trimmedURL" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexHomeDirectorySmoke-5CFBE375-4EA3-4B5E-9132-9741CA14A943\/plugins"
+}

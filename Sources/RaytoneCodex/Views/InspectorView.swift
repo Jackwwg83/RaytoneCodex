@@ -70,6 +70,7 @@ struct InspectorView: View {
             if store.filePanelPath != store.workspacePath || store.fileEntries.isEmpty {
                 await store.loadFilePanelDirectory(store.workspacePath)
             }
+            await store.refreshInspectorRecommendedFiles()
         }
     }
 
@@ -172,7 +173,7 @@ private struct FilesToolPanel: View {
                 .buttonStyle(GhostIconButtonStyle())
                 .help("刷新")
                 Button {
-                    store.openSelectedFileInDefaultTarget()
+                    Task { await store.openSelectedFileInDefaultTarget() }
                 } label: {
                     Image(systemName: "arrow.up.forward.app")
                         .font(.system(size: 13, weight: .medium))
@@ -279,6 +280,14 @@ private struct FilesToolPanel: View {
                                 .font(.system(size: 12.5, weight: .semibold))
                                 .lineLimit(1)
                             Spacer(minLength: 0)
+                            Button {
+                                Task { await store.addPreviewedFileReferenceToPrompt() }
+                            } label: {
+                                Label("引用", systemImage: "text.badge.plus")
+                                    .font(.system(size: 11.5, weight: .medium))
+                            }
+                            .buttonStyle(ChipButtonStyle())
+                            .help("把当前文件加入下次对话")
                             if preview.isTruncated {
                                 Text("已截断")
                                     .font(.system(size: 10.5, weight: .medium))
@@ -419,6 +428,14 @@ private struct TerminalToolPanel: View {
                 .help("返回工具")
             } trailing: {
                 Button {
+                    Task { await store.cleanThreadBackgroundTerminals() }
+                } label: {
+                    Image(systemName: "eraser")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("清理 Codex 后台终端")
+                Button {
                     withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
                 } label: {
                     Image(systemName: "sidebar.trailing")
@@ -460,7 +477,26 @@ private struct TerminalToolPanel: View {
                     }
                     .buttonStyle(GhostIconButtonStyle(size: 30))
                     .help(store.terminalIsRunning ? "停止" : "运行")
+                    Button {
+                        Task { await store.runThreadShellCommandFromTerminal() }
+                    } label: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 30))
+                    .disabled(store.terminalIsRunning || store.terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("作为当前 Codex 线程 Shell 运行")
                 }
+
+                TerminalSizeControls(store: store)
+                Text(store.threadShellCommandStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                Text(store.backgroundTerminalCleanStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
             .padding(12)
             .overlay(alignment: .bottom) { Hairline() }
@@ -542,6 +578,15 @@ struct BottomTerminalToolPanel: View {
                 .help("移到右侧")
 
                 Button {
+                    Task { await store.cleanThreadBackgroundTerminals() }
+                } label: {
+                    Image(systemName: "eraser")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle())
+                .help("清理 Codex 后台终端")
+
+                Button {
                     withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
                 } label: {
                     Image(systemName: "xmark")
@@ -556,31 +601,51 @@ struct BottomTerminalToolPanel: View {
             .overlay(alignment: .top) { Hairline() }
             .overlay(alignment: .bottom) { Hairline() }
 
-            HStack(spacing: 8) {
-                TextField(store.terminalIsRunning ? "发送 stdin" : "输入 shell 命令", text: $store.terminalCommand)
-                    .textFieldStyle(.plain)
-                    .font(Theme.mono(12))
-                    .padding(.horizontal, 10)
-                    .frame(height: 30)
-                    .background(Theme.fill)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
-                    .onSubmit {
-                        Task { await store.runTerminalCommand() }
-                    }
-                Button {
-                    Task {
-                        if store.terminalIsRunning {
-                            await store.stopTerminalCommand()
-                        } else {
-                            await store.runTerminalCommand()
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField(store.terminalIsRunning ? "发送 stdin" : "输入 shell 命令", text: $store.terminalCommand)
+                        .textFieldStyle(.plain)
+                        .font(Theme.mono(12))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Theme.fill)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+                        .onSubmit {
+                            Task { await store.runTerminalCommand() }
                         }
+                    Button {
+                        Task {
+                            if store.terminalIsRunning {
+                                await store.stopTerminalCommand()
+                            } else {
+                                await store.runTerminalCommand()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: store.terminalIsRunning ? "stop.fill" : "play.fill")
+                            .font(.system(size: 12, weight: .semibold))
                     }
-                } label: {
-                    Image(systemName: store.terminalIsRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                    .buttonStyle(GhostIconButtonStyle(size: 30))
+                    .help(store.terminalIsRunning ? "停止" : "运行")
+                    Button {
+                        Task { await store.runThreadShellCommandFromTerminal() }
+                    } label: {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 30))
+                    .disabled(store.terminalIsRunning || store.terminalCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help("作为当前 Codex 线程 Shell 运行")
                 }
-                .buttonStyle(GhostIconButtonStyle(size: 30))
-                .help(store.terminalIsRunning ? "停止" : "运行")
+                TerminalSizeControls(store: store)
+                Text(store.threadShellCommandStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                Text(store.backgroundTerminalCleanStatusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -617,6 +682,70 @@ struct BottomTerminalToolPanel: View {
         .frame(height: 260)
         .frame(maxWidth: .infinity)
         .background(Theme.panel)
+    }
+}
+
+private struct TerminalSizeControls: View {
+    @ObservedObject var store: SessionStore
+
+    private let presets: [(rows: Int, cols: Int)] = [
+        (24, 80),
+        (30, 100),
+        (40, 120),
+        (42, 132)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(presets, id: \.cols) { preset in
+                        Button("\(preset.rows)×\(preset.cols)") {
+                            Task { await store.resizeTerminal(rows: preset.rows, cols: preset.cols) }
+                        }
+                    }
+                } label: {
+                    Label("\(store.terminalRows)×\(store.terminalCols)", systemImage: "rectangle.inset.filled")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .menuStyle(.button)
+                .fixedSize()
+
+                Stepper("行 \(store.terminalRows)", value: $store.terminalRows, in: 10...80, step: 1)
+                    .font(.system(size: 11.5))
+                    .labelsHidden()
+                    .help("终端行数")
+                Text("\(store.terminalRows)")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 22, alignment: .trailing)
+
+                Stepper("列 \(store.terminalCols)", value: $store.terminalCols, in: 40...240, step: 5)
+                    .font(.system(size: 11.5))
+                    .labelsHidden()
+                    .help("终端列数")
+                Text("\(store.terminalCols)")
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 30, alignment: .trailing)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    Task { await store.resizeTerminal() }
+                } label: {
+                    Image(systemName: "arrow.up.left.and.down.right.magnifyingglass")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .buttonStyle(GhostIconButtonStyle(size: 26))
+                .help(store.terminalIsRunning ? "应用到当前终端" : "保存为下次运行尺寸")
+            }
+
+            Text(store.terminalResizeStatusText)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+        }
     }
 }
 
@@ -742,6 +871,13 @@ private struct SideChatToolPanel: View {
                 HStack {
                     Spacer(minLength: 0)
                     Button {
+                        Task { await store.injectSideChatContext() }
+                    } label: {
+                        Label("注入上下文", systemImage: "text.badge.plus")
+                    }
+                    .buttonStyle(ChipButtonStyle())
+                    .disabled(store.isRunning || store.sideChatDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button {
                         Task { await store.sendSideChatMessage() }
                     } label: {
                         Label(store.isRunning ? "继续发送" : "发送", systemImage: "arrow.up")
@@ -777,6 +913,15 @@ private struct SideChatToolPanel: View {
             sideChatBubble(title: "提示", text: notice.text, symbol: "exclamationmark.circle", accent: Theme.warning)
         case let .approval(request):
             sideChatBubble(title: "审批", text: request.title, symbol: "checkmark.shield", accent: Theme.warning)
+        case let .mcpElicitation(request):
+            sideChatBubble(title: "MCP 输入", text: request.message, symbol: "puzzlepiece.extension", accent: Theme.info)
+        case let .toolUserInput(request):
+            sideChatBubble(
+                title: "工具输入",
+                text: request.questions.first?.question ?? "请求补充信息",
+                symbol: "questionmark.bubble",
+                accent: Theme.info
+            )
         case let .reasoning(block):
             sideChatBubble(title: block.title, text: block.detail, symbol: "brain", accent: Theme.textSecondary)
         case let .fileChange(change):
@@ -829,60 +974,6 @@ private func toolHeader<Leading: View, Trailing: View>(
     .frame(height: Theme.Layout.headerHeight)
     .background(.bar)
     .overlay(alignment: .bottom) { Hairline() }
-}
-
-private struct ToolPlaceholderPanel: View {
-    let title: String
-    let symbol: String
-    let message: String
-    @ObservedObject var store: SessionStore
-    @Binding var showInspector: Bool
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Button {
-                    store.toolPanel = .launcher
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .buttonStyle(GhostIconButtonStyle())
-                .help("返回工具")
-
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer(minLength: 0)
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) { showInspector = false }
-                } label: {
-                    Image(systemName: "sidebar.trailing")
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .buttonStyle(GhostIconButtonStyle())
-                .help("关闭面板")
-            }
-            .padding(.horizontal, 12)
-            .frame(height: Theme.Layout.headerHeight)
-            .background(.bar)
-            .overlay(alignment: .bottom) { Hairline() }
-
-            VStack(spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(Theme.textTertiary)
-                Text(message)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(width: Theme.Layout.inspectorWidth)
-        .frame(maxHeight: .infinity)
-        .background(Theme.panel)
-        .overlay(alignment: .leading) { Hairline(axis: .vertical) }
-    }
 }
 
 private struct RecommendedRow: View {
