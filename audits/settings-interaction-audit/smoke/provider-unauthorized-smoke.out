@@ -1,0 +1,23 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "baseURL" : "http:\/\/127.0.0.1:62964\/v1",
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexProviderUnauthorizedSmoke-1A31AD5E-F1DD-4722-B17E-32123DBFA054",
+  "connectionDetail" : "Unauthorized Provider 拒绝了当前 API Key，请更新后重新测试。",
+  "connectionTitle" : "Provider 授权失败",
+  "ok" : true,
+  "providerConnectionDetail" : "上游返回 HTTP 401 · {\"error\":{\"message\":\"Raytone smoke upstream rejected the API key\",\"type\":\"authentication_error\"}} · 请在「模型与提供方」更新 Key 后重新测试",
+  "providerConnectionStatus" : "Unauthorized Provider API Key 无效或无权限",
+  "providerID" : "unauthorized-7E7984E9",
+  "requestLog" : "{\"method\":\"GET\",\"path\":\"\/v1\/models\",\"authorization\":\"Bearer raytone-bad-key\"}\n",
+  "runtimeCatalogErrors" : [
+    "上游返回 HTTP 401 · {\"error\":{\"message\":\"Raytone smoke upstream rejected the API key\",\"type\":\"authentication_error\"}} · 请在「模型与提供方」更新 Key 后重新测试"
+  ],
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "sidecar" : "Unauthorized Provider 授权失败",
+  "upstreamRequestVerified" : true,
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

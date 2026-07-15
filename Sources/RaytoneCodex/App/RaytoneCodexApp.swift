@@ -10,7 +10,7 @@ struct RaytoneCodexApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Raytone Codex", id: "main") {
+        WindowGroup("RaytoneX", id: "main") {
             ContentView(store: sessionStore)
                 .frame(minWidth: 1220, minHeight: 760)
                 .preferredColorScheme(sessionStore.preferredColorScheme)
@@ -37,7 +37,7 @@ struct RaytoneCodexApp: App {
         }
 
         MenuBarExtra(
-            "RaytoneCodex",
+            "RaytoneX",
             systemImage: "sparkles",
             isInserted: Binding(
                 get: { sessionStore.desktopShowInMenuBar },
@@ -48,7 +48,7 @@ struct RaytoneCodexApp: App {
                 }
             )
         ) {
-            Button("显示 RaytoneCodex") {
+            Button("显示 RaytoneX") {
                 showMainWindow()
             }
             Button("新建对话") {
@@ -56,7 +56,7 @@ struct RaytoneCodexApp: App {
                 showMainWindow()
             }
             Divider()
-            Button("退出 RaytoneCodex") {
+            Button("退出 RaytoneX") {
                 NSApp.terminate(nil)
             }
         }

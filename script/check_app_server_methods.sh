@@ -96,6 +96,15 @@ check_split_schema_titles() {
       printf '%s:<missing title>\n' "${file#$ROOT_DIR/}" >>"$output"
       continue
     fi
+    if jq -e --arg title "$title" '.definitions[$title] != null' "$root_schema" >/dev/null; then
+      continue
+    fi
+    if [[ "$title" == Nullable_* ]]; then
+      local non_nullable_title="${title#Nullable_}"
+      if jq -e --arg title "$non_nullable_title" '.definitions[$title] != null' "$root_schema" >/dev/null; then
+        continue
+      fi
+    fi
     if ! jq -e --arg title "$title" '.definitions[$title] != null' "$root_schema" >/dev/null; then
       printf '%s:%s\n' "${file#$ROOT_DIR/}" "$title" >>"$output"
     fi

@@ -1,0 +1,16 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.10s)
+{
+  "creditsStatus" : "冷却中，稍后再试",
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAddCreditsNudgeSmoke-F5CEECAE-3FF7-45DC-9EE0-51E43E9027F4\/fake-codex",
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAddCreditsNudgeSmoke-F5CEECAE-3FF7-45DC-9EE0-51E43E9027F4\/requests.jsonl",
+  "requestLogPreview" : "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"version\":\"0.1.0\",\"title\":\"RaytoneCodex\",\"name\":\"RaytoneCodex\"},\"capabilities\":{\"experimentalApi\":true,\"optOutNotificationMethods\":[]}}}\n{\"method\":\"initialized\",\"params\":{}}\n{\"method\":\"account\/sendAddCreditsNudgeEmail\",\"id\":2,\"params\":{\"creditType\":\"usage_limit\"}}\n{\"method\":\"account\/sendAddCreditsNudgeEmail\",\"id\":3,\"params\":{\"creditType\":\"credits\"}}\n",
+  "runtimeCatalogErrors" : [
+
+  ],
+  "runtimeCatalogStatus" : "account\/sendAddCreditsNudgeEmail：冷却中，稍后再试",
+  "usageLimitStatus" : "已发送提醒邮件",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAddCreditsNudgeSmoke-F5CEECAE-3FF7-45DC-9EE0-51E43E9027F4"
+}

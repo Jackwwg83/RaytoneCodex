@@ -1,0 +1,46 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "afterClientCount" : 1,
+  "afterClients" : [
+    {
+      "appVersion" : "0.1.0",
+      "clientID" : "client-keep",
+      "deviceModel" : "Mac",
+      "deviceType" : "desktop",
+      "displayName" : "Raytone Keep Mac",
+      "lastSeenAt" : 1783300100,
+      "osVersion" : "26.0",
+      "platform" : "macOS"
+    }
+  ],
+  "beforeClientCount" : 2,
+  "beforeClients" : [
+    {
+      "appVersion" : "0.1.0",
+      "clientID" : "client-smoke",
+      "deviceModel" : "iPhone",
+      "deviceType" : "phone",
+      "displayName" : "Raytone Smoke iPhone",
+      "lastSeenAt" : 1783300000,
+      "osVersion" : "26.0",
+      "platform" : "iOS"
+    },
+    {
+      "appVersion" : "0.1.0",
+      "clientID" : "client-keep",
+      "deviceModel" : "Mac",
+      "deviceType" : "desktop",
+      "displayName" : "Raytone Keep Mac",
+      "lastSeenAt" : 1783300100,
+      "osVersion" : "26.0",
+      "platform" : "macOS"
+    }
+  ],
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexRemoteRevokeSmoke-0810F36F-6AB5-4826-A3CB-DB34717D2EDE\/fake-codex",
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexRemoteRevokeSmoke-0810F36F-6AB5-4826-A3CB-DB34717D2EDE\/requests.jsonl",
+  "requestLogPreview" : "{\n\"id\": 1,\n\"params\": {\n\"clientInfo\": {\n\"title\": \"RaytoneCodex\",\n\"version\": \"0.1.0\",\n\"name\": \"RaytoneCodex\"\n},\n\"capabilities\": {\n\"experimentalApi\": true,\n\"optOutNotificationMethods\": []\n}\n},\n\"method\": \"initialize\"\n}\n{\n\"method\": \"initialized\",\n\"params\": {}\n}\n{\n\"id\": 2,\n\"params\": {\n\"order\": \"asc\",\n\"limit\": 10,\n\"environmentId\": \"env-smoke\"\n},\n\"method\": \"remoteControl\/client\/list\"\n}\n{\n\"params\": {\n\"clientId\": \"client-smoke\",\n\"environmentId\": \"env-smoke\"\n},\n\"id\": 3,\n\"method\": \"remoteControl\/client\/revoke\"\n}\n{\n\"id\": 4,\n\"method\": \"remoteControl\/client\/list\",\n\"params\": {\n\"environmentId\": \"env-smoke\",\n\"order\": \"asc\",\n\"limit\": 10\n}\n}\n",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexRemoteRevokeSmoke-0810F36F-6AB5-4826-A3CB-DB34717D2EDE"
+}

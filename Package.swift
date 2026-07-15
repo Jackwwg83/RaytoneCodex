@@ -8,15 +8,16 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "RaytoneCodex", targets: ["RaytoneCodex"]),
+        .executable(name: "RaytoneX", targets: ["RaytoneX"]),
         .executable(name: "RaytoneCodexCoreChecks", targets: ["RaytoneCodexCoreChecks"]),
         .library(name: "RaytoneCodexCore", targets: ["RaytoneCodexCore"])
     ],
     targets: [
         .target(name: "RaytoneCodexCore"),
         .executableTarget(
-            name: "RaytoneCodex",
-            dependencies: ["RaytoneCodexCore"]
+            name: "RaytoneX",
+            dependencies: ["RaytoneCodexCore"],
+            path: "Sources/RaytoneCodex"
         ),
         .executableTarget(
             name: "RaytoneCodexCoreChecks",

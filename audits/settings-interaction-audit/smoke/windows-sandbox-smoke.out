@@ -1,0 +1,24 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.08s)
+{
+  "chroniclePrompt" : "请使用 Chronicle 屏幕上下文帮助我理解当前 Mac 上正在进行的工作，并用中文给出下一步建议。\n\n来源：mcpServerStatus\/list · Chronicle · authenticated",
+  "chroniclePromptInserted" : true,
+  "chronicleRoute" : "thread",
+  "chronicleRuntime" : {
+    "available" : true,
+    "detail" : "mcpServerStatus\/list：Chronicle · authenticated",
+    "source" : "mcpServerStatus\/list",
+    "status" : "已连接"
+  },
+  "chronicleStatus" : "mcpServerStatus\/list：已把 Chronicle 上下文请求放入输入框",
+  "chronicleToolPanel" : "launcher",
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\/fake-codex",
+  "ok" : true,
+  "readinessStatus" : "windowsSandbox\/readiness：需要更新",
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\/requests.jsonl",
+  "requestLogPreview" : "{\"id\":1,\"params\":{\"capabilities\":{\"optOutNotificationMethods\":[],\"experimentalApi\":true},\"clientInfo\":{\"title\":\"RaytoneCodex\",\"version\":\"0.1.0\",\"name\":\"RaytoneCodex\"}},\"method\":\"initialize\"}\n{\"params\":{},\"method\":\"initialized\"}\n{\"id\":2,\"method\":\"windowsSandbox\/readiness\"}\n{\"id\":3,\"params\":{\"mode\":\"unelevated\",\"cwd\":\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\"},\"method\":\"windowsSandbox\/setupStart\"}\n{\"method\":\"windowsSandbox\/setupCompleted\",\"params\":{\"mode\":\"unelevated\",\"success\":true,\"error\":null}}\n{\"id\":4,\"params\":{\"cwds\":[\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\"]},\"method\":\"plugin\/list\"}\n{\"id\":5,\"params\":{\"cwds\":[\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\"]},\"method\":\"plugin\/installed\"}\n{\"id\":6,\"params\":{},\"method\":\"plugin\/share\/list\"}\n{\"id\":7,\"params\":{\"forceReload\":true,\"cwds\":[\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\"]},\"method\":\"skills\/list\"}\n{\"id\":8,\"method\":\"config\/read\",\"params\":{\"includeLayers\":true,\"cwd\":\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\"}}\n{\"id\":9,\"method\":\"hooks\/list\",\"params\":{\"cwds\":[\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D\"]}}\n{\"id\":10,\"method\":\"mcpServerStatus\/list\",\"params\":{\"limit\":100,\"detail\"",
+  "setupStatus" : "windowsSandbox\/setupStart：已启动 非管理员模式",
+  "started" : true,
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexWindowsSandboxSmoke-1A2D29B0-AA90-4407-A99E-E149A921709D"
+}

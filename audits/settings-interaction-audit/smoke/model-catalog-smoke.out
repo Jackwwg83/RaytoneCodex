@@ -1,0 +1,88 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "catalogCount" : 4,
+  "defaultMenuTitle" : "GPT-5.5 · 推理 medium · 个性",
+  "defaultModelID" : "gpt-5.5",
+  "modelsPreview" : [
+    {
+      "defaultReasoningEffort" : "medium",
+      "displayName" : "GPT-5.5",
+      "id" : "gpt-5.5",
+      "inputModalities" : [
+        "text",
+        "image"
+      ],
+      "isDefault" : true,
+      "model" : "gpt-5.5",
+      "supportedReasoningEfforts" : [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "supportsPersonality" : true
+    },
+    {
+      "defaultReasoningEffort" : "medium",
+      "displayName" : "GPT-5.4",
+      "id" : "gpt-5.4",
+      "inputModalities" : [
+        "text",
+        "image"
+      ],
+      "isDefault" : false,
+      "model" : "gpt-5.4",
+      "supportedReasoningEfforts" : [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "supportsPersonality" : true
+    },
+    {
+      "defaultReasoningEffort" : "medium",
+      "displayName" : "GPT-5.4-Mini",
+      "id" : "gpt-5.4-mini",
+      "inputModalities" : [
+        "text",
+        "image"
+      ],
+      "isDefault" : false,
+      "model" : "gpt-5.4-mini",
+      "supportedReasoningEfforts" : [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "supportsPersonality" : true
+    },
+    {
+      "defaultReasoningEffort" : "high",
+      "displayName" : "GPT-5.3-Codex-Spark",
+      "id" : "gpt-5.3-codex-spark",
+      "inputModalities" : [
+        "text"
+      ],
+      "isDefault" : false,
+      "model" : "gpt-5.3-codex-spark",
+      "supportedReasoningEfforts" : [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "supportsPersonality" : true
+    }
+  ],
+  "ok" : true,
+  "providerModelCount" : 4,
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "status" : "已读取 4 个模型",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

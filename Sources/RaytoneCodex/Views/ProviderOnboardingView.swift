@@ -40,7 +40,7 @@ struct ProviderOnboardingView: View {
                 Text("连接模型提供方")
                     .font(.system(size: 21, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
-                Text("选择一个第三方模型提供方，RaytoneCodex 会启动本地代理，把 Codex app-server 的 Responses 请求转成对应上游的 Chat Completions。")
+                Text("选择一个第三方模型提供方，RaytoneX 会启动本地代理，把 Codex app-server 的 Responses 请求转成对应上游的 Chat Completions。")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

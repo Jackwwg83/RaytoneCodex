@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async {
             self.localizeMainMenuTitles()
             NSApp.windows
-                .filter { $0.title == "Raytone Codex" }
+                .filter { $0.title == "RaytoneX" }
                 .forEach { window in
                     window.setFrame(
                         NSRect(origin: window.frame.origin, size: NSSize(width: 1440, height: 900)),

@@ -1,0 +1,19 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.08s)
+{
+  "fileEntries" : [
+    "SETTINGS.md"
+  ],
+  "filePanelPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexSettingsProjectSmoke-C66EEBE1-9BDD-45BC-8B5D-25AC5E3A2372\/second",
+  "filePanelStatus" : "1 项 · 已监听",
+  "ok" : true,
+  "route" : "settings",
+  "runtimeErrors" : [
+
+  ],
+  "runtimeStatus" : "config\/read：2 个配置层",
+  "selectedProject" : "设置项目二",
+  "settingsPane" : "configuration",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexSettingsProjectSmoke-C66EEBE1-9BDD-45BC-8B5D-25AC5E3A2372\/second"
+}

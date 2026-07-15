@@ -1,0 +1,21 @@
+[0/1] Planning build
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.09s)
+{
+  "accountKind" : "notLoggedIn",
+  "clipboardLength" : 254,
+  "clipboardPreview" : "RaytoneCodex 本地状态\nProvider：OpenAI\n模型：gpt-5.5\nProvider 类型：Codex 原生 OpenAI\nKey：已配置\nSidecar：未启动\nProvider 用量：未读取\n运行时：Environment override · codex-cli 0.0.0\n工作区：~\/Projects\/RaytoneCodex\n当前对话：新对话\n对话变更摘要：0 个文件，+0 −0\n来源：RaytoneCodex 本地状态，不读取 OpenAI account\/* 云端接口",
+  "errors" : [
+
+  ],
+  "ok" : true,
+  "profileEditRouteOK" : true,
+  "profileEditTarget" : "personalization",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "source" : "RaytoneCodex 本地状态",
+  "status" : "已复制本地状态摘要",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

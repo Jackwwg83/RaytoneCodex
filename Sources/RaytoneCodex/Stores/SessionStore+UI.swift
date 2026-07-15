@@ -1142,7 +1142,7 @@ extension SessionStore {
             return
         }
         browserURL = sampleURL
-        browserTitle = "RaytoneCodex 本地示例"
+        browserTitle = "RaytoneX 本地示例"
         browserCanGoBack = false
         browserCanGoForward = false
         browserNavigationCommand = nil

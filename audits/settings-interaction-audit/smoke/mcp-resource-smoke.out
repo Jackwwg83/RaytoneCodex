@@ -1,0 +1,32 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "authStatus" : "unsupported",
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexMCPResourceSmoke-87ABE986-78E5-4806-8487-0E0B2F65ADB9\/codex-home",
+  "contentCount" : 1,
+  "ok" : true,
+  "readStatus" : "mcpServer\/resource\/read：模板 raytone-smoke-template · 1 段内容",
+  "resource" : {
+    "displayName" : "Raytone MCP Smoke Resource",
+    "mimeType" : "text\/plain",
+    "name" : "raytone-smoke-resource",
+    "uri" : "raytone:\/\/resource\/smoke"
+  },
+  "resourceCount" : 1,
+  "resourcePreview" : "Raytone MCP resource smoke OK D4317149",
+  "resourceTemplate" : {
+    "concreteURI" : "raytone:\/\/resource\/smoke\/from-template",
+    "displayName" : "Raytone MCP Smoke Template",
+    "mimeType" : "text\/plain",
+    "name" : "raytone-smoke-template",
+    "uriTemplate" : "raytone:\/\/resource\/smoke\/{name}"
+  },
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "serverName" : "raytone_resource",
+  "serverTitle" : "Raytone MCP Resource Smoke",
+  "templatePreview" : "Raytone MCP resource smoke OK D4317149",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

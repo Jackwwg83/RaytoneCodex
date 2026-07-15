@@ -1,0 +1,21 @@
+[0/1] Planning build
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.08s)
+{
+  "configLayerCount" : 3,
+  "legacyFormRemoved" : true,
+  "ok" : true,
+  "route" : "settings",
+  "runtimeErrors" : [
+
+  ],
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeStatus" : "config\/read：3 个配置层",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "settingsPane" : "configuration",
+  "settingsSceneSurface" : "SettingsRouteView",
+  "source" : "Settings scene -> SettingsRouteView -> config\/read",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

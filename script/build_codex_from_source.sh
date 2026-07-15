@@ -8,7 +8,7 @@ CODEX_OUT="$BUILD_DIR/codex"
 SCHEMA_DIR="$ROOT_DIR/Schemas"
 EXPERIMENTAL_SCHEMA_DIR="$SCHEMA_DIR/experimental"
 
-PINNED_COMMIT="${RAYTONE_CODEX_SOURCE_COMMIT:-18ce671fed526be9033907bd88a3a63c6888bbf4}"
+PINNED_COMMIT="${RAYTONE_CODEX_SOURCE_COMMIT:-rust-v0.144.4}"
 SOURCE_REMOTE="${RAYTONE_CODEX_SOURCE_REMOTE:-https://github.com/openai/codex.git}"
 
 if [[ -d "$SOURCE_DIR" && ! -d "$SOURCE_DIR/.git" ]]; then
@@ -25,11 +25,14 @@ if [[ ! -d "$SOURCE_DIR/.git" ]]; then
 fi
 
 if [[ -d "$SOURCE_REMOTE/.git" ]]; then
-  git -C "$SOURCE_DIR" fetch origin "$PINNED_COMMIT"
+  git -C "$SOURCE_DIR" fetch origin "refs/tags/$PINNED_COMMIT:refs/tags/$PINNED_COMMIT" \
+    || git -C "$SOURCE_DIR" fetch origin "$PINNED_COMMIT"
 else
-  git -C "$SOURCE_DIR" fetch --depth 1 origin "$PINNED_COMMIT"
+  git -C "$SOURCE_DIR" fetch --depth 1 origin "refs/tags/$PINNED_COMMIT:refs/tags/$PINNED_COMMIT" \
+    || git -C "$SOURCE_DIR" fetch --depth 1 origin "$PINNED_COMMIT"
 fi
-git -C "$SOURCE_DIR" switch --detach "$PINNED_COMMIT"
+git -C "$SOURCE_DIR" switch --detach "$PINNED_COMMIT" \
+  || git -C "$SOURCE_DIR" switch --detach FETCH_HEAD
 
 mkdir -p "$BUILD_DIR"
 (

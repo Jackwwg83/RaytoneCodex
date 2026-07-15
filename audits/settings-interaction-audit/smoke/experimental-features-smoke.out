@@ -1,0 +1,17 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "authFeatureFinallyEnabled" : true,
+  "authFeatureInitiallyEnabled" : false,
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExperimentalFeaturesSmoke-7D6E0621-CFCE-4F9E-9C40-966DF765D39E\/fake-codex",
+  "initialFeatureCount" : 2,
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExperimentalFeaturesSmoke-7D6E0621-CFCE-4F9E-9C40-966DF765D39E\/requests.jsonl",
+  "requestLogPreview" : "{\"id\":1,\"params\":{\"capabilities\":{\"optOutNotificationMethods\":[],\"experimentalApi\":true},\"clientInfo\":{\"title\":\"RaytoneCodex\",\"name\":\"RaytoneCodex\",\"version\":\"0.1.0\"}},\"method\":\"initialize\"}\n{\"params\":{},\"method\":\"initialized\"}\n{\"method\":\"experimentalFeature\/list\",\"params\":{\"limit\":200},\"id\":2}\n{\"method\":\"experimentalFeature\/enablement\/set\",\"params\":{\"enablement\":{\"auth_elicitation\":true}},\"id\":3}\n{\"method\":\"experimentalFeature\/list\",\"params\":{\"limit\":200},\"id\":4}\n",
+  "runtimeCatalogErrors" : [
+
+  ],
+  "runtimeExperimentalFeaturesStatus" : "experimentalFeature\/enablement\/set：auth_elicitation 已开启",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExperimentalFeaturesSmoke-7D6E0621-CFCE-4F9E-9C40-966DF765D39E"
+}

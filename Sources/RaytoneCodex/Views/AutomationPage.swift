@@ -257,7 +257,7 @@ struct AutomationPage: View {
                 .components(separatedBy: .newlines)
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             if lines.isEmpty {
-                Text("运行包含 UserPromptSubmit 的 Codex 对话后，这里会显示 RaytoneCodex hook 写出的 JSONL 事件。")
+                Text("运行包含 UserPromptSubmit 的 Codex 对话后，这里会显示 RaytoneX hook 写出的 JSONL 事件。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)

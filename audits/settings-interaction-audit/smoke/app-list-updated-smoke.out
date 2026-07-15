@@ -1,0 +1,101 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.06s)
+{
+  "appCount" : 1,
+  "appPreview" : [
+    {
+      "accessible" : true,
+      "category" : "开发工具",
+      "description" : "通过 app\/list\/updated 异步返回的应用目录项。",
+      "developer" : "Raytone",
+      "enabled" : true,
+      "id" : "raytone-snapshot-app",
+      "installURL" : "https:\/\/chatgpt.com\/apps\/raytone\/snapshot",
+      "name" : "Raytone Snapshot",
+      "pluginDisplayNames" : [
+        "Browser"
+      ],
+      "screenshotPrompts" : [
+        "打开设置并截取主窗口"
+      ]
+    }
+  ],
+  "appsWithScreenshotMetadata" : 1,
+  "configValueWriteCount" : 2,
+  "disabledApp" : {
+    "enabled" : false,
+    "id" : "raytone-snapshot-app",
+    "name" : "Raytone Snapshot"
+  },
+  "disabledStatus" : "config\/value\/write + app\/list：Raytone Snapshot 已停用",
+  "disableOK" : true,
+  "enabledApp" : {
+    "enabled" : true,
+    "id" : "raytone-snapshot-app",
+    "name" : "Raytone Snapshot"
+  },
+  "enabledStatus" : "config\/value\/write + app\/list：Raytone Snapshot 已启用",
+  "enableOK" : true,
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAppListUpdatedSmoke-8C45FEE6-385A-4714-B5B9-69EB642ED452\/fake-codex",
+  "initialAppStatus" : "app\/list\/updated：1 个 app · 1 个含快照说明",
+  "ok" : true,
+  "permissionProfiles" : [
+    {
+      "description" : "只读内置配置",
+      "id" : ":read-only"
+    },
+    {
+      "description" : "工作区写入内置配置",
+      "id" : ":workspace"
+    }
+  ],
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAppListUpdatedSmoke-8C45FEE6-385A-4714-B5B9-69EB642ED452\/requests.jsonl",
+  "requestLogPreview" : "{\"params\":{\"capabilities\":{\"experimentalApi\":true,\"optOutNotificationMethods\":[]},\"clientInfo\":{\"name\":\"RaytoneCodex\",\"version\":\"0.1.0\",\"title\":\"RaytoneCodex\"}},\"id\":1,\"method\":\"initialize\"}\n{\"params\":{},\"method\":\"initialized\"}\n{\"method\":\"configRequirements\/read\",\"id\":2}\n{\"method\":\"app\/list\",\"id\":3,\"params\":{\"forceRefetch\":true,\"limit\":100}}\n{\"params\":{\"capabilities\":{\"experimentalApi\":true,\"optOutNotificationMethods\":[]},\"clientInfo\":{\"version\":\"0.1.0\",\"name\":\"RaytoneCodex\",\"title\":\"RaytoneCodex\"}},\"method\":\"initialize\",\"id\":1}\n{\"method\":\"initialized\",\"params\":{}}\n{\"method\":\"remoteControl\/status\/read\",\"id\":2}\n{\"params\":{\"cwd\":\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAppListUpdatedSmoke-8C45FEE6-385A-4714-B5B9-69EB642ED452\",\"limit\":100},\"method\":\"permissionProfile\/list\",\"id\":4}\n{\"method\":\"windowsSandbox\/readiness\",\"id\":5}\n{\"params\":{\"cwds\":[\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAppListUpdatedSmoke-8C45FEE6-385A-4714-B5B9-69EB642ED452\"]},\"method\":\"plugin\/list\",\"id\":6}\n{\"params\":{\"detail\":\"full\",\"limit\":100},\"method\":\"mcpServerStatus\/list\",\"id\":7}\n{\"params\":{\"keyPath\":\"apps.\\\"raytone-snapshot-app\\\".enabled\",\"value\":false,\"mergeStrategy\":\"upsert\"},\"method\":\"config\/value\/write\",\"id\":8}\n{\"method\":\"configRequirements\/read\",\"id\":9}\n{\"params\":{\"limit\":100,\"forceRefetch\":true},\"method\":\"app\/list\",\"id\":10}\n{\"method\":\"remoteControl\/status\/read\",\"id\":3}\n{\"params\":{\"cwd\":\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAppListUpdatedSmoke-8C45FEE6-385A-4714-B5B9-69EB642ED452\",\"limit\":100},\"method\":\"permissionProfile\/list\",\"id\":11",
+  "requirements" : {
+    "allowedApprovalPolicies" : [
+      "on-request",
+      "never"
+    ],
+    "allowedPermissionProfiles" : {
+      ":danger-full-access" : false,
+      ":read-only" : true,
+      ":workspace" : true
+    },
+    "allowedSandboxModes" : [
+      "read-only",
+      "workspace-write"
+    ],
+    "enforceResidency" : "us",
+    "featureRequirements" : {
+      "browser" : true,
+      "web_search" : false
+    },
+    "httpPort" : 18080,
+    "managedHookEventCounts" : {
+      "PermissionRequest" : 0,
+      "PostCompact" : 0,
+      "PostToolUse" : 0,
+      "PreCompact" : 0,
+      "PreToolUse" : 0,
+      "SessionStart" : 0,
+      "Stop" : 0,
+      "SubagentStart" : 0,
+      "SubagentStop" : 0,
+      "UserPromptSubmit" : 1
+    },
+    "networkDomains" : {
+      "api.openai.com" : "allow",
+      "example.invalid" : "deny"
+    },
+    "networkUnixSockets" : {
+      "\/tmp\/raytone.sock" : "deny"
+    },
+    "socksPort" : 18081
+  },
+  "runtimeCatalogErrors" : [
+
+  ],
+  "status" : "集成：1 个 app · 0 个插件 · 0 个 MCP · 2 个权限配置",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAppListUpdatedSmoke-8C45FEE6-385A-4714-B5B9-69EB642ED452"
+}

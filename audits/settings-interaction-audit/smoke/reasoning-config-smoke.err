@@ -1,0 +1,84 @@
+warning: multiple variants are never constructed
+  --> src/proxy/error.rs:16:5
+   |
+14 | pub enum ProxyError {
+   |          ---------- variants in this enum
+15 |     #[error("服务器已在运行")]
+16 |     AlreadyRunning,
+   |     ^^^^^^^^^^^^^^
+...
+19 |     NotRunning,
+   |     ^^^^^^^^^^
+...
+22 |     BindFailed(String),
+   |     ^^^^^^^^^^
+...
+25 |     StopTimeout,
+   |     ^^^^^^^^^^^
+...
+28 |     StopFailed(String),
+   |     ^^^^^^^^^^
+...
+34 |     NoAvailableProvider,
+   |     ^^^^^^^^^^^^^^^^^^^
+...
+37 |     AllProvidersCircuitOpen,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^
+...
+40 |     NoProvidersConfigured,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+...
+50 |     MaxRetriesExceeded,
+   |     ^^^^^^^^^^^^^^^^^^
+...
+53 |     DatabaseError(String),
+   |     ^^^^^^^^^^^^^
+...
+56 |     ConfigError(String),
+   |     ^^^^^^^^^^^
+...
+67 |     Timeout(String),
+   |     ^^^^^^^
+   |
+   = note: `ProxyError` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `canonicalize_value` is never used
+  --> src/proxy/json_canonical.rs:10:15
+   |
+10 | pub(crate) fn canonicalize_value(value: Value) -> Value {
+   |               ^^^^^^^^^^^^^^^^^^
+
+warning: function `short_value_hash` is never used
+  --> src/proxy/json_canonical.rs:94:15
+   |
+94 | pub(crate) fn short_value_hash(value: Option<&Value>) -> String {
+   |               ^^^^^^^^^^^^^^^^
+
+warning: method `record_call_item` is never used
+  --> src/proxy/providers/codex_chat_history.rs:80:14
+   |
+51 | impl CodexChatHistoryStore {
+   | -------------------------- method in this implementation
+...
+80 |     async fn record_call_item(&self, response_id: Option<&str>, item: &Value) -> bool {
+   |              ^^^^^^^^^^^^^^^^
+
+warning: function `record_responses_sse_stream` is never used
+   --> src/proxy/providers/codex_chat_history.rs:371:8
+    |
+371 | pub fn record_responses_sse_stream(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `inspect_sse_block` is never used
+   --> src/proxy/providers/codex_chat_history.rs:397:10
+    |
+397 | async fn inspect_sse_block(
+    |          ^^^^^^^^^^^^^^^^^
+
+warning: `raytone-proxy` (bin "raytone-proxy") generated 6 warnings
+    Finished `release` profile [optimized] target(s) in 0.15s
+No trusted codesigning identity found; ad-hoc signing the .app for local test packaging and using /Users/jackwu/Projects/RaytoneCodex/.build/raytone-codex-cli/codex for local development verification.
+/Users/jackwu/Projects/RaytoneCodex/dist/RaytoneCodex.app/Contents/Resources/codex: replacing existing signature
+/Users/jackwu/Projects/RaytoneCodex/dist/RaytoneCodex.app/Contents/Resources/raytone-proxy: replacing existing signature
+/Users/jackwu/Projects/RaytoneCodex/dist/RaytoneCodex.app: replacing existing signature

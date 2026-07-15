@@ -1,0 +1,16 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.08s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexInstructionsConfigSmoke-28E18735-82F0-4853-921C-D141206E2CC3",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexInstructionsConfigSmoke-28E18735-82F0-4853-921C-D141206E2CC3\/config.toml",
+  "configText" : "developer_instructions = \"Raytone developer instructions smoke E884544C\"\n",
+  "developerInstructions" : "Raytone developer instructions smoke E884544C",
+  "ok" : true,
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "status" : "developer_instructions 已写入 config.toml",
+  "systemInstructions" : "",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

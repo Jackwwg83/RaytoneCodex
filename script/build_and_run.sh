@@ -23,8 +23,10 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-APP_NAME="RaytoneCodex"
-BUNDLE_ID="com.raytone.codex"
+APP_NAME="RaytoneX"
+APP_DISPLAY_NAME="RaytoneX"
+APP_EXECUTABLE_NAME="RaytoneX"
+BUNDLE_ID="com.raytone.raytonex"
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,7 +41,7 @@ RAYTONE_PROXY_BINARY="$ROOT_DIR/sidecar/raytone-proxy/target/release/raytone-pro
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
-APP_BINARY="$APP_MACOS/$APP_NAME"
+APP_BINARY="$APP_MACOS/$APP_EXECUTABLE_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 NOTICE_FILE="$APP_RESOURCES/OPENAI_CODEX_CLI_NOTICE.txt"
 PROXY_NOTICE_FILE="$APP_RESOURCES/RAYTONE_PROXY_NOTICE.txt"
@@ -57,8 +59,9 @@ CODEX_NOTICE_DEST="$APP_RESOURCES/OPENAI_CODEX_NOTICE.txt"
 PROXY_NOTICE_SOURCE="$ROOT_DIR/sidecar/raytone-proxy/NOTICE"
 PROXY_LICENSE_SOURCE="$ROOT_DIR/sidecar/raytone-proxy/vendor/cc-switch/LICENSE"
 PKG_INFO="$APP_CONTENTS/PkgInfo"
-APP_VERSION="0.1.0"
-PACKAGE_BASENAME="$APP_NAME-$APP_VERSION-macos-arm64"
+APP_VERSION="0.1.1"
+PACKAGE_CHANNEL="${RAYTONE_PACKAGE_CHANNEL:-test}"
+PACKAGE_BASENAME="$APP_NAME-$APP_VERSION-$PACKAGE_CHANNEL-macos-arm64"
 ZIP_ARTIFACT="$DIST_DIR/$PACKAGE_BASENAME.zip"
 DMG_ARTIFACT="$DIST_DIR/$PACKAGE_BASENAME.dmg"
 DMG_STAGING_DIR="$DIST_DIR/dmg-staging"
@@ -67,9 +70,9 @@ LAUNCH_LOG="${TMPDIR:-/tmp}/raytone-codex-launch.log"
 SCREENSHOT_DIR="$ROOT_DIR/screenshots"
 if [[ -n "$UI_SCREEN" ]]; then
   UI_SCREEN_SLUG="${UI_SCREEN//[^[:alnum:]_-]/-}"
-  UI_SMOKE_SCREENSHOT="$SCREENSHOT_DIR/raytonecodex-$UI_SCREEN_SLUG.png"
+  UI_SMOKE_SCREENSHOT="$SCREENSHOT_DIR/raytonex-$UI_SCREEN_SLUG.png"
 else
-  UI_SMOKE_SCREENSHOT="$SCREENSHOT_DIR/raytonecodex-ui-smoke.png"
+  UI_SMOKE_SCREENSHOT="$SCREENSHOT_DIR/raytonex-ui-smoke.png"
 fi
 APP_SIGN_IDENTITY=""
 OPENAI_CODEX_REPO="https://github.com/openai/codex"
@@ -234,7 +237,7 @@ generate_app_icon() {
 stage_app_bundle() {
   swift build
   build_raytone_proxy
-  BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
+  BUILD_BINARY="$(swift build --show-bin-path)/$APP_EXECUTABLE_NAME"
   if ! CLI_SOURCE="$(find_codex_cli)"; then
     echo "No standalone Codex CLI binary found for bundling." >&2
     echo "Set RAYTONE_CODEX_CLI to a pinned release binary, or install/open Codex.app so its bundled Mach-O CLI can be copied." >&2
@@ -263,13 +266,13 @@ stage_app_bundle() {
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key>
-  <string>$APP_NAME</string>
+  <string>$APP_EXECUTABLE_NAME</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
-  <string>$APP_NAME</string>
+  <string>$APP_DISPLAY_NAME</string>
   <key>CFBundleDisplayName</key>
-  <string>Raytone Codex</string>
+  <string>$APP_DISPLAY_NAME</string>
   <key>CFBundleIconFile</key>
   <string>$APP_ICON_NAME</string>
   <key>CFBundlePackageType</key>
@@ -295,7 +298,7 @@ PLIST
   printf 'APPL????' >"$PKG_INFO"
 
   cat >"$NOTICE_FILE" <<NOTICE
-RaytoneCodex bundles a Codex CLI executable at Contents/Resources/codex.
+RaytoneX bundles a Codex CLI executable at Contents/Resources/codex.
 
 Build-time source path:
 $CLI_SOURCE
@@ -409,7 +412,7 @@ local_proxy_for_verification() {
 }
 
 first_app_pid() {
-  pgrep -x "$APP_NAME" | head -1 || true
+  pgrep -x "$APP_EXECUTABLE_NAME" | head -1 || true
 }
 
 wait_for_app() {
@@ -1032,7 +1035,7 @@ run_bundle_audit() {
   require_nonempty_file "RaytoneCodex release manifest" "$RELEASE_MANIFEST"
   require_nonempty_file "RaytoneCodex app icon" "$APP_ICON"
 
-  require_plist_value "CFBundleExecutable" "$APP_NAME"
+  require_plist_value "CFBundleExecutable" "$APP_EXECUTABLE_NAME"
   require_plist_value "CFBundleIdentifier" "$BUNDLE_ID"
   require_plist_value "CFBundleIconFile" "$APP_ICON_NAME"
   require_plist_value "CFBundlePackageType" "APPL"
@@ -1217,7 +1220,7 @@ packaged_app_cli_version() {
 
   require_existing_path "$label app bundle" "$app_path"
   require_existing_path "$label Info.plist" "$contents/Info.plist"
-  require_executable_path "$label app executable" "$contents/MacOS/$APP_NAME"
+  require_executable_path "$label app executable" "$contents/MacOS/$APP_EXECUTABLE_NAME"
   require_executable_path "$label bundled Codex CLI" "$cli"
   require_executable_path "$label bundled Raytone proxy" "$proxy"
   require_nonempty_file "$label OpenAI Codex license" "$resources/OPENAI_CODEX_LICENSE.txt"
@@ -1242,7 +1245,7 @@ packaged_app_cli_version() {
 
 packaged_app_executable_sha256() {
   local app_path="$1"
-  file_sha256 "$app_path/Contents/MacOS/$APP_NAME"
+  file_sha256 "$app_path/Contents/MacOS/$APP_EXECUTABLE_NAME"
 }
 
 packaged_app_cli_sha256() {
@@ -1877,9 +1880,9 @@ run_functional_smoke() {
 }
 
 acquire_stage_lock
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+pkill -x "$APP_EXECUTABLE_NAME" >/dev/null 2>&1 || true
 for _ in {1..40}; do
-  if [[ -z "$(pgrep -x "$APP_NAME" || true)" ]]; then
+  if [[ -z "$(pgrep -x "$APP_EXECUTABLE_NAME" || true)" ]]; then
     break
   fi
   sleep 0.25
@@ -1905,20 +1908,7 @@ case "$MODE" in
       cat "$LAUNCH_LOG" >&2 || true
       exit 1
     else
-      echo "Trying to launch unsigned staged app from $APP_BUNDLE." >&2
-      open_app || true
-      if wait_for_app; then
-        app_pid="$(first_app_pid)"
-        if window_info="$(wait_for_window_for_pid "$app_pid")"; then
-          eval "$window_info"
-          echo "Launched $APP_NAME PID $app_pid from $APP_BUNDLE with onscreen window ${WINDOW_WIDTH}x${WINDOW_HEIGHT}."
-        else
-          echo "Launched $APP_NAME PID $app_pid from $APP_BUNDLE."
-        fi
-        exit 0
-      fi
-
-      echo "LaunchServices did not keep the unsigned staged app running; falling back to direct development binary." >&2
+      echo "Skipping unsigned staged app launch: no trusted codesigning identity is installed." >&2
       echo "Launching the SwiftUI binary with the staged local CLI from $DEV_CLI." >&2
       app_pid="$(run_development_binary_detached)"
       if window_info="$(wait_for_window_for_pid "$app_pid")"; then
@@ -1941,7 +1931,7 @@ case "$MODE" in
     ;;
   --logs|logs)
     open_app
-    /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
+    /usr/bin/log stream --info --style compact --predicate "process == \"$APP_EXECUTABLE_NAME\""
     ;;
   --telemetry|telemetry)
     open_app
@@ -1959,7 +1949,7 @@ case "$MODE" in
       /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" >&2 || true
       /usr/sbin/spctl --assess --type execute --verbose=4 "$APP_BUNDLE" >&2 || true
       /usr/bin/log show --last 2m --style compact \
-        --predicate "eventMessage CONTAINS \"$APP_NAME\" OR process == \"$APP_NAME\" OR senderImagePath CONTAINS \"$APP_NAME\"" \
+        --predicate "eventMessage CONTAINS \"$APP_NAME\" OR process == \"$APP_EXECUTABLE_NAME\" OR senderImagePath CONTAINS \"$APP_EXECUTABLE_NAME\"" \
         | tail -80 >&2 || true
       exit 1
     fi

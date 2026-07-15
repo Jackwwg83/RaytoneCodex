@@ -186,6 +186,8 @@ final class SessionStore: ObservableObject {
     @Published var addCreditsNudgeStatusText = "未发送"
     @Published var feedbackUploadStatusText = "未发送"
     @Published var feedbackUploadThreadID = ""
+    @Published var localDiagnosticStatusText = "未导出"
+    @Published var localDiagnosticBundlePath = ""
     @Published var modelProviderCapabilities: CodexModelProviderCapabilities?
     @Published var modelProviderCapabilitiesStatusText = "未读取"
     @Published var runtimeSnapshot = CodexRuntimeSnapshot(executable: nil, version: nil)
@@ -207,6 +209,9 @@ final class SessionStore: ObservableObject {
     private static let workspacePermissionsProfile = ":workspace"
     private static let dangerFullAccessPermissionsProfile = ":danger-full-access"
     private static let providerOnboardingCompletedKey = "RaytoneCodex.providerOnboardingCompleted.v1"
+    private static var openAICloudFeaturesEnabled: Bool {
+        ProcessInfo.processInfo.environment["RAYTONE_CODEX_ENABLE_OPENAI_CLOUD_FEATURES"] == "1"
+    }
     static let inspectorPriorityFilePaths = [
         "Sources/RaytoneCodex/Views/ContentView.swift",
         "Sources/RaytoneCodex/Stores/SessionStore.swift",
@@ -274,7 +279,7 @@ final class SessionStore: ObservableObject {
 
         let workspacePath = Self.defaultWorkspacePath()
         let primaryProject = Project(
-            name: "RaytoneCodex",
+            name: "RaytoneX",
             path: workspacePath,
             branch: Self.currentGitBranch(at: workspacePath)
         )
@@ -1232,7 +1237,7 @@ final class SessionStore: ObservableObject {
         - 不要执行 git commit，不要修改文件。
         \(instructionBlock)
 
-        以下 Git 状态和 diff 已由 RaytoneCodex 通过 Codex app-server 的 command/exec 读取：
+        以下 Git 状态和 diff 已由 RaytoneX 通过 Codex app-server 的 command/exec 读取：
 
         ```text
         \(boundedGitText(gitStatus, fallback: "未返回 git status。"))
@@ -1267,7 +1272,7 @@ final class SessionStore: ObservableObject {
 
         当前 PR 状态：\(pullRequestStatus)
 
-        以下 Git 状态和 diff 已由 RaytoneCodex 通过 Codex app-server 的 command/exec 读取：
+        以下 Git 状态和 diff 已由 RaytoneX 通过 Codex app-server 的 command/exec 读取：
 
         ```text
         \(boundedGitText(gitStatus, fallback: "未返回 git status。"))
@@ -2376,27 +2381,24 @@ final class SessionStore: ObservableObject {
     }
 
     func startVoiceInput() async {
-        await refreshRealtimeVoicesForVoiceInput()
-        _ = await startRealtimeTextSessionForVoiceInput()
-
         let application: NSApplication? = NSApp
         let didStart = application?.sendAction(Selector(("startDictation:")), to: nil, from: nil) ?? false
         guard !didStart else {
-            voiceInputStatusText = "已请求系统听写 · Codex realtime \(runtimeRealtimeVoicesSummary)"
+            voiceInputStatusText = "已请求 macOS 系统听写"
             return
         }
 
         updateSelectedThread { thread in
             thread.items.append(TranscriptItem(kind: .notice(Notice(
                 level: .info,
-                text: "系统没有接受听写命令。Codex realtime 已读取 \(runtimeRealtimeVoicesSummary)。请确认 macOS 已启用听写，或把焦点放到输入框后再点麦克风。"
+                text: "系统没有接受听写命令。请确认 macOS 已启用听写，或把焦点放到输入框后再点麦克风。RaytoneX 不会为了语音输入调用 OpenAI realtime 云服务。"
             ))))
         }
     }
 
     @discardableResult
     func startRealtimeTextSessionForVoiceInput(
-        prompt: String = "RaytoneCodex macOS 麦克风输入，请把随后追加的文本作为用户语音转写。"
+        prompt: String = "RaytoneX macOS 麦克风输入，请把随后追加的文本作为用户语音转写。"
     ) async -> Bool {
         do {
             let client = try await ensureAppServerClient(useProviderConfiguration: false)
@@ -4195,6 +4197,26 @@ final class SessionStore: ObservableObject {
         await refreshAccountUsageRuntime(statusText: "正在读取账户、用量、速率限制和 Provider 用量…")
     }
 
+    func refreshProviderUsageRuntime() async {
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogStatusText = "正在读取 Provider 用量…"
+        runtimeCatalogErrors = []
+
+        await refreshSelectedProviderUsage()
+
+        if selectedProvider.usesSidecar {
+            if let providerUsage {
+                runtimeCatalogStatusText = "Provider：\(selectedProvider.displayName) · \(providerUsage.successfulResponses) 次响应 · \(Self.compactNumber(providerUsage.totalTokens)) token"
+            } else {
+                runtimeCatalogStatusText = "Provider：\(selectedProvider.displayName) · \(providerUsageStatusText)"
+            }
+        } else {
+            runtimeCatalogStatusText = "OpenAI 账户用量已从 Raytone 默认页面隐藏；当前页面只显示本地线程和第三方 Provider 用量。"
+        }
+
+        runtimeCatalogIsRefreshing = false
+    }
+
     private func refreshAccountUsageRuntime(statusText: String) async {
         runtimeCatalogIsRefreshing = true
         runtimeCatalogStatusText = statusText
@@ -4279,6 +4301,56 @@ final class SessionStore: ObservableObject {
         return status
     }
 
+    func copyRaytoneStatusSummary() -> String {
+        let summary = raytoneLocalStatusSummary()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+
+        let status = "已复制本地状态摘要"
+        runtimeCatalogStatusText = status
+        return status
+    }
+
+    func raytoneLocalStatusSummary() -> String {
+        let provider = selectedProvider
+        let providerModel = provider.usesSidecar ? provider.model : (model.isEmpty ? provider.model : model)
+        let providerKeyState: String
+        if !provider.requiresAPIKey {
+            providerKeyState = "无需 Key"
+        } else {
+            providerKeyState = hasProviderAPIKey(provider) ? "已配置" : "缺少 Key"
+        }
+        let usageSummary: String
+        if let providerUsage {
+            usageSummary = "\(providerUsage.successfulResponses) 次响应，\(Self.compactNumber(providerUsage.totalTokens)) token"
+        } else {
+            usageSummary = providerUsageStatusText
+        }
+        let threadChanges = selectedThread.items.compactMap { item -> FileChange? in
+            if case let .fileChange(change) = item.kind {
+                return change
+            }
+            return nil
+        }
+        let additions = threadChanges.reduce(0) { $0 + $1.additions }
+        let deletions = threadChanges.reduce(0) { $0 + $1.deletions }
+
+        return """
+        RaytoneX 本地状态
+        Provider：\(provider.displayName)
+        模型：\(providerModel)
+        Provider 类型：\(provider.usesSidecar ? "本地 sidecar 转换" : "Codex 原生 OpenAI")
+        Key：\(providerKeyState)
+        Sidecar：\(sidecarStatusText)
+        Provider 用量：\(usageSummary)
+        运行时：\(runtimeSummary)
+        工作区：\(Project.abbreviate(workspacePath))
+        当前对话：\(selectedThread.title)
+        对话变更摘要：\(threadChanges.count) 个文件，+\(additions) −\(deletions)
+        来源：RaytoneX 本地状态，不读取 OpenAI account/* 云端接口
+        """
+    }
+
     func runtimeProfileShareSummary() -> String {
         let account = runtimeAccount.map(Self.accountDisplayName) ?? "未返回账户"
         let accountKind = runtimeAccount.map { Self.runtimeAccountKindName($0.kind) } ?? "未返回"
@@ -4291,7 +4363,7 @@ final class SessionStore: ObservableObject {
         let errors = runtimeCatalogErrors.isEmpty ? "无" : runtimeCatalogErrors.joined(separator: "；")
 
         return """
-        RaytoneCodex
+        RaytoneX
         账户：\(account)
         类型：\(accountKind)
         计划：\(plan)
@@ -4310,7 +4382,7 @@ final class SessionStore: ObservableObject {
         let provider = selectedProvider
         guard provider.usesSidecar else {
             providerUsage = nil
-            providerUsageStatusText = "OpenAI 用量来自 account/usage/read"
+            providerUsageStatusText = "OpenAI 账户用量已隐藏"
             return
         }
 
@@ -4837,6 +4909,77 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Archives every inactive history thread returned for one workspace, while preserving the active thread.
+    func archiveOtherRuntimeThreads(inWorkspace workspace: String) async {
+        let preservedThreadID = selectedThread.appServerThreadID
+        runtimeCatalogIsRefreshing = true
+        runtimeCatalogErrors = []
+        runtimeCatalogStatusText = "正在读取可归档对话…"
+        defer { runtimeCatalogIsRefreshing = false }
+
+        do {
+            let client = try await ensureAppServerClient(useProviderConfiguration: false)
+            var cursor: String?
+            var seenCursors = Set<String>()
+            var seenThreadIDs = Set<String>()
+            var candidates: [CodexRuntimeThreadSummary] = []
+
+            repeat {
+                let catalog = try await client.listThreads(
+                    archived: false,
+                    cwd: workspace,
+                    limit: 100,
+                    cursor: cursor
+                )
+                for thread in catalog.threads where seenThreadIDs.insert(thread.id).inserted {
+                    guard thread.id != preservedThreadID else { continue }
+                    candidates.append(thread)
+                }
+                cursor = catalog.nextCursor
+            } while cursor.map { seenCursors.insert($0).inserted } ?? false
+
+            guard !candidates.isEmpty else {
+                runtimeCatalogStatusText = "没有可归档的其他对话"
+                return
+            }
+
+            var archivedCount = 0
+            var archivedThreadIDs = Set<String>()
+            var failures: [String] = []
+            for thread in candidates {
+                do {
+                    try await client.archiveThread(id: thread.id)
+                    _ = try? await client.unsubscribeThread(id: thread.id)
+                    rememberArchivedRuntimeThread(
+                        id: thread.id,
+                        title: thread.title,
+                        preview: thread.preview,
+                        cwd: thread.cwd
+                    )
+                    loadedRuntimeThreadIDs.removeAll { $0 == thread.id }
+                    archivedCount += 1
+                    archivedThreadIDs.insert(thread.id)
+                } catch {
+                    failures.append("\(thread.title)：\(error.localizedDescription)")
+                }
+            }
+
+            threads.removeAll { thread in
+                guard let threadID = thread.appServerThreadID else { return false }
+                return archivedThreadIDs.contains(threadID) && threadID != preservedThreadID
+            }
+            runtimeCatalogErrors = failures
+            await refreshArchivedThreads()
+            runtimeCatalogErrors = failures
+            runtimeCatalogStatusText = failures.isEmpty
+                ? "已归档 \(archivedCount) 个其他对话"
+                : "已归档 \(archivedCount) 个对话；\(failures.count) 个失败"
+        } catch {
+            runtimeCatalogStatusText = "批量归档失败：\(error.localizedDescription)"
+            runtimeCatalogErrors = [error.localizedDescription]
+        }
+    }
+
     private func rememberArchivedRuntimeThread(id threadID: String, title: String?, preview: String?, cwd: String?) {
         let now = ISO8601DateFormatter().string(from: Date())
         let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -5339,34 +5482,44 @@ final class SessionStore: ObservableObject {
                 errors.append("configRequirements/read：\(error.localizedDescription)")
             }
 
-            do {
-                let catalog = try await client.listApps(
-                    threadID: selectedThread.appServerThreadID,
-                    limit: 100,
-                    forceRefetch: forceRefetchApps
-                )
-                runtimeApps = catalog.apps
-                let snapshotCount = catalog.apps.filter { !$0.screenshotPrompts.isEmpty }.count
-                runtimeAppsStatusText = "app/list：\(catalog.apps.count) 个 app · \(snapshotCount) 个含快照说明"
-            } catch {
-                errors.append("app/list：\(error.localizedDescription)")
-                runtimeAppsStatusText = "app/list 失败：\(error.localizedDescription)"
-            }
-
-            do {
-                let remoteControlClient = try await ensureAppServerClient(
-                    useProviderConfiguration: false,
-                    remoteControl: true
-                )
-                let status = try await remoteControlClient.readRemoteControlStatus()
-                applyRemoteControlStatus(status)
+            if Self.openAICloudFeaturesEnabled {
                 do {
-                    try await loadRemoteControlClientsIfAvailable(using: remoteControlClient, environmentID: status.environmentID)
+                    let catalog = try await client.listApps(
+                        threadID: selectedThread.appServerThreadID,
+                        limit: 100,
+                        forceRefetch: forceRefetchApps
+                    )
+                    runtimeApps = catalog.apps
+                    let snapshotCount = catalog.apps.filter { !$0.screenshotPrompts.isEmpty }.count
+                    runtimeAppsStatusText = "app/list：\(catalog.apps.count) 个 app · \(snapshotCount) 个含快照说明"
                 } catch {
-                    errors.append("remoteControl/client/list：\(error.localizedDescription)")
+                    errors.append("app/list：\(error.localizedDescription)")
+                    runtimeAppsStatusText = "app/list 失败：\(error.localizedDescription)"
                 }
-            } catch {
-                errors.append("remoteControl/status/read：\(error.localizedDescription)")
+
+                do {
+                    let remoteControlClient = try await ensureAppServerClient(
+                        useProviderConfiguration: false,
+                        remoteControl: true
+                    )
+                    let status = try await remoteControlClient.readRemoteControlStatus()
+                    applyRemoteControlStatus(status)
+                    do {
+                        try await loadRemoteControlClientsIfAvailable(using: remoteControlClient, environmentID: status.environmentID)
+                    } catch {
+                        errors.append("remoteControl/client/list：\(error.localizedDescription)")
+                    }
+                } catch {
+                    errors.append("remoteControl/status/read：\(error.localizedDescription)")
+                }
+            } else {
+                runtimeApps = []
+                runtimeAppsStatusText = "Raytone 默认隐藏 ChatGPT app 目录；本地集成使用 MCP、浏览器、文件和终端。"
+                runtimeRemoteControlStatus = nil
+                runtimeRemoteControlPairing = nil
+                runtimeRemoteControlPairingClaimed = nil
+                runtimeRemoteControlClients = []
+                runtimeRemoteControlClientsNextCursor = nil
             }
 
             do {
@@ -5376,6 +5529,7 @@ final class SessionStore: ObservableObject {
                 errors.append("permissionProfile/list：\(error.localizedDescription)")
             }
 
+            #if os(Windows)
             do {
                 let readiness = try await client.readWindowsSandboxReadiness()
                 applyWindowsSandboxReadiness(readiness)
@@ -5383,6 +5537,11 @@ final class SessionStore: ObservableObject {
                 windowsSandboxReadinessStatusText = "windowsSandbox/readiness 失败：\(error.localizedDescription)"
                 errors.append("windowsSandbox/readiness：\(error.localizedDescription)")
             }
+            #else
+            windowsSandboxReadiness = nil
+            windowsSandboxReadinessStatusText = "macOS 不支持 Windows 沙箱"
+            windowsSandboxSetupStatusText = "已隐藏"
+            #endif
 
             if runtimePlugins.isEmpty {
                 do {
@@ -5404,7 +5563,7 @@ final class SessionStore: ObservableObject {
             }
 
             runtimeCatalogErrors = errors
-            runtimeCatalogStatusText = "集成：\(runtimeApps.count) 个 app · \(runtimePlugins.count) 个插件 · \(runtimeMCPServers.count) 个 MCP · \(runtimePermissionProfiles.count) 个权限配置"
+            runtimeCatalogStatusText = "集成：\(runtimePlugins.count) 个插件 · \(runtimeMCPServers.count) 个 MCP · \(runtimePermissionProfiles.count) 个权限配置"
         } catch {
             runtimeCatalogStatusText = "集成状态读取失败：\(error.localizedDescription)"
             runtimeCatalogErrors = [error.localizedDescription]
@@ -7195,6 +7354,91 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
+    func exportLocalDiagnosticBundle(
+        category: CodexFeedbackCategory,
+        reason: String,
+        includeRuntimeState: Bool
+    ) async -> Bool {
+        runtimeCatalogIsRefreshing = true
+        localDiagnosticStatusText = "正在导出本地诊断包…"
+        feedbackUploadStatusText = localDiagnosticStatusText
+        runtimeCatalogStatusText = localDiagnosticStatusText
+        runtimeCatalogErrors = []
+
+        do {
+            let fileManager = FileManager.default
+            let appSupport = try fileManager.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            let directory = appSupport
+                .appendingPathComponent("RaytoneCodex", isDirectory: true)
+                .appendingPathComponent("Diagnostics", isDirectory: true)
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+            let stampFormatter = DateFormatter()
+            stampFormatter.locale = Locale(identifier: "en_US_POSIX")
+            stampFormatter.dateFormat = "yyyyMMdd-HHmmss"
+            let stamp = stampFormatter.string(from: Date())
+            let destination = directory.appendingPathComponent("raytone-diagnostics-\(stamp).json")
+            let trimmedReason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            let provider = selectedProvider
+            let payload: [String: Any] = [
+                "schema": "raytone.localDiagnostic.v1",
+                "createdAt": ISO8601DateFormatter().string(from: Date()),
+                "category": category.rawValue,
+                "reason": trimmedReason,
+                "includeRuntimeState": includeRuntimeState,
+                "workspacePath": workspacePath,
+                "thread": [
+                    "title": selectedThread.title,
+                    "localId": selectedThread.id.uuidString,
+                    "appServerThreadId": selectedThread.appServerThreadID ?? "",
+                    "itemCount": selectedThread.items.count
+                ],
+                "provider": [
+                    "id": provider.id,
+                    "name": provider.displayName,
+                    "kind": provider.kind.rawValue,
+                    "model": provider.usesSidecar ? provider.model : (model.isEmpty ? provider.model : model),
+                    "usesSidecar": provider.usesSidecar,
+                    "requiresApiKey": provider.requiresAPIKey,
+                    "hasApiKey": hasProviderAPIKey(provider)
+                ],
+                "runtime": includeRuntimeState ? [
+                    "summary": runtimeSummary,
+                    "codexPath": runtimePath,
+                    "source": runtimeSourceDisplay,
+                    "sidecar": sidecarStatusText,
+                    "connectionState": connectionState.title,
+                    "catalogStatus": runtimeCatalogStatusText,
+                    "catalogErrors": runtimeCatalogErrors
+                ] : [:],
+                "note": "本文件由 RaytoneCodex 本地生成，不调用 Codex feedback/upload 或 OpenAI 云服务。"
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: destination, options: .atomic)
+
+            localDiagnosticBundlePath = destination.path
+            feedbackUploadThreadID = ""
+            localDiagnosticStatusText = "已导出本地诊断包 · \(Project.abbreviate(destination.path))"
+            feedbackUploadStatusText = localDiagnosticStatusText
+            runtimeCatalogStatusText = localDiagnosticStatusText
+            runtimeCatalogIsRefreshing = false
+            return true
+        } catch {
+            localDiagnosticStatusText = "本地诊断包导出失败：\(error.localizedDescription)"
+            feedbackUploadStatusText = localDiagnosticStatusText
+            runtimeCatalogStatusText = localDiagnosticStatusText
+            runtimeCatalogErrors = [error.localizedDescription]
+            runtimeCatalogIsRefreshing = false
+            return false
+        }
+    }
+
+    @discardableResult
     func uploadRuntimeFeedback(
         category: CodexFeedbackCategory,
         reason: String,
@@ -7290,7 +7534,7 @@ final class SessionStore: ObservableObject {
         providerUsage = selectedProvider.usesSidecar ? providerUsageByProviderID[providerID] : nil
         providerUsageStatusText = selectedProvider.usesSidecar
             ? (providerUsage == nil ? "\(selectedProvider.displayName) 尚未读取 /usage" : "sidecar /usage：\(providerUsage?.successfulResponses ?? 0) 次响应")
-            : "OpenAI 用量来自 account/usage/read"
+            : "OpenAI 账户用量已隐藏"
         updateSelectedThread { thread in
             thread.model = model
         }
@@ -8446,6 +8690,8 @@ final class SessionStore: ObservableObject {
             handleThreadArchived(params)
         case "thread/unarchived":
             handleThreadUnarchived(params)
+        case "thread/deleted":
+            handleThreadDeleted(params)
         case "thread/closed":
             handleThreadClosed(params)
         case "thread/compacted":
@@ -8567,6 +8813,8 @@ final class SessionStore: ObservableObject {
             Task { await refreshAccountUsageRuntime() }
         case "account/rateLimits/updated":
             Task { await refreshAccountUsageRuntime() }
+        case "model/safetyBuffering/updated":
+            handleModelSafetyBufferingUpdated(params)
         case "thread/tokenUsage/updated":
             handleThreadTokenUsageUpdated(params)
         case "app/list/updated":
@@ -8582,6 +8830,8 @@ final class SessionStore: ObservableObject {
             workspaceExecutionMode = status.status == "disabled" ? .local : .cloudPending
             runtimeCatalogStatusText = "remoteControl/status/changed：\(Self.remoteControlStatusDisplayName(status.status))"
             runtimeCatalogErrors = []
+        case "externalAgentConfig/import/progress":
+            handleExternalAgentImportProgress(params)
         case "externalAgentConfig/import/completed":
             externalAgentMigrationIsImporting = false
             let countText = externalAgentImportedItemCount > 0 ? "\(externalAgentImportedItemCount) 项" : "所选项目"
@@ -8641,6 +8891,34 @@ final class SessionStore: ObservableObject {
     private func refreshProviderUsageAfterCompletedTurn() {
         guard selectedProvider.usesSidecar else { return }
         Task { await refreshSelectedProviderUsage() }
+    }
+
+    private func handleModelSafetyBufferingUpdated(_ params: JSONValue?) {
+        let model = params?["model"]?.stringValue ?? "模型"
+        let showBuffering = params?["showBufferingUi"]?.boolValue ?? false
+        let reasons = params?["reasons"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        let suffix = reasons.isEmpty ? "" : " · \(reasons.joined(separator: "、"))"
+        runtimeCatalogStatusText = showBuffering
+            ? "model/safetyBuffering/updated：\(model) 正在缓冲\(suffix)"
+            : "model/safetyBuffering/updated：\(model) 已恢复\(suffix)"
+    }
+
+    private func handleExternalAgentImportProgress(_ params: JSONValue?) {
+        externalAgentMigrationIsImporting = true
+        let results = params?["itemTypeResults"]?.arrayValue ?? []
+        let successCount = results.reduce(0) { partial, value in
+            partial + (value["successes"]?.arrayValue?.count ?? 0)
+        }
+        let failureCount = results.reduce(0) { partial, value in
+            partial + (value["failures"]?.arrayValue?.count ?? 0)
+        }
+        if successCount > 0 {
+            externalAgentImportedItemCount = successCount
+        }
+        let importID = params?["importId"]?.stringValue ?? "导入任务"
+        let failureText = failureCount > 0 ? " · \(failureCount) 项失败" : ""
+        externalAgentMigrationStatusText = "externalAgentConfig/import/progress：\(importID) · \(successCount) 项完成\(failureText)"
+        runtimeCatalogStatusText = externalAgentMigrationStatusText
     }
 
     private func handleThreadStartedNotification(_ params: JSONValue?) {
@@ -8772,6 +9050,24 @@ final class SessionStore: ObservableObject {
         } else {
             runtimeCatalogStatusText = "thread/unarchived：\(threadID)"
         }
+    }
+
+    private func handleThreadDeleted(_ params: JSONValue?) {
+        guard let threadID = params?["threadId"]?.stringValue else {
+            return
+        }
+        let selectedWasDeleted = selectedThread.appServerThreadID == threadID
+        threads.removeAll { $0.appServerThreadID == threadID }
+        loadedRuntimeThreadIDs.removeAll { $0 == threadID }
+        archivedRuntimeThreads.removeAll { $0.id == threadID }
+        threadTokenUsageByThreadID.removeValue(forKey: threadID)
+        if threads.isEmpty {
+            newThread(in: projects.first?.id ?? UUID())
+        } else if selectedWasDeleted || !threads.contains(where: { $0.id == selectedThreadID }) {
+            selectThread(threads[0])
+        }
+        runtimeThreadSyncStatusText = "thread/deleted：\(threadID)"
+        runtimeCatalogStatusText = runtimeThreadSyncStatusText
     }
 
     private func handleThreadClosed(_ params: JSONValue?) {
@@ -9678,6 +9974,8 @@ final class SessionStore: ObservableObject {
             let message = "Codex 请求生成上游 attestation，但 RaytoneCodex 没有声明 requestAttestation 能力，也不能伪造客户端证明。"
             runtimeCatalogStatusText = "attestation/generate：未启用 attestation provider"
             Task { await rejectAppServerRequest(requestID: id, message: message) }
+        case "currentTime/read":
+            Task { await respondToCurrentTimeRequest(id) }
         default:
             break
         }
@@ -10821,6 +11119,15 @@ final class SessionStore: ObservableObject {
                 level: .warning,
                 text: message
             ))))
+        }
+    }
+
+    private func respondToCurrentTimeRequest(_ requestID: CodexAppServerRequestID) async {
+        do {
+            try await appServerClient?.respondCurrentTime(requestID: requestID)
+            runtimeCatalogStatusText = "currentTime/read：已返回当前时间"
+        } catch {
+            runtimeCatalogErrors = [error.localizedDescription]
         }
     }
 

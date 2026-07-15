@@ -1,6 +1,6 @@
-# RaytoneCodex
+# RaytoneX
 
-RaytoneCodex 是一个原生 SwiftUI macOS 客户端，界面参考 Codex 桌面端，后端通过内置的 openai/codex CLI `app-server` 长连接工作。
+RaytoneX 是一个原生 SwiftUI macOS 客户端，界面参考 Codex 桌面端，后端通过内置的 openai/codex CLI `app-server` 长连接工作。
 
 ## 本地运行
 
@@ -17,9 +17,9 @@ bash script/build_and_run.sh --package
 
 产物会生成在 `dist/`：
 
-- `RaytoneCodex.app`
-- `RaytoneCodex-0.1.0-macos-arm64.zip`
-- `RaytoneCodex-0.1.0-macos-arm64.dmg`
+- `RaytoneX.app`
+- `RaytoneX-0.1.1-test-macos-arm64.zip`
+- `RaytoneX-0.1.1-test-macos-arm64.dmg`
 
 本机如果没有 Developer ID 签名身份，脚本会使用 ad-hoc 签名，适合内部测试。
 

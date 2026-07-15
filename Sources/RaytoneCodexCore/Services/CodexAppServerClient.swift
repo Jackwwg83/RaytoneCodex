@@ -2171,8 +2171,8 @@ public actor CodexAppServerClient {
 
         let params: JSONValue = .object([
             "clientInfo": .object([
-                "name": .string("RaytoneCodex"),
-                "title": .string("RaytoneCodex"),
+                "name": .string("RaytoneX"),
+                "title": .string("RaytoneX"),
                 "version": .string("0.1.0")
             ]),
             "capabilities": .object([
@@ -2191,7 +2191,7 @@ public actor CodexAppServerClient {
             "approvalPolicy": .string(options.approvalPolicy.appServerValue),
             "approvalsReviewer": .string(options.approvalsReviewer.rawValue),
             "sandbox": .string(options.sandbox.rawValue),
-            "serviceName": .string("RaytoneCodex"),
+            "serviceName": .string("RaytoneX"),
             "sessionStartSource": .string("startup"),
             "dynamicTools": .array(Self.raytoneDynamicTools())
         ]
@@ -2350,7 +2350,7 @@ public actor CodexAppServerClient {
             .object([
                 "namespace": .string("raytone_context"),
                 "name": .string("workspace_snapshot"),
-                "description": .string("返回 RaytoneCodex 当前工作区、线程、模型、权限和变更摘要。"),
+                "description": .string("返回 RaytoneX 当前工作区、线程、模型、权限和变更摘要。"),
                 "deferLoading": .bool(false),
                 "inputSchema": .object([
                     "type": .string("object"),
@@ -2416,7 +2416,7 @@ public actor CodexAppServerClient {
             .object([
                 "namespace": .string("raytone_browser"),
                 "name": .string("current_page"),
-                "description": .string("返回 RaytoneCodex 内置浏览器当前页面、导航状态和已附加截图路径。"),
+                "description": .string("返回 RaytoneX 内置浏览器当前页面、导航状态和已附加截图路径。"),
                 "deferLoading": .bool(false),
                 "inputSchema": .object([
                     "type": .string("object"),
@@ -2432,7 +2432,7 @@ public actor CodexAppServerClient {
             .object([
                 "namespace": .string("raytone_browser"),
                 "name": .string("open_url"),
-                "description": .string("在 RaytoneCodex 右侧内置浏览器打开 URL 或工作区内本地文件，并返回导航状态。"),
+                "description": .string("在 RaytoneX 右侧内置浏览器打开 URL 或工作区内本地文件，并返回导航状态。"),
                 "deferLoading": .bool(false),
                 "inputSchema": .object([
                     "type": .string("object"),
@@ -2458,7 +2458,7 @@ public actor CodexAppServerClient {
             .object([
                 "namespace": .string("raytone_browser"),
                 "name": .string("capture_snapshot"),
-                "description": .string("请求 RaytoneCodex 内置浏览器为当前页面截图，截图完成后会自动加入下一轮对话图片。"),
+                "description": .string("请求 RaytoneX 内置浏览器为当前页面截图，截图完成后会自动加入下一轮对话图片。"),
                 "deferLoading": .bool(false),
                 "inputSchema": .object([
                     "type": .string("object"),
@@ -2474,7 +2474,7 @@ public actor CodexAppServerClient {
             .object([
                 "namespace": .string("raytone_terminal"),
                 "name": .string("run_command"),
-                "description": .string("通过 Codex app-server 的 command/exec 在当前工作区运行一个终端命令，并把输出显示到 RaytoneCodex 终端面板。"),
+                "description": .string("通过 Codex app-server 的 command/exec 在当前工作区运行一个终端命令，并把输出显示到 RaytoneX 终端面板。"),
                 "deferLoading": .bool(false),
                 "inputSchema": .object([
                     "type": .string("object"),
@@ -2846,6 +2846,10 @@ public actor CodexAppServerClient {
         return CodexExternalAgentConfigImportResult()
     }
 
+    public func readExternalAgentConfigImportHistories() async throws -> JSONValue {
+        try await request(method: "externalAgentConfig/import/readHistories", params: nil)
+    }
+
     public func writeConfigValue(keyPath: String, value: JSONValue, filePath: String? = nil) async throws {
         var params: [String: JSONValue] = [
             "keyPath": .string(keyPath),
@@ -2978,6 +2982,21 @@ public actor CodexAppServerClient {
     public func readAccountRateLimits() async throws -> CodexRuntimeRateLimits {
         let result = try await request(method: "account/rateLimits/read", params: .object([:]))
         return Self.runtimeRateLimits(from: result)
+    }
+
+    public func consumeAccountRateLimitResetCredit(
+        creditID: String? = nil,
+        idempotencyKey: String = UUID().uuidString
+    ) async throws -> JSONValue {
+        var params: [String: JSONValue] = [
+            "idempotencyKey": .string(idempotencyKey)
+        ]
+        params["creditId"] = creditID.map(JSONValue.string) ?? .null
+        return try await request(method: "account/rateLimitResetCredit/consume", params: .object(params))
+    }
+
+    public func readWorkspaceMessages() async throws -> JSONValue {
+        try await request(method: "account/workspaceMessages/read", params: nil)
     }
 
     public func sendAddCreditsNudgeEmail(
@@ -3197,17 +3216,35 @@ public actor CodexAppServerClient {
         cursor: String? = nil,
         sortDirection: String = "asc"
     ) async throws -> CodexRuntimeThreadItemsPage {
+        try await listThreadItems(
+            id: threadID,
+            turnID: turnID,
+            limit: limit,
+            cursor: cursor,
+            sortDirection: sortDirection
+        )
+    }
+
+    public func listThreadItems(
+        id threadID: String,
+        turnID: String? = nil,
+        limit: Int = 100,
+        cursor: String? = nil,
+        sortDirection: String = "asc"
+    ) async throws -> CodexRuntimeThreadItemsPage {
         var params: [String: JSONValue] = [
             "threadId": .string(threadID),
-            "turnId": .string(turnID),
             "limit": .number(Double(limit)),
             "sortDirection": .string(sortDirection)
         ]
+        if let turnID {
+            params["turnId"] = .string(turnID)
+        }
         if let cursor {
             params["cursor"] = .string(cursor)
         }
 
-        let result = try await request(method: "thread/turns/items/list", params: .object(params))
+        let result = try await request(method: "thread/items/list", params: .object(params))
         return Self.threadItemsPage(from: result)
     }
 
@@ -3250,6 +3287,29 @@ public actor CodexAppServerClient {
         _ = try await request(method: "thread/backgroundTerminals/clean", params: .object([
             "threadId": .string(threadID)
         ]))
+    }
+
+    public func listThreadBackgroundTerminals(
+        threadID: String,
+        limit: Int? = 100,
+        cursor: String? = nil
+    ) async throws -> JSONValue {
+        var params: [String: JSONValue] = [
+            "threadId": .string(threadID)
+        ]
+        if let limit {
+            params["limit"] = .number(Double(limit))
+        }
+        params["cursor"] = cursor.map(JSONValue.string) ?? .null
+        return try await request(method: "thread/backgroundTerminals/list", params: .object(params))
+    }
+
+    public func terminateThreadBackgroundTerminal(threadID: String, processID: String) async throws -> Bool {
+        let result = try await request(method: "thread/backgroundTerminals/terminate", params: .object([
+            "threadId": .string(threadID),
+            "processId": .string(processID)
+        ]))
+        return result["terminated"]?.boolValue ?? false
     }
 
     public func approveGuardianDeniedAction(threadID: String, event: JSONValue) async throws {
@@ -3314,6 +3374,12 @@ public actor CodexAppServerClient {
         ]))
     }
 
+    public func readEnvironmentInfo(environmentID: String) async throws -> JSONValue {
+        try await request(method: "environment/info", params: .object([
+            "environmentId": .string(environmentID)
+        ]))
+    }
+
     public func updateThreadCollaborationMode(
         threadID: String,
         preset: CodexCollaborationModePreset,
@@ -3363,6 +3429,12 @@ public actor CodexAppServerClient {
 
     public func archiveThread(id threadID: String) async throws {
         _ = try await request(method: "thread/archive", params: .object([
+            "threadId": .string(threadID)
+        ]))
+    }
+
+    public func deleteThread(id threadID: String) async throws {
+        _ = try await request(method: "thread/delete", params: .object([
             "threadId": .string(threadID)
         ]))
     }
@@ -3599,6 +3671,13 @@ public actor CodexAppServerClient {
         _ = try await request(method: "thread/realtime/appendAudio", params: .object([
             "threadId": .string(threadID),
             "audio": .object(audioPayload)
+        ]))
+    }
+
+    public func appendRealtimeSpeech(threadID: String, text: String) async throws {
+        _ = try await request(method: "thread/realtime/appendSpeech", params: .object([
+            "threadId": .string(threadID),
+            "text": .string(text)
         ]))
     }
 
@@ -4027,6 +4106,12 @@ public actor CodexAppServerClient {
                     "text": .string(text)
                 ])
             ])
+        ]))
+    }
+
+    public func respondCurrentTime(requestID: CodexAppServerRequestID, date: Date = Date()) async throws {
+        try respond(requestID: requestID, result: .object([
+            "currentTimeAt": .number(Double(Int(date.timeIntervalSince1970)))
         ]))
     }
 

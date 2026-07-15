@@ -4664,9 +4664,11 @@ enum SmokeTestRunner {
                     sidecarBaseURL: store.providerConnectionBaseURL,
                     model: editedModel
                 )
-                store.prompt = "请回复 Raytone provider usage smoke OK，验证 Codex app-server 正在使用 sidecar Provider。"
-                await store.runPrompt()
-                await waitForStoreToSettle(store)
+                let promptRun = await runPromptAndWaitForSmokeAgentMessage(
+                    store,
+                    prompt: "请回复 Raytone provider usage smoke OK，验证 Codex app-server 正在使用 sidecar Provider。",
+                    expectedText: "Raytone provider usage smoke OK"
+                )
                 await store.refreshSelectedProviderUsage()
 
                 let codexConfigText = (try? String(
@@ -4722,7 +4724,7 @@ enum SmokeTestRunner {
                     proxyConfigText.contains("smoke-secondary-model") &&
                     proxyConfigText.contains("api_key_env = \"RAYTONE_PROVIDER_API_KEY\"") &&
                     directUsageResponse.contains("\"total_tokens\":18") &&
-                    agentMessages.contains("Raytone provider usage smoke OK") &&
+                    promptRun.agentMessageArrived &&
                     providerUsage?.provider == providerID &&
                     providerUsage?.model == editedModel &&
                     cachedProviderUsage?.provider == providerID &&
@@ -4772,6 +4774,11 @@ enum SmokeTestRunner {
                     "keychainDeleted": keychainDeleted,
                     "rawKeyAbsentFromConfigs": rawKeyAbsentFromConfigs,
                     "agentMessages": agentMessages,
+                    "promptRun": [
+                        "agentMessageArrived": promptRun.agentMessageArrived,
+                        "settled": promptRun.settled,
+                        "interruptedForCleanup": promptRun.interruptedForCleanup
+                    ],
                     "syncedModels": store.selectedProvider.models,
                     "providerUsage": providerUsage.map { usage in
                         [
@@ -4880,9 +4887,11 @@ enum SmokeTestRunner {
                 sidecarBaseURL: store.providerConnectionBaseURL,
                 model: model
             )
-            store.prompt = "请回复 Raytone provider usage smoke OK，验证本地无 Key Provider。"
-            await store.runPrompt()
-            await waitForStoreToSettle(store)
+            let promptRun = await runPromptAndWaitForSmokeAgentMessage(
+                store,
+                prompt: "请回复 Raytone provider usage smoke OK，验证本地无 Key Provider。",
+                expectedText: "Raytone provider usage smoke OK"
+            )
             await store.refreshSelectedProviderUsage()
 
             let codexConfigText = (try? String(
@@ -4920,7 +4929,7 @@ enum SmokeTestRunner {
                 proxyConfigText.contains("requires_api_key = false") &&
                 !proxyConfigText.contains("api_key_env") &&
                 directUsageResponse.contains("\"total_tokens\":18") &&
-                agentMessages.contains("Raytone provider usage smoke OK") &&
+                promptRun.agentMessageArrived &&
                 chatCompletionRequestCount >= 2 &&
                 upstreamModelsVerified &&
                 upstreamHadNoAuthorization &&
@@ -4941,7 +4950,13 @@ enum SmokeTestRunner {
                 "sidecar": store.sidecarStatusText,
                 "hasProviderCredential": hasProviderCredential,
                 "keychainMissing": keychainMissing,
+                "agentMessages": agentMessages,
                 "chatCompletionRequestCount": chatCompletionRequestCount,
+                "promptRun": [
+                    "agentMessageArrived": promptRun.agentMessageArrived,
+                    "settled": promptRun.settled,
+                    "interruptedForCleanup": promptRun.interruptedForCleanup
+                ],
                 "upstreamModelsVerified": upstreamModelsVerified,
                 "upstreamHadNoAuthorization": upstreamHadNoAuthorization,
                 "usageRequests": usage?.requests ?? 0,
@@ -7844,6 +7859,13 @@ enum SmokeTestRunner {
                 let localRestoredAfterUnarchive = store.threads.contains { $0.appServerThreadID == "thread-life" }
                 let removedFromArchived = !store.archivedRuntimeThreads.contains { $0.id == "thread-life" }
                 let restoredTitle = store.threads.first { $0.appServerThreadID == "thread-life" }?.title ?? ""
+                if let restored = store.threads.first(where: { $0.appServerThreadID == "thread-life" }) {
+                    store.selectThread(restored)
+                }
+                await store.archiveOtherRuntimeThreads(inWorkspace: workspaceURL.path)
+                let batchArchiveStatus = store.runtimeCatalogStatusText
+                let batchArchivedTempThread = store.archivedRuntimeThreads.contains { $0.id == "thread-temporary" }
+                let currentThreadPreserved = store.threads.contains { $0.appServerThreadID == "thread-life" }
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
                 await store.stopAppServerForTesting()
 
@@ -7859,6 +7881,9 @@ enum SmokeTestRunner {
                     removedFromArchived &&
                     restoredTitle == "远端生命周期重命名" &&
                     unarchiveStatus.contains("thread/unarchive") &&
+                    batchArchiveStatus.contains("已归档 1 个其他对话") &&
+                    batchArchivedTempThread &&
+                    currentThreadPreserved &&
                     logText.contains(#""method":"thread/started""#) &&
                     logText.contains(#""method":"thread/status/changed""#) &&
                     logText.contains(#""method":"thread/name/updated""#) &&
@@ -7884,6 +7909,9 @@ enum SmokeTestRunner {
                     "removedFromArchived": removedFromArchived,
                     "restoredTitle": restoredTitle,
                     "unarchiveStatus": unarchiveStatus,
+                    "batchArchiveStatus": batchArchiveStatus,
+                    "batchArchivedTempThread": batchArchivedTempThread,
+                    "currentThreadPreserved": currentThreadPreserved,
                     "threadTitles": store.threads.map(\.title),
                     "archivedThreadIDs": store.archivedRuntimeThreads.map(\.id),
                     "requestLogPreview": String(logText.prefix(2600))
@@ -8578,7 +8606,7 @@ enum SmokeTestRunner {
                 let loggedTurnsList = logText.contains(#""method":"thread/turns/list""#) &&
                     logText.contains(#""itemsView":"full""#) &&
                     logText.contains(#""sortDirection":"asc""#)
-                let loggedTurnItemsList = logText.contains(#""method":"thread/turns/items/list""#) &&
+                let loggedTurnItemsList = logText.contains(#""method":"thread/items/list""#) &&
                     logText.contains(#""threadId":"thread-resume-smoke""#) &&
                     logText.contains(#""turnId":"turn-resume-smoke""#) &&
                     logText.contains(#""sortDirection":"asc""#)
@@ -10178,8 +10206,8 @@ enum SmokeTestRunner {
                 let daily = store.tokenUsageActivityValues(scale: "每日")
                 let weekly = store.tokenUsageActivityValues(scale: "每周")
                 let cumulative = store.tokenUsageActivityValues(scale: "累计")
-                let summary = store.runtimeProfileShareSummary()
-                let shareStatus = await store.copyRuntimeProfileShareSummary()
+                let summary = store.raytoneLocalStatusSummary()
+                let shareStatus = store.copyRaytoneStatusSummary()
                 let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
                 let logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
                 await store.stopAppServerForTesting()
@@ -10206,14 +10234,14 @@ enum SmokeTestRunner {
                     firstBucket?.name == "Primary Model" &&
                     firstBucket?.planType == "plus" &&
                     firstBucket?.primary?.usedPercent == 0.25 &&
-                    store.providerUsageStatusText == "OpenAI 用量来自 account/usage/read" &&
+                    store.providerUsageStatusText == "OpenAI 账户用量已隐藏" &&
                     billingStatus.contains("usage-smoke@example.com") &&
                     billingStatus.contains("105") &&
-                    summary.contains("usage-smoke@example.com") &&
-                    summary.contains("累计 Token：105") &&
-                    summary.contains("速率限制桶：1") &&
-                    shareStatus.contains("已复制分享摘要") &&
-                    clipboard.contains("来源：account/read + account/usage/read + account/rateLimits/read")
+                    summary.contains("RaytoneCodex 本地状态") &&
+                    summary.contains("Provider：") &&
+                    summary.contains("Provider 用量：OpenAI 账户用量已隐藏") &&
+                    shareStatus.contains("已复制本地状态摘要") &&
+                    clipboard.contains("来源：RaytoneCodex 本地状态")
 
                 emitJSON([
                     "ok": ok,
@@ -10246,7 +10274,7 @@ enum SmokeTestRunner {
                     "providerUsageStatus": store.providerUsageStatusText,
                     "shareStatus": shareStatus,
                     "clipboardPreview": redactedProfileSharePreview(String(clipboard.prefix(360))),
-                    "source": "fake Codex app-server account/read + account/usage/read + account/rateLimits/read"
+                    "source": "fake Codex app-server usage data + Raytone local status clipboard"
                 ])
                 exit(ok ? 0 : 1)
             } catch {
@@ -12029,22 +12057,20 @@ enum SmokeTestRunner {
             fputs("profile-share-smoke: refreshRuntime\n", stderr)
             await store.refreshRuntime()
 
-            fputs("profile-share-smoke: copyRuntimeProfileShareSummary\n", stderr)
-            let status = await store.copyRuntimeProfileShareSummary()
+            fputs("profile-share-smoke: copyRaytoneStatusSummary\n", stderr)
+            let status = store.copyRaytoneStatusSummary()
             let clipboard = NSPasteboard.general.string(forType: .string) ?? ""
             let accountKind = store.runtimeAccount?.kind ?? "notLoggedIn"
-            let sourceMarker = "account/read + account/usage/read + account/rateLimits/read"
+            let sourceMarker = "RaytoneCodex 本地状态"
             store.settingsPane = .profile
             store.settingsPane = .personalization
             let profileEditRouteOK = store.settingsPane == .personalization
             let ok = store.runtimeSnapshot.executable != nil &&
-                status.contains("已复制分享摘要") &&
-                status.contains(sourceMarker) &&
-                clipboard.contains("RaytoneCodex") &&
-                clipboard.contains("账户：") &&
-                clipboard.contains("累计 Token：") &&
-                clipboard.contains("速率限制桶：") &&
-                clipboard.contains("来源：\(sourceMarker)") &&
+                status.contains("已复制本地状态摘要") &&
+                clipboard.contains(sourceMarker) &&
+                clipboard.contains("Provider：") &&
+                clipboard.contains("Sidecar：") &&
+                clipboard.contains("来源：RaytoneCodex 本地状态") &&
                 profileEditRouteOK
 
             emitJSON([
@@ -12380,18 +12406,22 @@ enum SmokeTestRunner {
                 "mentions": emailMentions
             ]
 
-            let messagingHasApp = (messagingPayload["count"] as? Int ?? 0) > 0
-            let messagingRouteOK = messagingHasApp
+            let messagingStatus = (messagingPayload["status"] as? String) ?? ""
+            let messagingInsertedMention =
+                !messagingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !messagingMentions.isEmpty
+            let messagingRouteOK = messagingInsertedMention
                 ? (messagingPayload["route"] as? String) == "thread" &&
-                    !messagingPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                    !messagingMentions.isEmpty
+                    messagingStatus.contains("已放入输入框")
                 : (messagingPayload["route"] as? String) == "settings" &&
                     (messagingPayload["settingsPane"] as? String) == "connections"
-            let emailHasApp = (emailPayload["count"] as? Int ?? 0) > 0
-            let emailRouteOK = emailHasApp
+            let emailStatus = (emailPayload["status"] as? String) ?? ""
+            let emailInsertedMention =
+                !emailPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                !emailMentions.isEmpty
+            let emailRouteOK = emailInsertedMention
                 ? (emailPayload["route"] as? String) == "thread" &&
-                    !emailPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                    !emailMentions.isEmpty
+                    emailStatus.contains("已放入输入框")
                 : (emailPayload["route"] as? String) == "settings" &&
                     (emailPayload["settingsPane"] as? String) == "connections"
             let ok = store.runtimeSnapshot.executable != nil &&
@@ -12418,7 +12448,9 @@ enum SmokeTestRunner {
                 "mcpServerCount": store.runtimeMCPServers.count,
                 "runtimeErrors": store.runtimeCatalogErrors,
                 "messagingRouteOK": messagingRouteOK,
+                "messagingInsertedMention": messagingInsertedMention,
                 "emailRouteOK": emailRouteOK,
+                "emailInsertedMention": emailInsertedMention,
                 "files": filesPayload,
                 "messaging": messagingPayload,
                 "email": emailPayload
@@ -13424,83 +13456,49 @@ enum SmokeTestRunner {
         Task { @MainActor in
             let fileManager = FileManager.default
             let rootURL = fileManager.temporaryDirectory
-                .appendingPathComponent("RaytoneCodexFeedbackUploadSmoke-\(UUID().uuidString)", isDirectory: true)
+                .appendingPathComponent("RaytoneCodexLocalDiagnosticSmoke-\(UUID().uuidString)", isDirectory: true)
             let workspaceURL = rootURL.appendingPathComponent("workspace", isDirectory: true)
-            let logURL = rootURL.appendingPathComponent("requests.jsonl")
-            let scriptURL = rootURL.appendingPathComponent("fake-codex")
 
             do {
                 try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
-                try fakeFeedbackUploadAppServerScript.write(to: scriptURL, atomically: true, encoding: .utf8)
-                try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
 
                 let store = SessionStore()
                 store.workspacePath = workspaceURL.path
-                store.runtimeSnapshot = CodexRuntimeSnapshot(
-                    executable: CodexExecutable(url: scriptURL, source: .environment),
-                    version: "fake-feedback-upload"
-                )
-                store.appServerEnvironmentOverridesForTesting = [
-                    "RAYTONE_FEEDBACK_UPLOAD_LOG": logURL.path
-                ]
                 if let index = store.projects.firstIndex(where: { $0.id == store.selectedThread.projectID }) {
                     store.projects[index].path = workspaceURL.path
-                    store.projects[index].name = "FeedbackUploadSmoke"
+                    store.projects[index].name = "LocalDiagnosticSmoke"
                 }
 
-                let localThreadID = store.selectedThreadID
-                store.prompt = "建立反馈上传 smoke 线程"
-                await store.runPrompt()
-                await waitForStoreToSettle(store)
-                let runtimeThreadID = await waitForThreadServerID(in: store, localThreadID: localThreadID)
-                let uploadOK = await store.uploadRuntimeFeedback(
+                await store.refreshRuntime()
+                let exportOK = await store.exportLocalDiagnosticBundle(
                     category: .bug,
-                    reason: "  Raytone feedback upload smoke  ",
-                    includeLogs: true
+                    reason: "  Raytone local diagnostic smoke  ",
+                    includeRuntimeState: true
                 )
-
-                let deadline = Date().addingTimeInterval(8)
-                var logText = ""
-                while Date() < deadline {
-                    logText = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-                    if logText.contains(#""method":"feedback/upload""#) {
-                        break
-                    }
-                    try? await Task.sleep(nanoseconds: 100_000_000)
-                }
-
-                let requestLogged = logText.contains(#""method":"feedback/upload""#) &&
-                    logText.contains(#""classification":"bug""#) &&
-                    logText.contains(#""reason":"Raytone feedback upload smoke""#) &&
-                    logText.contains(#""threadId":"thread-feedback-upload-smoke""#) &&
-                    logText.contains(#""includeLogs":true"#) &&
-                    logText.contains(#""raytone_client":"macos""#) &&
-                    logText.contains(#""raytone_surface":"settings""#)
-                let ok = uploadOK &&
-                    runtimeThreadID == "thread-feedback-upload-smoke" &&
-                    store.feedbackUploadThreadID == "feedback-tracking-smoke" &&
-                    store.feedbackUploadStatusText.contains("已上传日志") &&
+                let diagnosticText = (try? String(contentsOfFile: store.localDiagnosticBundlePath, encoding: .utf8)) ?? ""
+                let requestLogged = !diagnosticText.contains("feedback/upload") &&
+                    diagnosticText.contains(#""schema" : "raytone.localDiagnostic.v1""#) &&
+                    diagnosticText.contains("Raytone local diagnostic smoke") &&
+                    diagnosticText.contains(#""provider""#)
+                let ok = exportOK &&
+                    !store.localDiagnosticBundlePath.isEmpty &&
+                    fileManager.fileExists(atPath: store.localDiagnosticBundlePath) &&
+                    store.localDiagnosticStatusText.contains("已导出本地诊断包") &&
                     requestLogged
 
-                await store.stopAppServerForTesting()
                 emitJSON([
                     "ok": ok,
                     "workspacePath": workspaceURL.path,
-                    "fakeExecutable": scriptURL.path,
-                    "requestLog": logURL.path,
-                    "runtimeThreadID": runtimeThreadID,
-                    "feedbackUploadThreadID": store.feedbackUploadThreadID,
-                    "feedbackUploadStatus": store.feedbackUploadStatusText,
-                    "requestLogged": requestLogged,
-                    "requestLogPreview": String(logText.prefix(2600))
+                    "diagnosticPath": store.localDiagnosticBundlePath,
+                    "diagnosticStatus": store.localDiagnosticStatusText,
+                    "localDiagnostic": requestLogged,
+                    "diagnosticPreview": String(diagnosticText.prefix(1200))
                 ])
                 exit(ok ? 0 : 1)
             } catch {
                 emitJSON([
                     "ok": false,
                     "workspacePath": workspaceURL.path,
-                    "fakeExecutable": scriptURL.path,
-                    "requestLog": logURL.path,
                     "error": error.localizedDescription
                 ])
                 exit(1)
@@ -14892,6 +14890,7 @@ enum SmokeTestRunner {
 
         log_path = os.environ.get("RAYTONE_THREAD_LIFECYCLE_LOG")
         archived = False
+        temporary_archived = False
         subscribed = False
         cwd = os.getcwd()
 
@@ -14919,10 +14918,10 @@ enum SmokeTestRunner {
             log({"notification": payload})
             send(payload)
 
-        def thread_payload(name="生命周期初始线程", is_archived=None):
+        def thread_payload(name="生命周期初始线程", is_archived=None, thread_id="thread-life"):
             return {
-                "id": "thread-life",
-                "sessionId": "session-life",
+                "id": thread_id,
+                "sessionId": "session-" + thread_id,
                 "name": name,
                 "preview": "生命周期 smoke",
                 "cwd": cwd,
@@ -14943,9 +14942,15 @@ enum SmokeTestRunner {
         def thread_list(params):
             requested_archived = params.get("archived")
             if requested_archived is True:
-                return {"data": [thread_payload("远端生命周期重命名", True)] if archived else [], "nextCursor": None}
+                data = [thread_payload("远端生命周期重命名", True)] if archived else []
+                if temporary_archived:
+                    data.append(thread_payload("临时批量归档 smoke", True, "thread-temporary"))
+                return {"data": data, "nextCursor": None}
             if requested_archived is False:
-                return {"data": [] if archived else [thread_payload("远端生命周期重命名", False)], "nextCursor": None}
+                data = [] if archived else [thread_payload("远端生命周期重命名", False)]
+                if not temporary_archived:
+                    data.append(thread_payload("临时批量归档 smoke", False, "thread-temporary"))
+                return {"data": data, "nextCursor": None}
             return {"data": [thread_payload("远端生命周期重命名", archived)], "nextCursor": None}
 
         for line in sys.stdin:
@@ -14999,17 +15004,25 @@ enum SmokeTestRunner {
                     "turn": {"id": "turn-life", "status": "completed"},
                 })
             elif method == "thread/archive":
-                archived = True
+                if params.get("threadId") == "thread-life":
+                    archived = True
+                else:
+                    temporary_archived = True
                 send_result(request_id, {})
-                send_notification("thread/archived", {"threadId": "thread-life"})
+                send_notification("thread/archived", {"threadId": params.get("threadId")})
             elif method == "thread/unsubscribe":
                 status = "unsubscribed" if subscribed else "notSubscribed"
                 subscribed = False
                 send_result(request_id, {"status": status})
             elif method == "thread/unarchive":
-                archived = False
-                send_result(request_id, {"thread": thread_payload("远端生命周期重命名", False)})
-                send_notification("thread/unarchived", {"threadId": "thread-life"})
+                if params.get("threadId") == "thread-life":
+                    archived = False
+                    thread = thread_payload("远端生命周期重命名", False)
+                else:
+                    temporary_archived = False
+                    thread = thread_payload("临时批量归档 smoke", False, params.get("threadId"))
+                send_result(request_id, {"thread": thread})
+                send_notification("thread/unarchived", {"threadId": params.get("threadId")})
             elif method == "thread/list":
                 send_result(request_id, thread_list(params))
             else:
@@ -15228,7 +15241,7 @@ enum SmokeTestRunner {
                 })
             elif method == "thread/turns/list":
                 send_result(request_id, turns_page())
-            elif method == "thread/turns/items/list":
+            elif method == "thread/items/list":
                 if params.get("turnId") == "turn-resume-smoke":
                     send_result(request_id, turn_items_page())
                 else:
@@ -19628,12 +19641,80 @@ enum SmokeTestRunner {
             )
     }
 
+    private struct SmokePromptRunResult {
+        var agentMessageArrived: Bool
+        var settled: Bool
+        var interruptedForCleanup: Bool
+    }
+
     @MainActor
-    private static func waitForStoreToSettle(_ store: SessionStore) async {
-        let deadline = Date().addingTimeInterval(120)
+    private static func runPromptAndWaitForSmokeAgentMessage(
+        _ store: SessionStore,
+        prompt: String,
+        expectedText: String,
+        messageTimeout: TimeInterval = 30,
+        settleTimeout: TimeInterval = 3
+    ) async -> SmokePromptRunResult {
+        store.prompt = prompt
+        let runTask = Task { @MainActor in
+            await store.runPrompt()
+        }
+
+        let agentMessageArrived = await waitForAgentMessageContaining(
+            expectedText,
+            in: store,
+            timeout: messageTimeout
+        )
+        let settled = await waitForStoreToSettle(store, timeout: settleTimeout)
+        var interruptedForCleanup = false
+        if store.isRunning {
+            interruptedForCleanup = true
+            await store.interruptRunningTurn()
+            _ = await waitForStoreToSettle(store, timeout: 5)
+        }
+        runTask.cancel()
+
+        return SmokePromptRunResult(
+            agentMessageArrived: agentMessageArrived,
+            settled: settled,
+            interruptedForCleanup: interruptedForCleanup
+        )
+    }
+
+    @MainActor
+    private static func waitForAgentMessageContaining(
+        _ expectedText: String,
+        in store: SessionStore,
+        timeout: TimeInterval
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if store.selectedThread.items.contains(where: { item in
+                if case let .agentMessage(text) = item.kind {
+                    return text.contains(expectedText)
+                }
+                return false
+            }) {
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return store.selectedThread.items.contains(where: { item in
+            if case let .agentMessage(text) = item.kind {
+                return text.contains(expectedText)
+            }
+            return false
+        })
+    }
+
+    @MainActor
+    @discardableResult
+    private static func waitForStoreToSettle(_ store: SessionStore, timeout: TimeInterval = 120) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
         while store.isRunning && Date() < deadline {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
+        return !store.isRunning
     }
 
     private static func commandRuns(in items: [TranscriptItem]) -> [CommandRun] {

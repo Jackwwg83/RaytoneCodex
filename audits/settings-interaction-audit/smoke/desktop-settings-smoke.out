@@ -1,0 +1,30 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "appearanceMapping" : {
+    "dark" : "dark",
+    "system" : "system"
+  },
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexDesktopSettingsSmoke-FF8118E3-BE74-4A43-99C4-68DEEDD12A00",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexDesktopSettingsSmoke-FF8118E3-BE74-4A43-99C4-68DEEDD12A00\/config.toml",
+  "configText" : "[desktop.raytone]\nshow_in_menu_bar = false\nshow_bottom_panel = false\nprevent_sleep_while_running = false\nterminal_position = \"右侧\"\nappearance = \"深色\"\nopen_target = \"Finder\"\nlanguage = \"简体中文\"\n",
+  "desktop" : {
+    "appearance" : "深色",
+    "language" : "简体中文",
+    "openTarget" : "Finder",
+    "preventSleepWhileRunning" : false,
+    "showBottomPanel" : false,
+    "showInMenuBar" : false,
+    "terminalPosition" : "右侧"
+  },
+  "desktopKeys" : [
+    "raytone"
+  ],
+  "ok" : true,
+  "runtimeCatalogStatusText" : "主题 已写入 desktop.raytone.appearance",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

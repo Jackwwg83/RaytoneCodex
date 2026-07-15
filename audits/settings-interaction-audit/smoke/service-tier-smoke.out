@@ -1,0 +1,36 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexServiceTierSmoke-27BFC2A0-E1E8-4631-86BC-B2A914E577EF",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexServiceTierSmoke-27BFC2A0-E1E8-4631-86BC-B2A914E577EF\/config.toml",
+  "ok" : true,
+  "runtimeCatalogStatusText" : "service_tier 已写入 config.toml：flex",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "states" : [
+    {
+      "configText" : "service_tier = \"default\"\n",
+      "expectedConfigValue" : "default",
+      "label" : "标准",
+      "readServiceTier" : "default",
+      "uiLabel" : "标准"
+    },
+    {
+      "configText" : "service_tier = \"fast\"\n",
+      "expectedConfigValue" : "fast",
+      "label" : "更快",
+      "readServiceTier" : "fast",
+      "uiLabel" : "更快"
+    },
+    {
+      "configText" : "service_tier = \"flex\"\n",
+      "expectedConfigValue" : "flex",
+      "label" : "更稳",
+      "readServiceTier" : "flex",
+      "uiLabel" : "更稳"
+    }
+  ],
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

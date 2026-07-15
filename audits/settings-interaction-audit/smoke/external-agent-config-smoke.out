@@ -1,0 +1,31 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.06s)
+{
+  "detectedCount" : 2,
+  "detectStatus" : "externalAgentConfig\/detect：检测到 2 项",
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-40AA5845-A164-407D-ADAA-67039DDFCCF6\/fake-codex",
+  "importedItemCount" : 2,
+  "importStatus" : "externalAgentConfig\/import\/completed：已完成 2 项",
+  "items" : [
+    {
+      "cwd" : "",
+      "description" : "导入外部 Agent 的全局配置",
+      "details" : "",
+      "itemType" : "CONFIG"
+    },
+    {
+      "cwd" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-40AA5845-A164-407D-ADAA-67039DDFCCF6",
+      "description" : "导入当前工作区支持的插件",
+      "details" : "{\n  \"plugins\" : [\n    {\n      \"marketplaceName\" : \"team-marketplace\",\n      \"pluginNames\" : [\n        \"asana\",\n        \"jira\"\n      ]\n    }\n  ]\n}",
+      "itemType" : "PLUGINS"
+    }
+  ],
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-40AA5845-A164-407D-ADAA-67039DDFCCF6\/requests.jsonl",
+  "requestLogPreview" : "{\"params\":{\"clientInfo\":{\"name\":\"RaytoneCodex\",\"version\":\"0.1.0\",\"title\":\"RaytoneCodex\"},\"capabilities\":{\"optOutNotificationMethods\":[],\"experimentalApi\":true}},\"id\":1,\"method\":\"initialize\"}\n{\"params\":{},\"method\":\"initialized\"}\n{\"method\":\"externalAgentConfig\/detect\",\"params\":{\"cwds\":[\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-40AA5845-A164-407D-ADAA-67039DDFCCF6\"],\"includeHome\":true},\"id\":2}\n{\"method\":\"externalAgentConfig\/import\",\"params\":{\"migrationItems\":[{\"description\":\"导入外部 Agent 的全局配置\",\"itemType\":\"CONFIG\",\"cwd\":null,\"details\":null},{\"description\":\"导入当前工作区支持的插件\",\"itemType\":\"PLUGINS\",\"cwd\":\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-40AA5845-A164-407D-ADAA-67039DDFCCF6\",\"details\":{\"plugins\":[{\"marketplaceName\":\"team-marketplace\",\"pluginNames\":[\"asana\",\"jira\"]}]}}]},\"id\":3}\n",
+  "runtimeCatalogErrors" : [
+
+  ],
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-40AA5845-A164-407D-ADAA-67039DDFCCF6"
+}

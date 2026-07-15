@@ -1,0 +1,30 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "accountKindAfterLogin" : "apiKey",
+  "accountKindAfterLogout" : "notLoggedIn",
+  "authFileExistedAfterLogin" : true,
+  "authFileExistedAfterLogout" : false,
+  "authFileHadAPIKeyField" : true,
+  "authFileKeys" : [
+    "OPENAI_API_KEY",
+    "auth_mode"
+  ],
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexAPIKeySmoke-48B3AEDB-54A3-468E-A33E-767551F7DDFD",
+  "loginErrors" : [
+    "account\/usage\/read：chatgpt authentication required to read token usage",
+    "account\/rateLimits\/read：chatgpt authentication required to read rate limits"
+  ],
+  "loginStatus" : "account\/login\/start(apiKey)：已登录",
+  "logoutErrors" : [
+    "account\/usage\/read：codex account authentication required to read token usage",
+    "account\/rateLimits\/read：codex account authentication required to read rate limits"
+  ],
+  "logoutStatus" : "account\/logout 已完成",
+  "ok" : true,
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

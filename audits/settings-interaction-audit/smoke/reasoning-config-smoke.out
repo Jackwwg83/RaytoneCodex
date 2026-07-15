@@ -1,0 +1,26 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexReasoningConfigSmoke-6EB844F6-9FA7-43BF-A2BD-590390D36BDE",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexReasoningConfigSmoke-6EB844F6-9FA7-43BF-A2BD-590390D36BDE\/config.toml",
+  "modelCatalogStatusText" : "model_reasoning_* 已写入 config.toml",
+  "off" : {
+    "configText" : "model_reasoning_effort = \"none\"\nmodel_reasoning_summary = \"none\"\n",
+    "providerThinkingEnabled" : false,
+    "reasoningEffort" : "none",
+    "reasoningSummary" : "none"
+  },
+  "ok" : true,
+  "on" : {
+    "configText" : "model_reasoning_effort = \"medium\"\nmodel_reasoning_summary = \"auto\"\n",
+    "providerThinkingEnabled" : true,
+    "reasoningEffort" : "medium",
+    "reasoningSummary" : "auto"
+  },
+  "runtimeCatalogStatusText" : "Thinking 已开启：medium \/ auto",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

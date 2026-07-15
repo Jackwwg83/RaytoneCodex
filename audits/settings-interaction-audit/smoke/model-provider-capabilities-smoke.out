@@ -1,0 +1,17 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexModelProviderCapabilitiesSmoke-04305CD9-ACDF-446B-9E0C-87D1D390A64F\/fake-codex",
+  "imageGeneration" : true,
+  "namespaceTools" : true,
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexModelProviderCapabilitiesSmoke-04305CD9-ACDF-446B-9E0C-87D1D390A64F\/requests.jsonl",
+  "requestLogPreview" : "{\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"version\":\"0.1.0\",\"title\":\"RaytoneCodex\",\"name\":\"RaytoneCodex\"},\"capabilities\":{\"optOutNotificationMethods\":[],\"experimentalApi\":true}}}\n{\"params\":{},\"method\":\"initialized\"}\n{\"method\":\"modelProvider\/capabilities\/read\",\"id\":2,\"params\":{}}\n",
+  "runtimeCatalogErrors" : [
+
+  ],
+  "status" : "modelProvider\/capabilities\/read：命名空间工具 开 · 图像生成 开 · 网页搜索 关",
+  "webSearch" : false,
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexModelProviderCapabilitiesSmoke-04305CD9-ACDF-446B-9E0C-87D1D390A64F"
+}

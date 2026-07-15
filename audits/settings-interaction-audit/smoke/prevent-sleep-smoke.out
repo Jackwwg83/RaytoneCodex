@@ -1,0 +1,20 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "activeAfterPreferenceOff" : false,
+  "activeAfterReenable" : true,
+  "activeAfterStop" : false,
+  "activeBefore" : false,
+  "activeWhileRunning" : true,
+  "codexHome" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexPreventSleepSmoke-4F92A6A5-F43F-478C-8DF8-F353833A3CCB",
+  "configPath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexPreventSleepSmoke-4F92A6A5-F43F-478C-8DF8-F353833A3CCB\/config.toml",
+  "configText" : "[desktop.raytone]\nprevent_sleep_while_running = false\n",
+  "ok" : true,
+  "pmsetContainsRaytone" : true,
+  "pmsetPreview" : "2026-07-07 22:41:49 +0800 \nAssertion status system-wide:\n   BackgroundTask                 0\n   ApplePushServiceTask           0\n   UserIsActive                   1\n   PreventUserIdleDisplaySleep    0\n   SoftwareUpdateTask             0\n   PreventSystemSleep             0\n   ExternalMedia                  0\n   PreventUserIdleSystemSleep     1\n   NetworkClientActive            0\nListed by owning process:\n   pid 40295(RaytoneCodex): [0x001c83e000019a44] 00:00:00 PreventUserIdleSystemSleep named: \"RaytoneCodex running Codex turn\"  \n   pid 36001(Codex): [0x001c56420001a410] 03:14:37 NoIdleSleepAssertion named: \"Electron\"  \n   pid 36262(caffeinate): [0x001c830e00018c71] 00:03:30 PreventUserIdleSystemSleep named: \"caffeinate command-line tool\"  \n\tDetails: caffeinate asserting for 300 secs\n\tLocalized=THE CAFFEINATE TOOL IS PREVENTING SLEEP.\n\tTimeout will fire in 90 secs Action=TimeoutActionRelease\n   pid 473(runningboardd): [0x001c83e000019a43] 00:00:00 PreventUserIdleSystemSleep named: \"anon<VivoConnService>(501)473-36063-2715768:com.apple.CFNetwork.StorageDB\"  \n\tCreated for PID: 36063. \n   pid 465(WindowServer): [0x001c5c4100098266] 00:00:02 UserIsActive named: \"com.apple.iohideventsystem.queue.tickle serviceID:100000cc2 service:AppleMultitouchDevice product:Apple Internal Keyboard \/ Trackpad eventType:11\"  \n   pid 406(powerd): [0x001be865000186d2] 11:03:23 PreventUserIdleSystemSleep named: \"Powerd - Prevent sleep while display is on\"  \n   pid 37903(caffeinate): [0x001c837300019367] 00:01:49 PreventUserIdleSystemSleep named: \"caffeinate command-line tool\"  \n\tDetails: caffeinate ",
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

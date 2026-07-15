@@ -1,0 +1,16 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "browserDataStatusText" : "fs\/getMetadata + fs\/readFile：已读取本地示例 1402 bytes · ~\/Projects\/RaytoneCodex\/docs\/browser-sample.html",
+  "browserURL" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/docs\/browser-sample.html",
+  "ok" : true,
+  "route" : "thread",
+  "scope" : "openBrowserSampleAndCapture-request-only",
+  "snapshotFileExists" : false,
+  "snapshotOutput" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/screenshots\/raytonecodex-browser-20260707-234824.png",
+  "snapshotRequestID" : "66EEF631-D838-4711-B97F-53A259ADF5F3",
+  "status" : "正在截取网页…",
+  "toolPanel" : "browser",
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

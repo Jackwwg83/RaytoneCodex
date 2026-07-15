@@ -1,0 +1,41 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "ok" : true,
+  "runtimePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex\/.build\/raytone-codex-cli\/codex",
+  "runtimeSource" : "Environment override",
+  "runtimeVersion" : "codex-cli 0.0.0",
+  "voiceInputStatusText" : "Codex realtime：v1 9 个 · v2 10 个 · 默认 marin",
+  "voices" : {
+    "defaultV1" : "cove",
+    "defaultV2" : "marin",
+    "v1" : [
+      "juniper",
+      "maple",
+      "spruce",
+      "ember",
+      "vale",
+      "breeze",
+      "arbor",
+      "sol",
+      "cove"
+    ],
+    "v1Count" : 9,
+    "v2" : [
+      "alloy",
+      "ash",
+      "ballad",
+      "coral",
+      "echo",
+      "sage",
+      "shimmer",
+      "verse",
+      "marin",
+      "cedar"
+    ],
+    "v2Count" : 10
+  },
+  "voicesUpdatedAt" : 1783434989.182688,
+  "workspacePath" : "\/Users\/jackwu\/Projects\/RaytoneCodex"
+}

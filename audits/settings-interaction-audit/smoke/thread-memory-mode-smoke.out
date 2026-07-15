@@ -1,0 +1,15 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "disabledMode" : "disabled",
+  "disabledStatus" : "thread\/memoryMode\/set：当前对话记忆已关闭",
+  "enabledMode" : "enabled",
+  "enabledStatus" : "thread\/memoryMode\/set：当前对话记忆已开启",
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexThreadMemoryModeSmoke-4E72741E-12C6-46FB-9385-E7E84EFE3D3C\/fake-codex",
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexThreadMemoryModeSmoke-4E72741E-12C6-46FB-9385-E7E84EFE3D3C\/requests.jsonl",
+  "requestLogPreview" : "{\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"version\":\"0.1.0\",\"name\":\"RaytoneCodex\",\"title\":\"RaytoneCodex\"},\"capabilities\":{\"experimentalApi\":true,\"optOutNotificationMethods\":[]}},\"id\":1}\n{\"params\":{},\"method\":\"initialized\"}\n{\"id\":2,\"params\":{\"personality\":\"friendly\",\"dynamicTools\":[{\"inputSchema\":{\"required\":[],\"properties\":{\"includeDiffStats\":{\"description\":\"是否包含当前 transcript 和 git diff 的变更统计。\",\"type\":\"boolean\"}},\"type\":\"object\"},\"description\":\"返回 RaytoneCodex 当前工作区、线程、模型、权限和变更摘要。\",\"namespace\":\"raytone_context\",\"deferLoading\":false,\"name\":\"workspace_snapshot\"},{\"inputSchema\":{\"properties\":{\"includeHidden\":{\"type\":\"boolean\",\"description\":\"是否包含以点开头的隐藏文件，默认 false。\"},\"path\":{\"type\":\"string\",\"description\":\"工作区内的相对路径，默认当前工作区根目录。也允许工作区内的绝对路径。\"},\"maxEntries\":{\"type\":\"integer\",\"maximum\":200,\"description\":\"最多返回多少个目录项，默认 80。\",\"minimum\":1}},\"type\":\"object\",\"required\":[]},\"description\":\"通过 Codex app-server 的 fs\/readDirectory 列出当前工作区内某个目录的文件。\",\"name\":\"list_workspace_files\",\"deferLoading\":false,\"namespace\":\"raytone_context\"},{\"inputSchema\":{\"properties\":{\"maxBytes\":{\"description\":\"最多返回多少字节，默认 32768。\",\"maximum\":200000,\"minimum\":1,\"type\":\"integer\"},\"path\":{\"description\":\"工作区内的相对文件路径。也允许工作区内的绝对路径。\",\"type\":\"string\"}},\"type\":\"object\",\"required\":[\"path\"]},\"description\":\"通过 Codex app-server 的 fs\/readFile 读取当前工作区内某个文本文件。\",\"namespace\":\"raytone_context\",\"deferLoading\":false,\"name\":\"read_workspace_",
+  "threadID" : "00000000-0000-0000-0000-000000000001",
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexThreadMemoryModeSmoke-4E72741E-12C6-46FB-9385-E7E84EFE3D3C"
+}

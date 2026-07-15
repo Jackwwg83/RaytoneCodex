@@ -7,6 +7,7 @@ struct SidebarView: View {
     @State private var showSearch = false
     @State private var search = ""
     @State private var runtimeSearchTask: Task<Void, Never>?
+    @State private var showArchiveOtherConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +35,14 @@ struct SidebarView: View {
         }
         .onDisappear {
             runtimeSearchTask?.cancel()
+        }
+        .alert("归档其他对话？", isPresented: $showArchiveOtherConfirmation) {
+            Button("取消", role: .cancel) {}
+            Button("归档", role: .destructive) {
+                Task { await store.archiveOtherRuntimeThreads(inWorkspace: store.workspacePath) }
+            }
+        } message: {
+            Text("将归档当前工作区的所有其他历史对话，并保留当前对话。已归档对话可在设置中恢复。")
         }
     }
 
@@ -91,6 +100,15 @@ struct SidebarView: View {
                 HStack(spacing: 6) {
                     SectionLabel(text: "项目")
                     Spacer(minLength: 0)
+                    Button {
+                        showArchiveOtherConfirmation = true
+                    } label: {
+                        Image(systemName: "archivebox")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .buttonStyle(GhostIconButtonStyle(size: 20))
+                    .disabled(store.runtimeCatalogIsRefreshing)
+                    .help("归档当前工作区的其他对话")
                     Button {
                         runtimeSearchTask?.cancel()
                         Task { await refreshRuntimeThreadsForSearch() }

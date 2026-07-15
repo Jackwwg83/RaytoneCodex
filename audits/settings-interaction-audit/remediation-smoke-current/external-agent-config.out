@@ -1,0 +1,31 @@
+Building for debugging...
+[0/5] Write swift-version--1AB21518FC5DEDBE.txt
+Build complete! (0.07s)
+{
+  "detectedCount" : 2,
+  "detectStatus" : "externalAgentConfig\/detect：检测到 2 项",
+  "fakeExecutable" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-23D976D3-3576-42AA-ACF8-D9A260E7830C\/fake-codex",
+  "importedItemCount" : 2,
+  "importStatus" : "externalAgentConfig\/import\/completed：已完成 2 项",
+  "items" : [
+    {
+      "cwd" : "",
+      "description" : "导入外部 Agent 的全局配置",
+      "details" : "",
+      "itemType" : "CONFIG"
+    },
+    {
+      "cwd" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-23D976D3-3576-42AA-ACF8-D9A260E7830C",
+      "description" : "导入当前工作区支持的插件",
+      "details" : "{\n  \"plugins\" : [\n    {\n      \"marketplaceName\" : \"team-marketplace\",\n      \"pluginNames\" : [\n        \"asana\",\n        \"jira\"\n      ]\n    }\n  ]\n}",
+      "itemType" : "PLUGINS"
+    }
+  ],
+  "ok" : true,
+  "requestLog" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-23D976D3-3576-42AA-ACF8-D9A260E7830C\/requests.jsonl",
+  "requestLogPreview" : "{\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"RaytoneCodex\",\"title\":\"RaytoneCodex\",\"version\":\"0.1.0\"},\"capabilities\":{\"optOutNotificationMethods\":[],\"experimentalApi\":true}},\"id\":1}\n{\"params\":{},\"method\":\"initialized\"}\n{\"id\":2,\"params\":{\"cwds\":[\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-23D976D3-3576-42AA-ACF8-D9A260E7830C\"],\"includeHome\":true},\"method\":\"externalAgentConfig\/detect\"}\n{\"method\":\"externalAgentConfig\/import\",\"id\":3,\"params\":{\"migrationItems\":[{\"cwd\":null,\"details\":null,\"description\":\"导入外部 Agent 的全局配置\",\"itemType\":\"CONFIG\"},{\"details\":{\"plugins\":[{\"marketplaceName\":\"team-marketplace\",\"pluginNames\":[\"asana\",\"jira\"]}]},\"cwd\":\"\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-23D976D3-3576-42AA-ACF8-D9A260E7830C\",\"description\":\"导入当前工作区支持的插件\",\"itemType\":\"PLUGINS\"}]}}\n",
+  "runtimeCatalogErrors" : [
+
+  ],
+  "workspacePath" : "\/var\/folders\/6l\/l0s8rfj164z65gfxfmvkbb4m0000gn\/T\/RaytoneCodexExternalAgentConfigSmoke-23D976D3-3576-42AA-ACF8-D9A260E7830C"
+}
